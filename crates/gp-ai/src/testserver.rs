@@ -95,6 +95,100 @@ impl TestServer {
     pub fn count(&self) -> usize {
         self.received.lock().unwrap().len()
     }
+
+    /// Serves `body` to every GET, answering `Range: bytes=N-` with 206 when `ranges` is on.
+    /// `cut_first_at` makes the first reply stop after that many body bytes, like a dropped
+    /// connection.
+    pub fn start_ranged(body: Vec<u8>, ranges: bool, cut_first_at: Option<usize>) -> TestServer {
+        let net = serial();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let log = received.clone();
+        let body = Arc::new(body);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { break };
+                let (log, body) = (log.clone(), body.clone());
+                std::thread::spawn(move || {
+                    let _ = serve_ranged(stream, &log, &body, ranges, cut_first_at);
+                });
+            }
+        });
+        TestServer {
+            url,
+            received,
+            _net: net,
+        }
+    }
+}
+
+fn serve_ranged(
+    mut stream: TcpStream,
+    log: &Mutex<Vec<Received>>,
+    body: &[u8],
+    ranges: bool,
+    cut_first_at: Option<usize>,
+) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line)? == 0 {
+        return Ok(());
+    }
+    let (mut headers, mut from) = (String::new(), None);
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 || line.trim().is_empty() {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if let Some(v) = lower.strip_prefix("range: bytes=") {
+            from = v.trim().trim_end_matches('-').parse::<usize>().ok();
+        }
+        headers.push_str(&line);
+    }
+    let first = {
+        let mut log = log.lock().unwrap();
+        log.push(Received {
+            path: request_line.split(' ').nth(1).unwrap_or("").to_owned(),
+            headers,
+            body: String::new(),
+        });
+        log.len() == 1
+    };
+    let len = body.len();
+    let (head, slice) = match from.filter(|_| ranges) {
+        Some(n) if n >= len => (
+            format!(
+                "HTTP/1.1 416 X\r\nContent-Range: bytes */{len}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ),
+            &body[..0],
+        ),
+        Some(n) => (
+            format!(
+                "HTTP/1.1 206 X\r\nContent-Range: bytes {n}-{}/{len}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                len - 1,
+                len - n
+            ),
+            &body[n..],
+        ),
+        None => (
+            format!("HTTP/1.1 200 X\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"),
+            body,
+        ),
+    };
+    let slice = match cut_first_at {
+        Some(cut) if first => &slice[..cut.min(slice.len())],
+        _ => slice,
+    };
+    let mut reply = head.into_bytes();
+    reply.extend_from_slice(slice);
+    stream.write_all(&reply)?;
+    stream.flush()?;
+    stream.shutdown(Shutdown::Write)?;
+    let _ = reader.read(&mut [0; 64]);
+    Ok(())
 }
 
 fn serve(

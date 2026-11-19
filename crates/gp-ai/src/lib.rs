@@ -1,5 +1,6 @@
 pub mod anki;
 pub mod asr;
+pub mod download;
 mod http;
 pub mod translate;
 
