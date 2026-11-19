@@ -1,0 +1,18 @@
+[package]
+name = "glossplay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A video player for language learners: dual subtitles, live transcription, word lookup"
+
+[dependencies]
+gp-core.workspace = true
+gp-store.workspace = true
+gp-ai.workspace = true
+gp-media.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+directories = "6"
+rfd = "0.15"
+png = "0.18"

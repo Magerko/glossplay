@@ -1,4 +1,4 @@
-# LinguaPlay
+# Glossplay
 
 [English](README.md) · **Русский** · [Українська](README.uk.md) · [中文](README.zh.md)
 
@@ -25,7 +25,7 @@
   и транскрипт с поиском рядом с видео.
 - **Открывает почти всё.** За воспроизведение отвечает [mpv](https://mpv.io), поэтому работает
   всё, что читает FFmpeg: MKV, MP4, WebM, AVI, MOV, TS; H.264, HEVC, AV1, VP9 и остальное,
-  с аппаратным декодированием. Вставьте ссылку на видео из интернета — и оно воспроизводится: LinguaPlay сам скачивает yt-dlp и обновляет его.
+  с аппаратным декодированием. Вставьте ссылку на видео из интернета — и оно воспроизводится: Glossplay сам скачивает yt-dlp и обновляет его.
 
 ![Транскрипт, созданный распознаванием речи, с переводом](docs/screenshots/transcript.png)
 
@@ -54,10 +54,10 @@
 
 ### Windows
 
-1. Скачайте `linguaplay-windows-x64.zip` со страницы [Releases](../../releases) и распакуйте.
+1. Скачайте `glossplay-windows-x64.zip` со страницы [Releases](../../releases) и распакуйте.
 2. Установите FFmpeg — им читаются дорожки субтитров и звук:
    `winget install Gyan.FFmpeg`
-3. Запустите `linguaplay.exe` и перетащите видео в окно.
+3. Запустите `glossplay.exe` и перетащите видео в окно.
 
 ### Linux и macOS
 
@@ -84,10 +84,10 @@ brew install mpv ffmpeg
 | OpenAI-совместимый | по ситуации | OpenAI или локальная модель через Ollama / LM Studio (`http://localhost:11434/v1`). Объясняет слова в контексте. |
 | Claude | ключ Anthropic API | Переводит с учётом соседних реплик. Объясняет слова в контексте. |
 
-Ключ хранится в `config.toml` в профиле пользователя. Переменные окружения `LINGUAPLAY_DEEPL_API_KEY`, `LINGUAPLAY_OPENAI_API_KEY` и
-`LINGUAPLAY_ANTHROPIC_API_KEY` (каждая только для своего провайдера) имеют приоритет над ним.
+Ключ хранится в `config.toml` в профиле пользователя. Переменные окружения `GLOSSPLAY_DEEPL_API_KEY`, `GLOSSPLAY_OPENAI_API_KEY` и
+`GLOSSPLAY_ANTHROPIC_API_KEY` (каждая только для своего провайдера) имеют приоритет над ним.
 
-**Распознавание речи.** LinguaPlay управляет [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
+**Распознавание речи.** Glossplay управляет [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
 
 1. Скачайте сборку whisper.cpp, в которой есть `whisper-server` (для NVIDIA в Windows —
    `whisper-bin-win-cuda-12.4.0-x64.zip` из релизов whisper.cpp).
@@ -101,7 +101,7 @@ brew install mpv ffmpeg
 Транскрипты сохраняются, поэтому каждое видео распознаётся один раз.
 
 **Anki.** Установите дополнение [AnkiConnect](https://ankiweb.net/shared/info/2055492159) и держите
-Anki запущенным. Колода и тип записи «LinguaPlay» создаются при первом экспорте.
+Anki запущенным. Колода и тип записи «Glossplay» создаются при первом экспорте.
 
 ## Клавиши
 
@@ -129,8 +129,8 @@ Anki запущенным. Колода и тип записи «LinguaPlay» с
 Нужны [Rust](https://rustup.rs) 1.95 или новее и компилятор C.
 
 ```sh
-git clone https://github.com/Magerko/linguaplay
-cd linguaplay
+git clone https://github.com/Magerko/glossplay
+cd glossplay
 cargo build --release
 ```
 
@@ -144,7 +144,7 @@ cargo build --release
 Тесты: `cargo test --workspace`. Плеер умеет проверять себя и на настоящем файле:
 
 ```sh
-linguaplay --selftest video.mkv --subs en,ru --at 30
+glossplay --selftest video.mkv --subs en,ru --at 30
 ```
 
 Он проигрывает несколько секунд, печатает, что увидел (размер кадра, декодер, пропущенные кадры,
@@ -156,11 +156,11 @@ linguaplay --selftest video.mkv --subs en,ru --at 30
 
 | Крейт | Что внутри |
 |---|---|
-| `lp-core` | Парсеры субтитров (SRT, WebVTT, ASS), деление на слова, логика тренировки, настройки. Без ввода-вывода. |
-| `lp-store` | SQLite: кэш переводов, транскрипты, сохранённые слова. |
-| `lp-ai` | Сервисы перевода, клиент Whisper, AnkiConnect. |
-| `lp-media` | Небольшая привязка к libmpv, загружаемая во время работы; FFmpeg и whisper-server как дочерние процессы. |
-| `linguaplay` | Приложение: интерфейс на [egui](https://github.com/emilk/egui) в одном OpenGL-контексте с mpv. |
+| `gp-core` | Парсеры субтитров (SRT, WebVTT, ASS), деление на слова, логика тренировки, настройки. Без ввода-вывода. |
+| `gp-store` | SQLite: кэш переводов, транскрипты, сохранённые слова. |
+| `gp-ai` | Сервисы перевода, клиент Whisper, AnkiConnect. |
+| `gp-media` | Небольшая привязка к libmpv, загружаемая во время работы; FFmpeg и whisper-server как дочерние процессы. |
+| `glossplay` | Приложение: интерфейс на [egui](https://github.com/emilk/egui) в одном OpenGL-контексте с mpv. |
 
 mpv рисует каждый кадр в текстуру на видеокарте, а egui выводит поверх субтитры, поэтому каждое
 слово — настоящий элемент интерфейса, на который можно навести курсор и нажать, и ни один кадр
@@ -168,7 +168,7 @@ mpv рисует каждый кадр в текстуру на видеокар
 
 ## Благодарности и лицензия
 
-LinguaPlay — свободная программа под лицензией [GNU GPL v3](LICENSE) или более поздней.
+Glossplay — свободная программа под лицензией [GNU GPL v3](LICENSE) или более поздней.
 
 Она опирается на [mpv](https://mpv.io) и [FFmpeg](https://ffmpeg.org),
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp), [egui](https://github.com/emilk/egui),

@@ -1,4 +1,4 @@
-# Packs a Windows release zip: linguaplay.exe, libmpv-2.dll, licences and READMEs.
+# Packs a Windows release zip: glossplay.exe, libmpv-2.dll, licences and READMEs.
 param(
     [string]$Exe,
     [string]$Mpv,
@@ -11,9 +11,9 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $Exe) {
     $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $repo 'target' }
-    $Exe = Join-Path $target 'release\linguaplay.exe'
+    $Exe = Join-Path $target 'release\glossplay.exe'
 }
-if (-not (Test-Path $Exe)) { throw "Executable not found: $Exe. Build it with: cargo build --release -p linguaplay" }
+if (-not (Test-Path $Exe)) { throw "Executable not found: $Exe. Build it with: cargo build --release -p glossplay" }
 $Exe = (Resolve-Path $Exe).Path
 if (-not $Mpv) { $Mpv = Join-Path (Split-Path $Exe -Parent) 'libmpv-2.dll' }
 if (-not (Test-Path $Mpv)) {
@@ -31,19 +31,19 @@ if (-not $OutDir) { $OutDir = Join-Path $repo 'dist' }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 
-$work = Join-Path ([IO.Path]::GetTempPath()) ("linguaplay-pack-" + [Guid]::NewGuid().ToString('N'))
-$stage = Join-Path $work 'linguaplay'
+$work = Join-Path ([IO.Path]::GetTempPath()) ("glossplay-pack-" + [Guid]::NewGuid().ToString('N'))
+$stage = Join-Path $work 'glossplay'
 New-Item -ItemType Directory -Force $stage | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 try {
-    Copy-Item $Exe (Join-Path $stage 'linguaplay.exe')
+    Copy-Item $Exe (Join-Path $stage 'glossplay.exe')
     Copy-Item $Mpv (Join-Path $stage 'libmpv-2.dll')
     Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $stage 'LICENSE')
     Copy-Item $rustNotices (Join-Path $stage 'THIRD-PARTY-RUST.txt')
 
     # The images are not shipped, so the archived READMEs must point at the hosted copies.
-    $rawBase = 'https://raw.githubusercontent.com/Magerko/linguaplay/main/docs/screenshots/'
+    $rawBase = 'https://raw.githubusercontent.com/Magerko/glossplay/main/docs/screenshots/'
     foreach ($name in 'README.md', 'README.ru.md', 'README.uk.md', 'README.zh.md') {
         $text = [IO.File]::ReadAllText((Join-Path $repo $name), [Text.Encoding]::UTF8)
         $text = $text.Replace('docs/screenshots/', $rawBase)
@@ -78,20 +78,20 @@ libmpv-2.dll
     }
     $rule = '-' * 78
     $third = @"
-Third-party components shipped with LinguaPlay
+Third-party components shipped with Glossplay
 ==============================================
 
-LinguaPlay
+Glossplay
   License: GPL-3.0-or-later (see LICENSE).
 
 $mpvText
 
 Rust crates
-  Every crate linked into linguaplay.exe, with its licence and copyright notices, is
+  Every crate linked into glossplay.exe, with its licence and copyright notices, is
   listed in THIRD-PARTY-RUST.txt.
 
 Fonts built into the egui user interface (crate epaint_default_fonts 0.37.0)
-  With the features LinguaPlay enables, three fonts are embedded:
+  With the features Glossplay enables, three fonts are embedded:
   - Hack Regular, MIT License, Copyright 2018 Source Foundry Authors. It builds on
     Bitstream Vera (Bitstream Vera License) and DejaVu (public domain).
   - Ubuntu Light, Ubuntu Font Licence 1.0.
@@ -131,7 +131,7 @@ $(& $notice 'mecab-ipadic-NOTICE.txt')
 "@
     [IO.File]::WriteAllText((Join-Path $stage 'THIRD-PARTY.txt'), $third, $utf8)
 
-    $zip = Join-Path $OutDir 'linguaplay-windows-x64.zip'
+    $zip = Join-Path $OutDir 'glossplay-windows-x64.zip'
     if (Test-Path $zip) { Remove-Item $zip -Force }
     # Compress-Archive in Windows PowerShell 5.1 writes backslashes into entry names, which
     # other unzip tools mishandle; I build the zip by hand to get forward slashes.
@@ -141,7 +141,7 @@ $(& $notice 'mecab-ipadic-NOTICE.txt')
     try {
         foreach ($file in Get-ChildItem $stage -File) {
             [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-                $archive, $file.FullName, "linguaplay/$($file.Name)", [IO.Compression.CompressionLevel]::Optimal)
+                $archive, $file.FullName, "glossplay/$($file.Name)", [IO.Compression.CompressionLevel]::Optimal)
         }
     }
     finally {

@@ -33,7 +33,7 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build release
-        run: cargo build --release --locked -p linguaplay
+        run: cargo build --release --locked -p glossplay
       - name: Package Windows release
         if: runner.os == 'Windows'
         shell: pwsh
@@ -44,15 +44,15 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: linguaplay-windows-x64
-          path: dist/linguaplay-windows-x64.zip
+          name: glossplay-windows-x64
+          path: dist/glossplay-windows-x64.zip
           if-no-files-found: error
       - name: Upload binary
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: linguaplay-${{ runner.os }}
+          name: glossplay-${{ runner.os }}
           path: |
-            target/release/linguaplay
-            target/release/linguaplay.exe
+            target/release/glossplay
+            target/release/glossplay.exe
           if-no-files-found: error

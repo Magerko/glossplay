@@ -1,4 +1,4 @@
-# LinguaPlay
+# Glossplay
 
 **English** · [Русский](README.ru.md) · [Українська](README.uk.md) · [中文](README.zh.md)
 
@@ -11,7 +11,7 @@ and keeps the words you want to remember.
 ## What it does
 
 - **Dual subtitles.** The original on top, the translation below. If the file has a track in
-  your language, LinguaPlay uses it; if not, it translates the original as you watch, a little
+  your language, Glossplay uses it; if not, it translates the original as you watch, a little
   ahead of playback so the translation is already there when the line is spoken.
 - **Subtitles from speech.** No subtitles at all? Whisper transcribes the audio locally. On a
   recent NVIDIA card an hour of video takes a couple of minutes, and the part you are watching is
@@ -25,7 +25,7 @@ and keeps the words you want to remember.
   searchable transcript next to the video.
 - **Plays nearly everything.** Playback is done by [mpv](https://mpv.io), so anything FFmpeg
   can open works: MKV, MP4, WebM, AVI, MOV, TS; H.264, HEVC, AV1, VP9 and the rest, with
-  hardware decoding. Paste a link to an online video and it plays: LinguaPlay downloads yt-dlp by itself and keeps it up to date.
+  hardware decoding. Paste a link to an online video and it plays: Glossplay downloads yt-dlp by itself and keeps it up to date.
 
 ![Transcript made by speech recognition, with translations](docs/screenshots/transcript.png)
 
@@ -53,10 +53,10 @@ Known limits of this version:
 
 ### Windows
 
-1. Download `linguaplay-windows-x64.zip` from [Releases](../../releases) and unpack it.
+1. Download `glossplay-windows-x64.zip` from [Releases](../../releases) and unpack it.
 2. Install FFmpeg — it is used to read subtitle tracks and audio:
    `winget install Gyan.FFmpeg`
-3. Run `linguaplay.exe`, drop a video on the window.
+3. Run `glossplay.exe`, drop a video on the window.
 
 ### Linux and macOS
 
@@ -84,9 +84,9 @@ subtitles: translation works out of the box through Google Translate.
 | Claude | Anthropic API key | Translates with the surrounding dialogue in mind. Explains words in context. |
 
 The key is stored in `config.toml` in your user profile. The environment variable
-`LINGUAPLAY_DEEPL_API_KEY`, `LINGUAPLAY_OPENAI_API_KEY` or `LINGUAPLAY_ANTHROPIC_API_KEY` (for the matching provider only) overrides it.
+`GLOSSPLAY_DEEPL_API_KEY`, `GLOSSPLAY_OPENAI_API_KEY` or `GLOSSPLAY_ANTHROPIC_API_KEY` (for the matching provider only) overrides it.
 
-**Speech recognition.** LinguaPlay drives [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
+**Speech recognition.** Glossplay drives [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
 
 1. Download a build of whisper.cpp that contains `whisper-server` (for NVIDIA on Windows:
    `whisper-bin-win-cuda-12.4.0-x64.zip` from the whisper.cpp releases).
@@ -100,7 +100,7 @@ The key is stored in `config.toml` in your user profile. The environment variabl
 Transcripts are cached, so a video is only transcribed once.
 
 **Anki.** Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on and keep
-Anki running. The deck and the "LinguaPlay" note type are created on first use.
+Anki running. The deck and the "Glossplay" note type are created on first use.
 
 ## Keys
 
@@ -128,8 +128,8 @@ automatically. You can also drop a subtitle file on the window.
 You need [Rust](https://rustup.rs) 1.95 or newer and a C compiler.
 
 ```sh
-git clone https://github.com/Magerko/linguaplay
-cd linguaplay
+git clone https://github.com/Magerko/glossplay
+cd glossplay
 cargo build --release
 ```
 
@@ -143,7 +143,7 @@ The player loads mpv's library at run time, so nothing has to be linked:
 Run the tests with `cargo test --workspace`. The player can also test itself on a real file:
 
 ```sh
-linguaplay --selftest video.mkv --subs en,ru --at 30
+glossplay --selftest video.mkv --subs en,ru --at 30
 ```
 
 It plays for a few seconds, prints what it saw (frame size, decoder, dropped frames, the
@@ -155,11 +155,11 @@ Rust throughout, in five crates:
 
 | Crate | What it holds |
 |---|---|
-| `lp-core` | Subtitle parsers (SRT, WebVTT, ASS), word segmentation, practice logic, config. No I/O. |
-| `lp-store` | SQLite: translation cache, transcripts, saved words. |
-| `lp-ai` | Translation services, the Whisper client, AnkiConnect. |
-| `lp-media` | A small run-time binding to libmpv; FFmpeg and whisper-server as child processes. |
-| `linguaplay` | The application: an [egui](https://github.com/emilk/egui) interface that shares one OpenGL context with mpv. |
+| `gp-core` | Subtitle parsers (SRT, WebVTT, ASS), word segmentation, practice logic, config. No I/O. |
+| `gp-store` | SQLite: translation cache, transcripts, saved words. |
+| `gp-ai` | Translation services, the Whisper client, AnkiConnect. |
+| `gp-media` | A small run-time binding to libmpv; FFmpeg and whisper-server as child processes. |
+| `glossplay` | The application: an [egui](https://github.com/emilk/egui) interface that shares one OpenGL context with mpv. |
 
 mpv renders each frame into a texture on the GPU and egui draws the subtitles on top, so every
 word is a real interface element you can hover and click, and no frame is copied through the
@@ -167,7 +167,7 @@ CPU. Network requests, ffmpeg and speech recognition run on background threads, 
 
 ## Credits and licence
 
-LinguaPlay is free software under the [GNU GPL v3](LICENSE) or later.
+Glossplay is free software under the [GNU GPL v3](LICENSE) or later.
 
 It stands on [mpv](https://mpv.io) and [FFmpeg](https://ffmpeg.org),
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp), [egui](https://github.com/emilk/egui),

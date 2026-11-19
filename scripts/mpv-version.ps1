@@ -1,4 +1,4 @@
-# The one libmpv build that LinguaPlay is released with. fetch-mpv.ps1 downloads exactly
+# The one libmpv build that Glossplay is released with. fetch-mpv.ps1 downloads exactly
 # this build and package.ps1 refuses to ship anything else.
 $MpvBuildTag = '20261111'
 $MpvMpvCommit = 'bcde6b93cc'

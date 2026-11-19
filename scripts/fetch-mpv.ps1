@@ -1,5 +1,5 @@
 # Downloads the pinned libmpv-2.dll build (see mpv-version.ps1), checks its SHA-256 and puts
-# it next to the built program, where LinguaPlay looks for it first.
+# it next to the built program, where Glossplay looks for it first.
 param(
     [string[]]$Destination
 )
@@ -12,7 +12,7 @@ if (-not $Destination) {
     $Destination = @((Join-Path $target 'debug'), (Join-Path $target 'release'))
 }
 
-$work = Join-Path ([IO.Path]::GetTempPath()) "linguaplay-mpv-$MpvBuildTag"
+$work = Join-Path ([IO.Path]::GetTempPath()) "glossplay-mpv-$MpvBuildTag"
 New-Item -ItemType Directory -Force $work | Out-Null
 $archive = Join-Path $work $MpvArchiveName
 

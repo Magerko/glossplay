@@ -1,4 +1,4 @@
-# LinguaPlay
+# Glossplay
 
 [English](README.md) · [Русский](README.ru.md) · [Українська](README.uk.md) · **中文**
 
@@ -20,7 +20,7 @@
 - **练习工具。** 每句台词后自动暂停、重复当前台词、逐句跳转，视频旁边还有可搜索的文字稿。
 - **几乎什么都能播。** 播放由 [mpv](https://mpv.io) 负责，FFmpeg 能打开的格式都支持：
   MKV、MP4、WebM、AVI、MOV、TS；H.264、HEVC、AV1、VP9 等，并支持硬件解码。
-  粘贴在线视频的链接即可播放：LinguaPlay 会自动下载 yt-dlp 并保持其更新。
+  粘贴在线视频的链接即可播放：Glossplay 会自动下载 yt-dlp 并保持其更新。
 
 ![由语音识别生成并附带翻译的文字稿](docs/screenshots/transcript.png)
 
@@ -48,10 +48,10 @@
 
 ### Windows
 
-1. 从 [Releases](../../releases) 页面下载 `linguaplay-windows-x64.zip` 并解压。
+1. 从 [Releases](../../releases) 页面下载 `glossplay-windows-x64.zip` 并解压。
 2. 安装 FFmpeg（用于读取字幕轨和音频）：
    `winget install Gyan.FFmpeg`
-3. 运行 `linguaplay.exe`，把视频拖进窗口。
+3. 运行 `glossplay.exe`，把视频拖进窗口。
 
 ### Linux 和 macOS
 
@@ -78,9 +78,9 @@ brew install mpv ffmpeg
 | OpenAI 兼容接口 | 视服务而定 | OpenAI，或通过 Ollama / LM Studio 运行的本地模型（`http://localhost:11434/v1`）。可结合上下文解释单词。 |
 | Claude | Anthropic API 密钥 | 翻译时会参考前后台词。可结合上下文解释单词。 |
 
-密钥保存在用户目录下的 `config.toml` 中。环境变量 `LINGUAPLAY_DEEPL_API_KEY`、`LINGUAPLAY_OPENAI_API_KEY`、`LINGUAPLAY_ANTHROPIC_API_KEY`（各自仅对相应的服务商生效）的优先级更高。
+密钥保存在用户目录下的 `config.toml` 中。环境变量 `GLOSSPLAY_DEEPL_API_KEY`、`GLOSSPLAY_OPENAI_API_KEY`、`GLOSSPLAY_ANTHROPIC_API_KEY`（各自仅对相应的服务商生效）的优先级更高。
 
-**语音识别。** LinguaPlay 调用 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)：
+**语音识别。** Glossplay 调用 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)：
 
 1. 下载包含 `whisper-server` 的 whisper.cpp 构建（Windows 上的 NVIDIA 显卡请使用 whisper.cpp
    发布页中的 `whisper-bin-win-cuda-12.4.0-x64.zip`）。
@@ -94,7 +94,7 @@ brew install mpv ffmpeg
 识别结果会被缓存，每个视频只需识别一次。
 
 **Anki。** 安装 [AnkiConnect](https://ankiweb.net/shared/info/2055492159) 插件并保持 Anki 运行。
-牌组和“LinguaPlay”笔记类型会在第一次导出时自动创建。
+牌组和“Glossplay”笔记类型会在第一次导出时自动创建。
 
 ## 快捷键
 
@@ -122,8 +122,8 @@ brew install mpv ffmpeg
 需要 [Rust](https://rustup.rs) 1.95 或更高版本，以及一个 C 编译器。
 
 ```sh
-git clone https://github.com/Magerko/linguaplay
-cd linguaplay
+git clone https://github.com/Magerko/glossplay
+cd glossplay
 cargo build --release
 ```
 
@@ -136,7 +136,7 @@ cargo build --release
 运行测试：`cargo test --workspace`。播放器还可以用真实文件自检：
 
 ```sh
-linguaplay --selftest video.mkv --subs en,zh --at 30
+glossplay --selftest video.mkv --subs en,zh --at 30
 ```
 
 它会播放几秒钟，输出观察到的信息（画面尺寸、解码器、丢帧数、屏幕上的字幕），
@@ -148,18 +148,18 @@ linguaplay --selftest video.mkv --subs en,zh --at 30
 
 | Crate | 内容 |
 |---|---|
-| `lp-core` | 字幕解析（SRT、WebVTT、ASS）、分词、练习逻辑、配置。不做任何输入输出。 |
-| `lp-store` | SQLite：翻译缓存、识别结果、已保存的单词。 |
-| `lp-ai` | 翻译服务、Whisper 客户端、AnkiConnect。 |
-| `lp-media` | 运行时加载的 libmpv 轻量绑定；以子进程方式调用 FFmpeg 和 whisper-server。 |
-| `linguaplay` | 应用本体：基于 [egui](https://github.com/emilk/egui) 的界面，与 mpv 共用同一个 OpenGL 上下文。 |
+| `gp-core` | 字幕解析（SRT、WebVTT、ASS）、分词、练习逻辑、配置。不做任何输入输出。 |
+| `gp-store` | SQLite：翻译缓存、识别结果、已保存的单词。 |
+| `gp-ai` | 翻译服务、Whisper 客户端、AnkiConnect。 |
+| `gp-media` | 运行时加载的 libmpv 轻量绑定；以子进程方式调用 FFmpeg 和 whisper-server。 |
+| `glossplay` | 应用本体：基于 [egui](https://github.com/emilk/egui) 的界面，与 mpv 共用同一个 OpenGL 上下文。 |
 
 mpv 在显卡上把每一帧渲染到纹理，egui 再把字幕画在上面，所以每个单词都是真正的界面元素，
 可以悬停和点击，而且没有任何一帧需要经过 CPU 复制。网络请求、ffmpeg 和语音识别都在后台线程中运行，因此播放不会因它们工作而卡住。
 
 ## 致谢与许可
 
-LinguaPlay 是自由软件，以 [GNU GPL v3](LICENSE) 或更高版本发布。
+Glossplay 是自由软件，以 [GNU GPL v3](LICENSE) 或更高版本发布。
 
 它建立在 [mpv](https://mpv.io) 和 [FFmpeg](https://ffmpeg.org)、
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)、[egui](https://github.com/emilk/egui)、

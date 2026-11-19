@@ -1,0 +1,10 @@
+[package]
+name = "gp-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gp-core.workspace = true
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde_json.workspace = true
