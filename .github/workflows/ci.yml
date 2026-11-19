@@ -26,14 +26,24 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libgtk-3-dev pkg-config
+      - name: Remap build paths (Linux and macOS)
+        if: runner.os != 'Windows'
+        # Set for every later cargo step so tests and the release build share one set of flags.
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$HOME/.rustup=/rustup --remap-path-prefix=${{ github.workspace }}=/src" >> "$GITHUB_ENV"
       - name: Test
         timeout-minutes: 45
         run: cargo test --workspace --locked
       - name: Lint
         if: runner.os == 'Linux'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Build release
+      - name: Build release (Linux and macOS)
+        if: runner.os != 'Windows'
         run: cargo build --release --locked -p glossplay
+      - name: Build release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-release.ps1
       - name: Package Windows release
         if: runner.os == 'Windows'
         shell: pwsh

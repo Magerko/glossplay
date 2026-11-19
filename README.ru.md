@@ -149,6 +149,8 @@ cargo build --release
   [dev-сборки mpv](https://github.com/shinchiro/mpv-winbuild-cmake/releases) сами.
 - **Linux / macOS:** системная `libmpv` находится автоматически.
 
+Чтобы собрать релиз для распространения в Windows, используйте `scripts/build-release.ps1`: он убирает из exe пути вашего компьютера (домашнюю папку, имя пользователя).
+
 Тесты: `cargo test --workspace`. Плеер умеет проверять себя и на настоящем файле:
 
 ```sh

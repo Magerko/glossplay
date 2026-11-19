@@ -148,6 +148,8 @@ The player loads mpv's library at run time, so nothing has to be linked:
   there yourself.
 - **Linux / macOS:** the system `libmpv` is found automatically.
 
+To build a release for distribution on Windows, use `scripts/build-release.ps1`: it strips the paths of your machine (home folder, user name) out of the executable.
+
 Run the tests with `cargo test --workspace`. The player can also test itself on a real file:
 
 ```sh

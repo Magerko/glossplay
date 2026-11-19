@@ -140,6 +140,8 @@ cargo build --release
   也可以自己从 [mpv 开发版构建](https://github.com/shinchiro/mpv-winbuild-cmake/releases) 中取出该 DLL。
 - **Linux / macOS：** 会自动找到系统中的 `libmpv`。
 
+要在 Windows 上构建用于分发的发布版，请使用 `scripts/build-release.ps1`：它会从 exe 中去除本机路径（主目录、用户名）。
+
 运行测试：`cargo test --workspace`。播放器还可以用真实文件自检：
 
 ```sh
