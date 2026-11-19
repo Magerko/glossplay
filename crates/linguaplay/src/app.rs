@@ -193,6 +193,9 @@ impl App {
             && !crate::ytdlp::binary_path().is_file();
         if needs_ytdlp {
             self.pending_url = Some(media.to_owned());
+            if !crate::ytdlp::is_busy() {
+                self.jobs.spawn(|| Msg::YtDlp(crate::ytdlp::ensure(true)));
+            }
             self.toast("Downloading yt-dlp, the video will start in a moment…");
             return;
         }
@@ -635,7 +638,9 @@ impl App {
                             self.toast(format!("yt-dlp updated to {version}"));
                         }
                         Ok(_) => {}
-                        Err(e) => self.toast(e),
+                        // A failed start-up check stays quiet; only a link waiting for yt-dlp needs to hear.
+                        Err(e) if self.pending_url.take().is_some() => self.toast(e),
+                        Err(_) => {}
                     }
                     let ready = crate::ytdlp::binary_path().is_file();
                     if let Some(url) = self.pending_url.take().filter(|_| ready) {

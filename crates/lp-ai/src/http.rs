@@ -88,3 +88,35 @@ pub fn get_bytes(url: &str) -> Result<Vec<u8>, AiError> {
         .read_to_vec()
         .map_err(|e| AiError::Network(e.to_string()))
 }
+
+/// Returns the `Location` of a 3xx response without following it; `None` if there was no redirect.
+pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    let agent = AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .build()
+            .into()
+    });
+    let resp = agent
+        .get(url)
+        .call()
+        .map_err(|e| AiError::Network(e.to_string()))?;
+    let status = resp.status().as_u16();
+    if (300..400).contains(&status) {
+        return Ok(resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned));
+    }
+    if (200..300).contains(&status) {
+        return Ok(None);
+    }
+    Err(AiError::Http {
+        status,
+        body: String::new(),
+    })
+}

@@ -11,6 +11,7 @@ lp-store.workspace = true
 lp-ai.workspace = true
 lp-media.workspace = true
 serde_json.workspace = true
+sha2 = "0.11"
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 directories = "6"
 rfd = "0.15"

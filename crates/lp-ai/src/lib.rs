@@ -56,3 +56,8 @@ impl std::error::Error for AiError {}
 pub fn fetch(url: &str) -> Result<Vec<u8>, AiError> {
     http::get_bytes(url)
 }
+
+/// Reads where a URL redirects to, without following it.
+pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
+    http::redirect_target(url)
+}
