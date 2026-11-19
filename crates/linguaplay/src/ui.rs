@@ -37,6 +37,7 @@ impl eframe::App for App {
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         self.stop_asr();
+        self.jobs.shutdown();
         self.video.destroy(gl);
     }
 

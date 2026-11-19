@@ -1,6 +1,7 @@
 //! Background work. The UI thread never touches the network or the disk: it sends a job,
 //! keeps drawing, and picks up a `Msg` when the job is done.
 
+use crate::session::CueKey;
 use eframe::egui;
 use lp_ai::AiError;
 use lp_ai::anki::{AnkiClient, AnkiNote};
@@ -25,13 +26,8 @@ pub enum Msg {
     Translated {
         generation: u64,
         track: usize,
-        items: Vec<(usize, String)>,
-    },
-    TranslateFailed {
-        generation: u64,
-        track: usize,
-        indices: Vec<usize>,
-        error: String,
+        keys: Vec<CueKey>,
+        result: Result<Vec<String>, String>,
     },
     AsrCues {
         generation: u64,
@@ -61,8 +57,7 @@ pub enum Msg {
 pub struct TranslateJob {
     pub generation: u64,
     pub track: usize,
-    pub indices: Vec<usize>,
-    pub lines: Vec<String>,
+    pub keys: Vec<CueKey>,
     pub context: Vec<String>,
     pub src: Option<String>,
     pub dst: String,
@@ -168,6 +163,8 @@ pub struct Jobs {
     pub store: Arc<Mutex<Store>>,
     translate_tx: Sender<TranslateJob>,
     whisper: Arc<Mutex<Option<WhisperProcess>>>,
+    /// Set by `shutdown`; an ASR thread still running must not start a new server after it.
+    closing: Arc<AtomicBool>,
 }
 
 impl Jobs {
@@ -179,28 +176,23 @@ impl Jobs {
         // One translation at a time keeps me inside provider rate limits.
         std::thread::spawn(move || {
             for job in translate_rx {
-                let outcome = translate_cached(
+                let lines: Vec<String> = job.keys.iter().map(|k| k.text.clone()).collect();
+                let result = translate_cached(
                     &worker_store,
                     job.translator.as_ref(),
                     job.src.as_deref(),
                     &job.dst,
-                    &job.lines,
+                    &lines,
                     &job.context,
-                );
-                let msg = match outcome {
-                    Ok(o) => Msg::Translated {
-                        generation: job.generation,
-                        track: job.track,
-                        items: job.indices.into_iter().zip(o.results).collect(),
-                    },
-                    Err(e) => Msg::TranslateFailed {
-                        generation: job.generation,
-                        track: job.track,
-                        indices: job.indices,
-                        error: e.to_string(),
-                    },
-                };
-                let _ = worker_tx.send(msg);
+                )
+                .map(|o| o.results)
+                .map_err(|e| e.to_string());
+                let _ = worker_tx.send(Msg::Translated {
+                    generation: job.generation,
+                    track: job.track,
+                    keys: job.keys,
+                    result,
+                });
                 worker_ctx.request_repaint();
             }
         });
@@ -211,7 +203,20 @@ impl Jobs {
             store,
             translate_tx,
             whisper: Arc::default(),
+            closing: Arc::default(),
         }
+    }
+
+    /// Stops whisper-server now. `main` leaves through `process::exit`, which runs no
+    /// destructors, and the ASR thread holds its own reference to the slot anyway.
+    pub fn shutdown(&self) {
+        self.closing.store(true, Ordering::SeqCst);
+        let process = self
+            .whisper
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        drop(process);
     }
 
     pub fn spawn(&self, work: impl FnOnce() -> Msg + Send + 'static) {
@@ -361,11 +366,12 @@ impl Jobs {
             cancel: Arc::default(),
         };
         let (playhead, cancel) = (handle.playhead.clone(), handle.cancel.clone());
-        let (tx, ctx, store, whisper) = (
+        let (tx, ctx, store, whisper, closing) = (
             self.tx.clone(),
             self.ctx.clone(),
             self.store.clone(),
             self.whisper.clone(),
+            self.closing.clone(),
         );
         std::thread::spawn(move || {
             let generation = params.generation;
@@ -378,7 +384,7 @@ impl Jobs {
                 ctx.request_repaint();
             };
             if let Err(e) = run_asr(
-                params, &playhead, &cancel, &store, &whisper, &tx, &ctx, &status,
+                params, &playhead, &cancel, &closing, &store, &whisper, &tx, &ctx, &status,
             ) {
                 status(e, false);
             }
@@ -392,19 +398,29 @@ fn run_asr(
     mut p: AsrParams,
     playhead: &AtomicI64,
     cancel: &AtomicBool,
+    closing: &AtomicBool,
     store: &Mutex<Store>,
     whisper: &Mutex<Option<WhisperProcess>>,
     tx: &Sender<Msg>,
     ctx: &egui::Context,
     status: &dyn Fn(String, bool),
 ) -> Result<(), String> {
+    let stopped = || cancel.load(Ordering::Relaxed) || closing.load(Ordering::SeqCst);
+    if p.done.iter().all(|d| *d) {
+        status("Transcript ready".into(), false);
+        return Ok(());
+    }
     let model_name = p
         .model
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let url = {
-        let mut slot = whisper.lock().unwrap();
+        let mut slot = whisper.lock().unwrap_or_else(|e| e.into_inner());
+        // Checked under the lock: `shutdown` sets the flag before it empties the slot.
+        if closing.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         if slot.as_mut().is_none_or(|w| w.has_exited()) {
             status("Starting speech recognition…".into(), true);
             let process = WhisperProcess::spawn(&p.server, &p.model, p.vad_model.as_deref())
@@ -416,7 +432,7 @@ fn run_asr(
     let engine = WhisperServer::new(&url, &model_name);
     let started = Instant::now();
     while !engine.is_ready() {
-        if cancel.load(Ordering::Relaxed) {
+        if stopped() {
             return Ok(());
         }
         if started.elapsed() > Duration::from_secs(120) {
@@ -427,9 +443,8 @@ fn run_asr(
 
     let total = p.done.len();
     let lang_key = p.lang.clone().unwrap_or_default();
-    let mut last_save = Instant::now();
     while let Some(k) = asr_plan::next_window(&p.done, playhead.load(Ordering::Relaxed)) {
-        if cancel.load(Ordering::Relaxed) {
+        if stopped() {
             return Ok(());
         }
         let finished = p.done.iter().filter(|d| **d).count();
@@ -444,9 +459,12 @@ fn run_asr(
         let cues = if pcm.is_empty() {
             Vec::new()
         } else {
-            let out = engine
-                .transcribe(&pcm, p.lang.as_deref())
-                .map_err(|e| e.to_string())?;
+            let out = match engine.transcribe(&pcm, p.lang.as_deref()) {
+                Ok(out) => out,
+                // The server was killed under me on purpose; that is not an error to show.
+                Err(_) if stopped() => return Ok(()),
+                Err(e) => return Err(e.to_string()),
+            };
             language = out.language;
             let segments = out.segments.into_iter().map(|s| Cue {
                 start: s.start,
@@ -464,24 +482,18 @@ fn run_asr(
         });
         ctx.request_repaint();
 
-        let all_done = p.done.iter().all(|d| *d);
-        if all_done || last_save.elapsed() > Duration::from_secs(20) {
-            let covered = asr_plan::covered_prefix(&p.done, p.duration);
-            let prefix: Vec<Cue> = p
-                .cues
-                .iter()
-                .filter(|c| c.start < covered)
-                .cloned()
-                .collect();
-            let _ = store.lock().unwrap().save_transcript(
-                &p.media_key,
-                &engine.id(),
-                &lang_key,
-                covered,
-                &prefix,
-            );
-            last_save = Instant::now();
-        }
+        // Saved after every window: the player may be closed at any moment.
+        let covered = asr_plan::covered_prefix(&p.done, p.duration);
+        let prefix: Vec<Cue> = p
+            .cues
+            .iter()
+            .filter(|c| c.start < covered)
+            .cloned()
+            .collect();
+        let _ = store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .save_transcript(&p.media_key, &engine.id(), &lang_key, covered, &prefix);
     }
     status("Transcript ready".into(), false);
     Ok(())

@@ -2023,6 +2023,7 @@ version = "0.1.0"
 dependencies = [
  "libloading 0.9.1",
  "lp-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

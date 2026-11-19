@@ -517,29 +517,16 @@ impl App {
                 Msg::Translated {
                     generation,
                     track,
-                    items,
-                } if Some(generation) == current => {
-                    let t = &mut self.session.as_mut().unwrap().tracks[track];
-                    for (i, text) in items {
-                        if let Some(slot) = t.translation.get_mut(i) {
-                            *slot = Tr::Done(text);
-                        }
-                    }
-                }
-                Msg::TranslateFailed {
-                    generation,
-                    track,
-                    indices,
-                    error,
+                    keys,
+                    result,
                 } if Some(generation) == current => {
                     let s = self.session.as_mut().unwrap();
-                    for i in indices {
-                        if let Some(slot) = s.tracks[track].translation.get_mut(i) {
-                            *slot = Tr::Missing;
-                        }
+                    let t = &mut s.tracks[track];
+                    t.apply_translations(&keys, result.as_deref().ok());
+                    if let Err(error) = result {
+                        s.translate_failed_at = Some(Instant::now());
+                        self.toast(format!("Translation failed: {error}"));
                     }
-                    s.translate_failed_at = Some(Instant::now());
-                    self.toast(format!("Translation failed: {error}"));
                 }
                 Msg::AsrCues {
                     generation,
@@ -648,9 +635,7 @@ impl App {
         if missing.is_empty() || (!urgent && missing.len() < lookahead / 2) {
             return;
         }
-        for &i in &missing {
-            t.translation[i] = Tr::Requested;
-        }
+        let keys = t.request_translations(&missing);
         let src = t
             .track
             .lang
@@ -660,15 +645,11 @@ impl App {
         self.jobs.translate(TranslateJob {
             generation,
             track: index,
-            lines: missing
-                .iter()
-                .map(|&i| t.track.cues[i].text.clone())
-                .collect(),
+            keys,
             context: t.track.cues[from.saturating_sub(3)..from]
                 .iter()
                 .map(|c| c.text.clone())
                 .collect(),
-            indices: missing,
             src,
             dst: self.cfg.general.native_lang.clone(),
             translator,

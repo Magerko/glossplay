@@ -91,6 +91,49 @@ impl SubTrack {
     pub fn is_text(&self) -> bool {
         self.load != Load::Bitmap
     }
+
+    /// Marks cues as sent for translation. The keys travel with the job, because by the
+    /// time the answer comes speech recognition may have inserted cues before these.
+    pub fn request_translations(&mut self, indices: &[usize]) -> Vec<CueKey> {
+        indices
+            .iter()
+            .filter_map(|&i| {
+                let cue = self.track.cues.get(i)?;
+                self.translation[i] = Tr::Requested;
+                Some(CueKey {
+                    start: cue.start,
+                    text: cue.text.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// Puts the answer to a translation job on the cues it was asked for; `None` means the
+    /// job failed. Whatever stays unanswered goes back to `Missing` to be asked again.
+    pub fn apply_translations(&mut self, keys: &[CueKey], results: Option<&[String]>) {
+        for (n, key) in keys.iter().enumerate() {
+            let from = self.track.cues.partition_point(|c| c.start < key.start);
+            let to = self.track.cues.partition_point(|c| c.start <= key.start);
+            // Only a cue still waiting takes the answer: one reset to `Missing` meanwhile
+            // (new provider or language) must not get a stale translation.
+            let Some(i) = (from..to).find(|&i| {
+                self.track.cues[i].text == key.text && self.translation[i] == Tr::Requested
+            }) else {
+                continue;
+            };
+            self.translation[i] = match results.and_then(|r| r.get(n)) {
+                Some(text) => Tr::Done(text.clone()),
+                None => Tr::Missing,
+            };
+        }
+    }
+}
+
+/// Identifies a cue independently of its position in a track that is still growing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CueKey {
+    pub start: Ms,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -377,6 +420,62 @@ mod tests {
             t.translation,
             [Tr::Missing, Tr::Missing, Tr::Done("в".into())]
         );
+    }
+
+    #[test]
+    fn translations_land_on_their_cues_after_earlier_cues_are_inserted() {
+        let mut t = ready(
+            "en",
+            vec![cue(10_000, 11_000, "A"), cue(20_000, 21_000, "C")],
+        );
+        let keys = t.request_translations(&[0, 1]);
+        t.merge_cues(vec![cue(1_000, 2_000, "B0"), cue(15_000, 16_000, "B")]);
+        assert_eq!(
+            t.translation,
+            [Tr::Missing, Tr::Requested, Tr::Missing, Tr::Requested]
+        );
+        t.apply_translations(&keys, Some(&["а".into(), "в".into()]));
+        let pairs: Vec<(&str, &Tr)> = t
+            .track
+            .cues
+            .iter()
+            .map(|c| c.text.as_str())
+            .zip(&t.translation)
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("B0", &Tr::Missing),
+                ("A", &Tr::Done("а".into())),
+                ("B", &Tr::Missing),
+                ("C", &Tr::Done("в".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_short_or_stale_translations_release_their_cues() {
+        let mut t = ready(
+            "en",
+            vec![
+                cue(0, 1_000, "a"),
+                cue(0, 1_000, "a"),
+                cue(5_000, 6_000, "c"),
+            ],
+        );
+        let stale = t.request_translations(&[2]);
+        let keys = t.request_translations(&[0, 1]);
+        t.apply_translations(&keys, None);
+        assert_eq!(t.translation[..2], [Tr::Missing, Tr::Missing]);
+
+        let keys = t.request_translations(&[0, 1]);
+        t.apply_translations(&keys, Some(&["x".into()]));
+        assert_eq!(t.translation[..2], [Tr::Done("x".into()), Tr::Missing]);
+
+        // A settings change resets the cues while the job for "c" is still out.
+        t.translation[2] = Tr::Missing;
+        t.apply_translations(&stale, Some(&["old".into()]));
+        assert_eq!(t.translation[2], Tr::Missing);
     }
 
     #[test]
