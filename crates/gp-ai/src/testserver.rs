@@ -1,9 +1,11 @@
 //! A throwaway HTTP server for tests: answers every request with the next canned body
 //! and records what it received.
 
+use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::marker::PhantomData;
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 pub struct Received {
@@ -12,9 +14,47 @@ pub struct Received {
     pub body: String,
 }
 
+// On Windows, connections made in parallel to freshly created local listeners now and then
+// hang. The tests take hundredths of a second, so I run all of them that touch the network
+// one at a time.
+static NET_LOCK: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    // Nesting depth on this thread, and the lock held while it is above zero. A test may
+    // start two servers, so the lock has to be re-entrant for the thread that owns it.
+    static HELD: RefCell<(usize, Option<MutexGuard<'static, ()>>)> = const { RefCell::new((0, None)) };
+}
+
+/// Keeps other tests off the network while it lives. The lock is released when the last
+/// guard of the thread goes away.
+pub struct NetGuard(PhantomData<*const ()>);
+
+pub fn serial() -> NetGuard {
+    HELD.with_borrow_mut(|(depth, guard)| {
+        if *depth == 0 {
+            // A test that failed while holding the lock must not fail all the others.
+            *guard = Some(NET_LOCK.lock().unwrap_or_else(PoisonError::into_inner));
+        }
+        *depth += 1;
+    });
+    NetGuard(PhantomData)
+}
+
+impl Drop for NetGuard {
+    fn drop(&mut self) {
+        HELD.with_borrow_mut(|(depth, guard)| {
+            *depth -= 1;
+            if *depth == 0 {
+                *guard = None;
+            }
+        });
+    }
+}
+
 pub struct TestServer {
     pub url: String,
     pub received: Arc<Mutex<Vec<Received>>>,
+    _net: NetGuard,
 }
 
 impl TestServer {
@@ -25,6 +65,7 @@ impl TestServer {
 
     /// `extra_headers` is raw header text, each line ending in CRLF, added to every reply.
     pub fn start_with_headers(responses: Vec<(u16, String)>, extra_headers: String) -> TestServer {
+        let net = serial();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let url = format!("http://{addr}");
@@ -44,7 +85,11 @@ impl TestServer {
                 });
             }
         });
-        TestServer { url, received }
+        TestServer {
+            url,
+            received,
+            _net: net,
+        }
     }
 
     pub fn count(&self) -> usize {
