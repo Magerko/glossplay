@@ -27,6 +27,7 @@ const SLACK: f64 = 0.15;
 const CLOSERS: &[char] = &[
     '"', '\'', '”', '’', '»', ')', ']', '」', '』', '）', '】', '〕', '〉', '》',
 ];
+const OPENERS: &[char] = &['"', '«', '„', '“', '‘', '‹', '「', '『', '（', '('];
 const TERMINALS: &[char] = &['.', '!', '?', '…', '。', '！', '？', '‼', '⁉', '؟'];
 const SOFT: &[char] = &[',', ';', ':', '，', '、', '；', '：'];
 const DASHES: &[char] = &['—', '–'];
@@ -419,6 +420,8 @@ struct Source {
     cue_end: Vec<usize>,
     cue_of: Vec<usize>,
     marks: Vec<Mark>,
+    /// Whether each cue starts with a capital or a quote, as quoted speech does.
+    speech: Vec<bool>,
 }
 
 impl Source {
@@ -438,6 +441,13 @@ impl Source {
             cue_end,
             cue_of,
             marks: sources.iter().map(|t| mark(&flatten(t))).collect(),
+            speech: sources
+                .iter()
+                .map(|t| {
+                    t.trim_start()
+                        .starts_with(|c: char| c.is_uppercase() || OPENERS.contains(&c))
+                })
+                .collect(),
         }
     }
 }
@@ -486,7 +496,13 @@ fn cuts(
             return f64::INFINITY;
         }
         let off = (tr.pos[b] - target) / tr.total() / SLACK;
-        off * off - boundary_bonus(&tr.units[b - 1], &tr.units[b], src.marks[k])
+        off * off
+            - boundary_bonus(
+                &tr.units[b - 1],
+                &tr.units[b],
+                src.marks[k],
+                src.speech[k + 1],
+            )
     };
 
     // best[k][b]: cheapest way to place cuts 0..=k with cut k before unit b.
@@ -567,8 +583,9 @@ pub fn distribute(translation: &str, sources: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// How good a cut between two translation units is, given how the source cue ends.
-fn boundary_bonus(before: &str, after: &str, source: Mark) -> f64 {
+/// How good a cut between two translation units is, given how the source cue ends and
+/// whether the next one opens quoted speech.
+fn boundary_bonus(before: &str, after: &str, source: Mark, speech: bool) -> f64 {
     let here = mark(before);
     let mut bonus = match (here, source) {
         (Mark::Stop, Mark::Stop) => 2.0,
@@ -589,6 +606,10 @@ fn boundary_bonus(before: &str, after: &str, source: Mark) -> f64 {
     };
     if is_dash(after) && here != Mark::Dash {
         bonus += 0.3;
+    }
+    // "called out, | Sit down" is "крикнула: | «Садитесь»".
+    if speech && after.starts_with(OPENERS) {
+        bonus += 0.5;
     }
     bonus
 }
@@ -1069,5 +1090,21 @@ mod tests {
             p[3].ends_with("достаточно.") && !p[3].contains("Скоро я"),
             "{p:?}"
         );
+
+        // The same words cut by the new recognition: the quote opens where the speech does.
+        let cues = [
+            cue(
+                117_530,
+                122_230,
+                "At last the mouse, who seemed to be a person of authority",
+            ),
+            cue(122_230, 124_214, "among them, called out,"),
+            cue(124_320, 128_715, "Sit down, all of you, and listen to me."),
+        ];
+        let t = "Наконец мышь, которая, по-видимому, пользовалась среди них авторитетом, \
+                 крикнула: «Садитесь все и слушайте меня».";
+        let p = cut(&cues, t);
+        assert!(p[1].ends_with("крикнула:"), "{p:?}");
+        assert_eq!(p[2], "«Садитесь все и слушайте меня».");
     }
 }
