@@ -44,7 +44,7 @@ This is version 0.1, the first usable release.
 | | |
 |---|---|
 | Windows 10/11 x64 | Built and tested by hand, on Windows 11 with an NVIDIA GPU. |
-| Linux, macOS | Compile and pass the test suite in CI. **Nobody has run the interface on them yet** — reports are welcome. Speech recognition and voice-over have to be set up by hand there: the one-button install is for Windows only. |
+| Linux, macOS | Not tested yet: the code is written to be portable, but it has not been built or run there. **Nobody has run the interface on them** — reports are welcome. Speech recognition and voice-over have to be set up by hand there: the one-button install is for Windows only. |
 
 Known limits of this version:
 
