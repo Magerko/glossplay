@@ -63,6 +63,21 @@ fn default_hwdec() -> &'static str {
     }
 }
 
+/// ytdl_hook splits its ytdl_path on `;` (Windows) or `:` (elsewhere) with no way to escape it,
+/// so a path containing that character is never found. For such a path I hand mpv the folder
+/// as its config directory and give the hook just the file name, which it looks up there.
+fn ytdl_location(path: &str) -> (String, Option<String>) {
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let p = std::path::Path::new(path);
+    match (p.parent(), p.file_name()) {
+        (Some(dir), Some(name)) if path.contains(separator) => (
+            name.to_string_lossy().into_owned(),
+            Some(dir.to_string_lossy().into_owned()),
+        ),
+        _ => (path.to_owned(), None),
+    }
+}
+
 pub struct Player {
     pub mpv: Arc<Mpv>,
 }
@@ -93,10 +108,16 @@ impl Player {
         } else {
             cfg.ytdl_path.clone()
         };
+        let (ytdl, config_dir) = ytdl_location(&ytdl);
         // A comma separates entries in a script-opts list; the %len% form takes the value verbatim.
         let ytdl_opt = format!("ytdl_hook-ytdl_path=%{}%{ytdl}", ytdl.len());
         options.push(("ytdl", "yes"));
         options.push(("script-opts", &ytdl_opt));
+        if let Some(dir) = &config_dir {
+            // mpv ignores config-dir unless config is on; the folder holds no mpv.conf.
+            options.push(("config", "yes"));
+            options.push(("config-dir", dir));
+        }
         Ok(Player {
             mpv: Arc::new(Mpv::new(&cfg.mpv_path, &options)?),
         })
@@ -166,5 +187,23 @@ impl Player {
     pub fn screenshot(&self, path: &std::path::Path) -> Result<(), MediaError> {
         self.mpv
             .command(&["screenshot-to-file", &path.to_string_lossy(), "video"])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_ytdl_path_goes_straight_to_the_hook() {
+        assert_eq!(ytdl_location("yt-dlp"), ("yt-dlp".to_owned(), None));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn semicolon_path_becomes_config_dir_and_name() {
+        let (name, dir) = ytdl_location(r"E:\a;b\tools\yt-dlp.exe");
+        assert_eq!(name, "yt-dlp.exe");
+        assert_eq!(dir.as_deref(), Some(r"E:\a;b\tools"));
     }
 }

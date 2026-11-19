@@ -187,7 +187,13 @@ impl Mpv {
         let api = tried
             .iter()
             .find_map(|path| unsafe { Library::new(path).ok().and_then(|lib| Api::load(lib).ok()) })
-            .ok_or(MediaError::LibraryNotFound { tried })?;
+            .ok_or_else(|| {
+                // The error text only counts the PATH folders; the whole list helps debugging.
+                eprintln!("libmpv was not found; looked in: {}", tried.join(", "));
+                MediaError::LibraryNotFound {
+                    tried: tried.clone(),
+                }
+            })?;
         let handle = unsafe { (api.create)() };
         if handle.is_null() {
             return Err(MediaError::Mpv {

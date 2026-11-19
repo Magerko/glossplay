@@ -365,6 +365,11 @@ fn report(st: &mut State, app: &App) {
         "audio_codec={}",
         mpv.get_string("audio-codec-name").unwrap_or_default()
     );
+    println!(
+        "ytdl_path={}",
+        mpv.get_string("user-data/mpv/ytdl/path")
+            .unwrap_or_default()
+    );
     println!("pos_start_ms={}", st.start_pos);
     println!("pos_end_ms={}", app.snap.pos);
     println!("advanced_ms={advanced}");

@@ -56,8 +56,8 @@ pub fn parse_subtitles(bytes: &[u8], hint: Option<SubFormat>) -> Result<Vec<Cue>
     let text = decode(bytes);
     let format = detect(&text).or(hint).ok_or(SubError::UnknownFormat)?;
     let mut cues = match format {
-        SubFormat::Srt => parse_srt_like(&text, false),
-        SubFormat::WebVtt => parse_srt_like(&text, true),
+        SubFormat::Srt => parse_srt_like(&text),
+        SubFormat::WebVtt => parse_srt_like(&text),
         SubFormat::Ass => parse_ass(&text)?,
     };
     for c in &mut cues {
@@ -178,7 +178,7 @@ fn parse_timing_line(line: &str) -> Option<(Ms, Ms)> {
 // SRT and WebVTT share the cue structure. I skip broken blocks instead of failing:
 // subtitles from the internet are often malformed, and losing one line beats
 // refusing the whole track.
-fn parse_srt_like(text: &str, vtt: bool) -> Vec<Cue> {
+fn parse_srt_like(text: &str) -> Vec<Cue> {
     let mut cues = Vec::new();
     let mut lines = text.lines().map(|l| l.trim_end_matches('\r')).peekable();
     while let Some(line) = lines.next() {
@@ -203,10 +203,7 @@ fn parse_srt_like(text: &str, vtt: bool) -> Vec<Cue> {
             }
             body.push(lines.next().unwrap());
         }
-        let mut clean = strip_markup(&body.join("\n"));
-        if vtt {
-            clean = decode_entities(&clean);
-        }
+        let clean = decode_entities(&strip_markup(&body.join("\n")));
         cues.push(Cue {
             start,
             end,
@@ -341,18 +338,51 @@ fn strip_markup(s: &str) -> String {
     out
 }
 
+/// One pass, so "&amp;lt;" becomes "&lt;" and not "<".
 fn decode_entities(s: &str) -> String {
-    if !s.contains('&') {
-        return s.to_owned();
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let decoded = tail
+            .find(';')
+            .filter(|&end| end <= 10)
+            .and_then(|end| entity(&tail[1..end]).map(|text| (text, end + 1)));
+        match decoded {
+            Some((text, len)) => {
+                out.push_str(&text);
+                rest = &tail[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
     }
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&nbsp;", " ")
-        .replace("&lrm;", "")
-        .replace("&rlm;", "")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
+    out.push_str(rest);
+    out
+}
+
+fn entity(name: &str) -> Option<String> {
+    let text = match name {
+        "lt" => "<".to_owned(),
+        "gt" => ">".to_owned(),
+        "amp" => "&".to_owned(),
+        "quot" => "\"".to_owned(),
+        "apos" => "'".to_owned(),
+        "nbsp" => " ".to_owned(),
+        "lrm" | "rlm" => String::new(),
+        _ => {
+            let digits = name.strip_prefix('#')?;
+            let code = match digits.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => digits.parse().ok()?,
+            };
+            char::from_u32(code).filter(|c| *c != '\0')?.to_string()
+        }
+    };
+    Some(text)
 }
 
 /// `strip_markup` leaves a tag that is split across lines, and callers later join the lines
@@ -420,6 +450,16 @@ mod tests {
         let cues = parse_subtitles(src.as_bytes(), Some(SubFormat::Srt)).unwrap();
         assert_eq!(cues.len(), 2);
         assert_eq!(cues, vec![cue(1000, 2000, "One"), cue(3000, 4000, "Two")]);
+    }
+
+    #[test]
+    fn srt_decodes_html_entities_once() {
+        let src = "1
+00:00:01,000 --> 00:00:02,000
+Tom &amp; Jerry&nbsp;&lt; &quot;hi&quot; &#39;x&#x27; AT&T &amp;lt; &bogus;
+";
+        let cues = parse_subtitles(src.as_bytes(), Some(SubFormat::Srt)).unwrap();
+        assert_eq!(cues[0].text, "Tom & Jerry < \"hi\" 'x' AT&T &lt; &bogus;");
     }
 
     #[test]
