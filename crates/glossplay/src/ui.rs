@@ -13,6 +13,32 @@ use std::time::Duration;
 
 const CONTROLS_HEIGHT: f32 = 78.0;
 const HIDE_AFTER: Duration = Duration::from_millis(2500);
+const VOLUME_WIDTH: f32 = 80.0;
+
+/// Which items of the control bar are drawn at the current width.
+struct ControlsFit {
+    volume: bool,
+    speed: bool,
+    autopause: bool,
+    settings: bool,
+    sidebar: bool,
+    fullscreen: bool,
+    full_time: bool,
+}
+
+impl ControlsFit {
+    fn all() -> Self {
+        ControlsFit {
+            volume: true,
+            speed: true,
+            autopause: true,
+            settings: true,
+            sidebar: true,
+            fullscreen: true,
+            full_time: true,
+        }
+    }
+}
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -20,9 +46,11 @@ impl eframe::App for App {
         self.tick(&ctx);
         self.handle_input(&ctx);
         if self.sidebar_open {
+            // In a small window the panel takes at most 40%, or the video would shrink to a strip.
+            let max = (ctx.content_rect().width() * 0.4).clamp(220.0, 620.0);
             egui::Panel::right("sidebar")
-                .default_size(380.0)
-                .size_range(300.0..=620.0)
+                .default_size(380.0_f32.min(max))
+                .size_range(220.0..=max)
                 .frame(egui::Frame::NONE.fill(PANEL).inner_margin(12))
                 .show(ui, |ui| self.sidebar(ui));
         }
@@ -333,14 +361,19 @@ impl App {
         let max_width = rect.width() * 0.86;
         let mut y = bottom;
 
-        let small = FontId::proportional(size * self.cfg.subtitles.secondary_scale);
+        let secondary_lang = match s.secondary {
+            Secondary::Track(i) => s.tracks.get(i).and_then(|t| t.track.lang.clone()),
+            _ => Some(self.cfg.general.native_lang.clone()),
+        };
+        let small_size = size * self.cfg.subtitles.secondary_scale;
         for text in secondary.iter().rev() {
-            let galley = ui.painter().layout(
-                text.replace('\n', " "),
-                small.clone(),
-                SUB_SECONDARY,
-                max_width,
+            let small = FontId::new(
+                small_size,
+                theme::subs_family(secondary_lang.as_deref(), text),
             );
+            let galley =
+                ui.painter()
+                    .layout(text.replace('\n', " "), small, SUB_SECONDARY, max_width);
             let at = pos2(rect.center().x - galley.size().x / 2.0, y - galley.size().y);
             let backdrop = Rect::from_min_size(at, galley.size()).expand2(vec2(10.0, 3.0));
             ui.painter()
@@ -349,11 +382,11 @@ impl App {
             y -= galley.size().y + 8.0;
         }
 
-        let font = FontId::proportional(size);
         let open_token = self.popup.as_ref().map(|p| p.token);
         let mut clicked: Option<(String, usize, usize, egui::Pos2)> = None;
         for line in primary.iter().rev() {
             let tokens = self.tokens_for(track_index, line.cue, &line.text, lang.as_deref());
+            let font = FontId::new(size, theme::subs_family(lang.as_deref(), &line.text));
             // Lay the words out in rows by hand: every word needs its own hit box.
             let mut rows: Vec<Vec<(usize, Arc<egui::Galley>)>> = vec![Vec::new()];
             let mut row_width = 0.0;
@@ -460,6 +493,16 @@ impl App {
         let ui = &mut child;
         self.seek_bar(ui);
         ui.add_space(2.0);
+        let fit = self.fit_controls(ui, ui.available_width());
+        let clock = if fit.full_time {
+            format!(
+                "{} / {}",
+                theme::clock(self.snap.pos),
+                theme::clock(self.snap.duration)
+            )
+        } else {
+            theme::clock(self.snap.pos)
+        };
         ui.horizontal(|ui| {
             if icon_button(ui, "⏮", "Previous line (A)") {
                 self.cue_nav(-1);
@@ -474,61 +517,126 @@ impl App {
             if icon_button(ui, "🔁", "Repeat this line (S)") {
                 self.cue_nav(0);
             }
-            ui.label(
-                RichText::new(format!(
-                    "{} / {}",
-                    theme::clock(self.snap.pos),
-                    theme::clock(self.snap.duration)
-                ))
-                .color(MUTED)
-                .monospace(),
-            );
+            ui.label(RichText::new(clock).color(MUTED).monospace());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if icon_button(ui, "⛶", "Full screen (F)") {
+                if fit.fullscreen && icon_button(ui, "⛶", "Full screen (F)") {
                     self.toggle_fullscreen(ui.ctx());
                 }
-                if icon_button(ui, "⚙", "Settings") {
+                if fit.settings && icon_button(ui, "⚙", "Settings") {
                     self.settings_draft = Some(self.cfg.clone());
                 }
-                if icon_button(ui, "☰", "Transcript and saved words (T)") {
+                if fit.sidebar && icon_button(ui, "☰", "Transcript and saved words (T)") {
                     self.sidebar_open = !self.sidebar_open;
                 }
-                self.subtitle_menu(ui);
-                if toggle_chip(
-                    ui,
-                    self.trainer.autopause,
-                    "Auto-pause",
-                    "Pause after every line (P)",
-                ) {
+                self.subtitle_menu(ui, &fit);
+                if fit.autopause
+                    && toggle_chip(
+                        ui,
+                        self.trainer.autopause,
+                        "Auto-pause",
+                        "Pause after every line (P)",
+                    )
+                {
                     self.toggle_autopause();
                 }
-                ui.menu_button(
-                    RichText::new(format!("{:.2}×", self.snap.speed)).size(13.0),
-                    |ui| {
-                        for speed in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] {
-                            if ui
-                                .selectable_label(self.snap.speed == speed, format!("{speed}×"))
-                                .clicked()
-                            {
-                                self.player.mpv.set_f64("speed", speed);
-                                ui.close();
+                if fit.speed {
+                    ui.menu_button(
+                        RichText::new(format!("{:.2}×", self.snap.speed)).size(13.0),
+                        |ui| {
+                            for speed in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] {
+                                if ui
+                                    .selectable_label(self.snap.speed == speed, format!("{speed}×"))
+                                    .clicked()
+                                {
+                                    self.player.mpv.set_f64("speed", speed);
+                                    ui.close();
+                                }
                             }
-                        }
-                    },
-                );
-                let mut volume = self.snap.volume as f32;
-                ui.spacing_mut().slider_width = 80.0;
-                if ui
-                    .add(egui::Slider::new(&mut volume, 0.0..=150.0).show_value(false))
-                    .changed()
-                {
-                    self.player.mpv.set_f64("volume", volume as f64);
+                        },
+                    );
+                }
+                if fit.volume {
+                    let mut volume = self.snap.volume as f32;
+                    ui.spacing_mut().slider_width = VOLUME_WIDTH;
+                    if ui
+                        .add(egui::Slider::new(&mut volume, 0.0..=150.0).show_value(false))
+                        .changed()
+                    {
+                        self.player.mpv.set_f64("volume", volume as f64);
+                    }
                 }
                 if icon_button(ui, if self.snap.muted { "🔇" } else { "🔊" }, "Mute (M)") {
                     self.player.mpv.set_flag("mute", !self.snap.muted);
                 }
             });
         });
+    }
+
+    /// Decides which control-bar items fit into `avail` points. The least important ones go
+    /// first, so nothing is ever drawn on top of something else.
+    fn fit_controls(&self, ui: &egui::Ui, avail: f32) -> ControlsFit {
+        let gap = ui.spacing().item_spacing.x;
+        let text_w = |text: String, font: FontId| {
+            ui.painter()
+                .layout_no_wrap(text, font, Color32::WHITE)
+                .size()
+                .x
+        };
+        let chip_w = |text: &str| text_w(text.to_owned(), FontId::proportional(13.0)) + 16.0 + 6.0;
+        let mono = egui::TextStyle::Monospace.resolve(ui.style());
+        let full_clock = format!(
+            "{} / {}",
+            theme::clock(self.snap.pos),
+            theme::clock(self.snap.duration)
+        );
+        // The clock grows with the longest value it can take, so the layout does not jump.
+        let widest = |s: &str| text_w(s.replace(|c: char| c.is_ascii_digit(), "0"), mono.clone());
+        let full_clock_w = widest(&full_clock);
+        let short_clock_w = widest(&theme::clock(self.snap.duration));
+        let icon = 28.0;
+        let left = 28.0 + 32.0 + 28.0 + 28.0 + 3.0 * gap;
+        let speed_w = chip_w("0.00×");
+        let autopause_w = chip_w("Auto-pause");
+        let subtitles_w = chip_w("Subtitles");
+        let needed = |f: &ControlsFit| {
+            let mut right = vec![icon, subtitles_w];
+            for (on, w) in [
+                (f.volume, VOLUME_WIDTH + 2.0),
+                (f.speed, speed_w),
+                (f.autopause, autopause_w),
+                (f.settings, icon),
+                (f.sidebar, icon),
+                (f.fullscreen, icon),
+            ] {
+                if on {
+                    right.push(w);
+                }
+            }
+            let clock = if f.full_time {
+                full_clock_w
+            } else {
+                short_clock_w
+            };
+            let right_total = right.iter().sum::<f32>() + gap * (right.len() as f32 - 1.0);
+            left + gap + clock + gap * 2.0 + right_total
+        };
+        let mut fit = ControlsFit::all();
+        let drops: [fn(&mut ControlsFit); 7] = [
+            |f| f.volume = false,
+            |f| f.speed = false,
+            |f| f.autopause = false,
+            |f| f.full_time = false,
+            |f| f.sidebar = false,
+            |f| f.settings = false,
+            |f| f.fullscreen = false,
+        ];
+        for drop in drops {
+            if needed(&fit) <= avail {
+                break;
+            }
+            drop(&mut fit);
+        }
+        fit
     }
 
     fn seek_bar(&mut self, ui: &mut egui::Ui) {
@@ -568,7 +676,7 @@ impl App {
         }
     }
 
-    fn subtitle_menu(&mut self, ui: &mut egui::Ui) {
+    fn subtitle_menu(&mut self, ui: &mut egui::Ui, fit: &ControlsFit) {
         let provider = match &self.translator {
             Ok(t) => t.id(),
             Err(_) => "not set up".to_owned(),
@@ -580,6 +688,8 @@ impl App {
         let mut add_file = false;
         let mut save_srt = None;
         let mut pick_audio = None;
+        let mut toggle_autopause = false;
+        let mut open_settings = false;
         ui.menu_button(RichText::new("Subtitles").size(13.0), |ui| {
             let Some(s) = &self.session else { return };
             ui.set_min_width(260.0);
@@ -670,7 +780,27 @@ impl App {
                     }
                 }
             }
+            // Items the narrow control bar had no room for live here instead.
+            if !fit.autopause || !fit.settings {
+                ui.separator();
+            }
+            if !fit.autopause
+                && ui
+                    .selectable_label(self.trainer.autopause, "Auto-pause after each line (P)")
+                    .clicked()
+            {
+                toggle_autopause = true;
+            }
+            if !fit.settings && ui.button("Settings…").clicked() {
+                open_settings = true;
+            }
         });
+        if toggle_autopause {
+            self.toggle_autopause();
+        }
+        if open_settings {
+            self.settings_draft = Some(self.cfg.clone());
+        }
         if let Some(choice) = pick_primary {
             self.select_primary(choice);
         }
@@ -801,6 +931,7 @@ impl App {
             }
             self.scrolled_to = current;
         }
+        let native = self.cfg.general.native_lang.clone();
         let mut seek_to = None;
         area.show_rows(ui, row_height, rows.len(), |ui, range| {
             for &i in &rows[range] {
@@ -838,13 +969,21 @@ impl App {
                 };
                 ui.painter().galley(
                     pos2(text_left, rect.top() + 5.0),
-                    one_line(&cue.text, FontId::proportional(14.5), TEXT),
+                    one_line(
+                        &cue.text,
+                        FontId::new(14.5, theme::subs_family(t.track.lang.as_deref(), &cue.text)),
+                        TEXT,
+                    ),
                     TEXT,
                 );
                 if let Some(tr) = s.translation_of(i) {
                     ui.painter().galley(
                         pos2(text_left, rect.top() + 25.0),
-                        one_line(&tr, FontId::proportional(12.5), MUTED),
+                        one_line(
+                            &tr,
+                            FontId::new(12.5, theme::subs_family(Some(&native), &tr)),
+                            MUTED,
+                        ),
                         MUTED,
                     );
                 }
@@ -889,10 +1028,20 @@ impl App {
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new(&w.word).size(17.0).strong());
+                                ui.label(
+                                    RichText::new(&w.word)
+                                        .size(17.0)
+                                        .strong()
+                                        .family(theme::subs_family(None, &w.word)),
+                                );
                                 ui.label(RichText::new(&w.translation).color(ACCENT));
                             });
-                            ui.label(RichText::new(&w.sentence).color(MUTED).small());
+                            ui.label(
+                                RichText::new(&w.sentence)
+                                    .color(MUTED)
+                                    .small()
+                                    .family(theme::subs_family(None, &w.sentence)),
+                            );
                             ui.horizontal(|ui| {
                                 if current_media.as_deref() == Some(w.media_path.as_str())
                                     && ui
@@ -945,6 +1094,11 @@ impl App {
                 .iter()
                 .any(|v| v.id == id && v.anki_note_id.is_some())
         });
+        let lang = self
+            .session
+            .as_ref()
+            .and_then(|s| s.primary_track())
+            .and_then(|t| t.track.lang.clone());
         let (mut save, mut anki, mut close) = (false, false, false);
         egui::Area::new(Id::unique("word-popup"))
             .order(egui::Order::Foreground)
@@ -958,7 +1112,12 @@ impl App {
                     .show(ui, |ui| {
                         ui.set_width(340.0);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(&p.word).size(22.0).strong());
+                            ui.label(
+                                RichText::new(&p.word)
+                                    .size(22.0)
+                                    .strong()
+                                    .family(theme::subs_family(lang.as_deref(), &p.word)),
+                            );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if icon_button(ui, "✕", "Close (Esc)") {
                                     close = true;
@@ -989,7 +1148,12 @@ impl App {
                             Async::Idle => {}
                         }
                         ui.add_space(6.0);
-                        ui.label(RichText::new(&p.sentence).color(MUTED).size(13.0));
+                        ui.label(
+                            RichText::new(&p.sentence)
+                                .color(MUTED)
+                                .size(13.0)
+                                .family(theme::subs_family(lang.as_deref(), &p.sentence)),
+                        );
                         if !p.sentence_translation.is_empty() {
                             ui.label(
                                 RichText::new(&p.sentence_translation)
@@ -1235,7 +1399,7 @@ impl App {
     }
 
     fn toast_ui(&mut self, ctx: &egui::Context) {
-        let Some((text, _)) = &self.status else {
+        let Some((text, _, _)) = &self.status else {
             return;
         };
         egui::Area::new(Id::unique("toast"))

@@ -35,10 +35,24 @@ pub fn load_config() -> (Config, Option<String>) {
     match std::fs::read_to_string(config_path()) {
         Ok(text) => match Config::from_toml(&text) {
             Ok(cfg) => (cfg, None),
-            Err(e) => (Config::default(), Some(format!("config.toml: {e}"))),
+            Err(e) => (
+                Config::default(),
+                Some(format!(
+                    "{}, {}",
+                    config_path().display(),
+                    Config::describe_error(&text, &e)
+                )),
+            ),
         },
         Err(_) => (Config::default(), None),
     }
+}
+
+/// Keeps a copy of a config that did not parse, so saving settings never destroys it unseen.
+pub fn keep_broken_config() -> std::io::Result<PathBuf> {
+    let backup = config_path().with_extension("toml.broken");
+    std::fs::copy(config_path(), &backup)?;
+    Ok(backup)
 }
 
 pub fn save_config(cfg: &Config) -> std::io::Result<()> {

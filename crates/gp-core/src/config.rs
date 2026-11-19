@@ -18,6 +18,17 @@ impl Config {
         toml::from_str(s)
     }
 
+    /// "line 3: invalid type..." for the first problem, short enough for a toast.
+    pub fn describe_error(text: &str, e: &toml::de::Error) -> String {
+        match e.span() {
+            Some(span) => {
+                let line = text[..span.start.min(text.len())].matches('\n').count() + 1;
+                format!("line {line}: {}", e.message())
+            }
+            None => e.message().to_owned(),
+        }
+    }
+
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).expect("config has only serializable fields")
     }

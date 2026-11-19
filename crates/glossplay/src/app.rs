@@ -81,7 +81,9 @@ pub struct App {
     pub url_input: String,
     /// A link opened before yt-dlp finished downloading; played as soon as it is there.
     pending_url: Option<String>,
-    pub status: Option<(String, Instant)>,
+    pub status: Option<(String, Instant, Duration)>,
+    /// The config on disk did not parse; the first save keeps a copy of it.
+    config_broken: bool,
     /// The last message shown, kept for the self-test report.
     pub last_toast: String,
     pub last_activity: Instant,
@@ -166,6 +168,7 @@ impl App {
             settings_draft: None,
             url_input: String::new(),
             status: None,
+            config_broken: config_error.is_some(),
             last_toast: String::new(),
             last_activity: Instant::now(),
             fullscreen: false,
@@ -175,7 +178,9 @@ impl App {
             cfg,
         };
         if let Some(e) = config_error {
-            app.toast(e);
+            let e = format!("{e}; using default settings");
+            eprintln!("{e}");
+            app.toast_for(e, Duration::from_secs(10));
         }
         if let Some(media) = launch.media {
             app.open(&media);
@@ -184,9 +189,13 @@ impl App {
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {
+        self.toast_for(text, Duration::from_secs(5));
+    }
+
+    pub fn toast_for(&mut self, text: impl Into<String>, shown_for: Duration) {
         let text = text.into();
         self.last_toast.clone_from(&text);
-        self.status = Some((text, Instant::now()));
+        self.status = Some((text, Instant::now(), shown_for));
     }
 
     pub fn open(&mut self, media: &str) {
@@ -930,6 +939,19 @@ impl App {
             s.translate_failed_at = None;
             s.translator_warned = false;
         }
+        if self.config_broken {
+            self.config_broken = false;
+            match paths::keep_broken_config() {
+                Ok(backup) => self.toast_for(
+                    format!(
+                        "The old config.toml did not parse; I kept it as {}",
+                        backup.display()
+                    ),
+                    Duration::from_secs(10),
+                ),
+                Err(e) => self.toast(format!("Could not keep a copy of the old config.toml: {e}")),
+            }
+        }
         if let Err(e) = paths::save_config(&self.cfg) {
             self.toast(format!("Could not save settings: {e}"));
         }
@@ -1007,7 +1029,7 @@ impl App {
         if self
             .status
             .as_ref()
-            .is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(5))
+            .is_some_and(|(_, at, shown_for)| at.elapsed() > *shown_for)
         {
             self.status = None;
         }

@@ -1,5 +1,6 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily};
 use gp_core::Ms;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub const BG: Color32 = Color32::from_rgb(14, 15, 18);
@@ -61,49 +62,221 @@ pub fn apply(ctx: &egui::Context, scale: f32) {
     ctx.set_style_of(egui::Theme::Light, style);
 }
 
+/// One face of a system font file. `index` picks a face inside a .ttc collection.
+struct Face(&'static str, u32);
+
+/// System fonts per script. One CJK font has to draw a whole line: when a Japanese font
+/// covers only some of the Chinese characters and another font the rest, the two have
+/// different ascents and the glyphs end up at different sizes and heights.
+struct Scripts {
+    latin: &'static [Face],
+    zh: &'static [Face],
+    ja: &'static [Face],
+    ko: &'static [Face],
+    symbols: &'static [Face],
+}
+
+fn system_fonts() -> Scripts {
+    if cfg!(windows) {
+        Scripts {
+            latin: &[Face("C:/Windows/Fonts/segoeui.ttf", 0)],
+            zh: &[Face("C:/Windows/Fonts/msyh.ttc", 0)],
+            ja: &[
+                Face("C:/Windows/Fonts/YuGothM.ttc", 0),
+                Face("C:/Windows/Fonts/meiryo.ttc", 0),
+            ],
+            ko: &[Face("C:/Windows/Fonts/malgun.ttf", 0)],
+            symbols: &[Face("C:/Windows/Fonts/seguisym.ttf", 0)],
+        }
+    } else if cfg!(target_os = "macos") {
+        Scripts {
+            latin: &[],
+            zh: &[
+                Face("/System/Library/Fonts/PingFang.ttc", 0),
+                Face("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+            ],
+            ja: &[Face("/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc", 0)],
+            ko: &[Face("/System/Library/Fonts/AppleSDGothicNeo.ttc", 0)],
+            symbols: &[],
+        }
+    } else {
+        // Noto Sans CJK ships as one collection ordered JP, KR, SC, TC, HK.
+        Scripts {
+            latin: &[],
+            zh: &[
+                Face("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2),
+                Face("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 2),
+                Face(
+                    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+                    2,
+                ),
+                Face("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 2),
+            ],
+            ja: &[
+                Face("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+                Face("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0),
+                Face(
+                    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+                    0,
+                ),
+                Face("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 0),
+            ],
+            ko: &[
+                Face("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 1),
+                Face("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 1),
+                Face(
+                    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+                    1,
+                ),
+                Face("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 1),
+            ],
+            symbols: &[],
+        }
+    }
+}
+
 /// The fonts bundled with egui have no CJK glyphs, so I add whatever the system offers
 /// as fallbacks. A missing file is simply skipped.
 pub fn install_fonts(ctx: &egui::Context) {
-    let candidates: &[&str] = if cfg!(windows) {
-        &[
-            "C:/Windows/Fonts/segoeui.ttf",
-            "C:/Windows/Fonts/YuGothM.ttc",
-            "C:/Windows/Fonts/meiryo.ttc",
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/malgun.ttf",
-            "C:/Windows/Fonts/seguisym.ttf",
-        ]
-    } else if cfg!(target_os = "macos") {
-        &[
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-        ]
-    } else {
-        &[
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        ]
-    };
+    let scripts = system_fonts();
     let mut fonts = FontDefinitions::default();
-    for (i, path) in candidates.iter().enumerate() {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        let name = format!("system-{i}");
-        fonts
-            .font_data
-            .insert(name.clone(), Arc::new(FontData::from_owned(bytes)));
-        let family = fonts.families.entry(FontFamily::Proportional).or_default();
-        // Segoe UI reads better than the bundled font, so it goes first; the rest are fallbacks.
-        if path.ends_with("segoeui.ttf") {
-            family.insert(0, name);
-        } else {
-            family.push(name);
+    let mut files: HashMap<&str, Arc<Vec<u8>>> = HashMap::new();
+    let mut load_all = |fonts: &mut FontDefinitions, faces: &'static [Face]| -> Vec<String> {
+        let mut names = Vec::new();
+        for face in faces {
+            let name = format!("system:{}:{}", face.0, face.1);
+            if !fonts.font_data.contains_key(&name) {
+                let bytes = match files.get(face.0) {
+                    Some(b) => b.clone(),
+                    None => {
+                        let Ok(read) = std::fs::read(face.0) else {
+                            continue;
+                        };
+                        let b = Arc::new(read);
+                        files.insert(face.0, b.clone());
+                        b
+                    }
+                };
+                fonts
+                    .font_data
+                    .insert(name.clone(), Arc::new(FontData::from_blob(bytes, face.1)));
+            }
+            names.push(name);
         }
+        names
+    };
+    let latin = load_all(&mut fonts, scripts.latin);
+    let zh = load_all(&mut fonts, scripts.zh);
+    let ja = load_all(&mut fonts, scripts.ja);
+    let ko = load_all(&mut fonts, scripts.ko);
+    let symbols = load_all(&mut fonts, scripts.symbols);
+
+    // The general chain keeps the old order: Japanese first, since kana-only text is the
+    // most common reason to need a fallback at all.
+    let general: Vec<String> = [&ja, &zh, &ko, &symbols]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    // Segoe UI reads better than the bundled font, so it goes first; the rest are fallbacks.
+    for (i, name) in latin.iter().enumerate() {
+        proportional.insert(i, name.clone());
+    }
+    proportional.extend(general);
+    let base = proportional.clone();
+
+    // A language family lists its own font first and then the same chain as everywhere
+    // else, so a missing font makes it identical to the general family.
+    for (family, own) in [(SUBS_ZH, &zh), (SUBS_JA, &ja), (SUBS_KO, &ko)] {
+        let mut chain: Vec<String> = own.clone();
+        chain.extend(base.iter().filter(|n| !own.contains(n)).cloned());
+        fonts
+            .families
+            .insert(FontFamily::Name(family.into()), chain);
     }
     ctx.set_fonts(fonts);
+}
+
+const SUBS_ZH: &str = "subs-zh";
+const SUBS_JA: &str = "subs-ja";
+const SUBS_KO: &str = "subs-ko";
+
+/// The font family for subtitle text: by the track language when it is known, otherwise by
+/// what the text contains (kana means Japanese, Hangul Korean, other ideographs Chinese).
+pub fn subs_family(lang: Option<&str>, text: &str) -> FontFamily {
+    let code = lang
+        .map(|l| crate::session::normalize_lang(l.trim()))
+        .filter(|l| !l.is_empty() && l != "und" && l != "auto");
+    let name = match code.as_deref() {
+        Some("zh" | "yue") => SUBS_ZH,
+        Some("ja") => SUBS_JA,
+        Some("ko") => SUBS_KO,
+        Some(_) => return FontFamily::Proportional,
+        None => match detect_script(text) {
+            Some(Script::Ja) => SUBS_JA,
+            Some(Script::Ko) => SUBS_KO,
+            Some(Script::Zh) => SUBS_ZH,
+            None => return FontFamily::Proportional,
+        },
+    };
+    FontFamily::Name(name.into())
+}
+
+#[derive(Debug, PartialEq)]
+enum Script {
+    Ja,
+    Ko,
+    Zh,
+}
+
+fn detect_script(text: &str) -> Option<Script> {
+    let mut han = false;
+    let mut hangul = false;
+    for c in text.chars() {
+        match c {
+            '\u{3040}'..='\u{30ff}' | '\u{31f0}'..='\u{31ff}' => return Some(Script::Ja),
+            '\u{ac00}'..='\u{d7af}' | '\u{1100}'..='\u{11ff}' => hangul = true,
+            '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' => {
+                han = true
+            }
+            _ => {}
+        }
+    }
+    if hangul {
+        Some(Script::Ko)
+    } else if han {
+        Some(Script::Zh)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(f: FontFamily) -> String {
+        match f {
+            FontFamily::Name(n) => n.to_string(),
+            other => format!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn family_follows_the_language_tag() {
+        assert_eq!(name(subs_family(Some("zh"), "x")), "subs-zh");
+        assert_eq!(name(subs_family(Some("zh-CN"), "x")), "subs-zh");
+        assert_eq!(name(subs_family(Some("jpn"), "x")), "subs-ja");
+        assert_eq!(name(subs_family(Some("ko"), "x")), "subs-ko");
+        assert_eq!(name(subs_family(Some("en"), "漢字")), "Proportional");
+    }
+
+    #[test]
+    fn family_is_detected_from_the_text() {
+        assert_eq!(name(subs_family(None, "你好，世界")), "subs-zh");
+        assert_eq!(name(subs_family(None, "今日は天気です")), "subs-ja");
+        assert_eq!(name(subs_family(Some("und"), "안녕하세요")), "subs-ko");
+        assert_eq!(name(subs_family(None, "plain text")), "Proportional");
+    }
 }
