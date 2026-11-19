@@ -1,0 +1,32 @@
+Rust crates used by LinguaPlay
+==============================
+
+LinguaPlay is built from the crates below. Each crate is distributed under the licence
+shown with it; the full licence texts follow the list. Generated with cargo-about from
+Cargo.lock by scripts/update-licenses.ps1, do not edit by hand.
+
+Licences in use
+---------------
+{{#each overview}}
+* {{{name}}} ({{id}}): {{count}} crates
+{{/each}}
+
+Crates
+------
+{{#each licenses}}
+{{#each used_by}}
+{{{crate.name}}} {{crate.version}} - {{../id}}{{#if crate.repository}} - {{crate.repository}}{{/if}}
+{{/each}}
+{{/each}}
+
+Licence texts
+=============
+{{#each licenses}}
+
+--------------------------------------------------------------------------------
+{{{name}}} ({{id}})
+Used by: {{#each used_by}}{{{crate.name}}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}
+--------------------------------------------------------------------------------
+
+{{{text}}}
+{{/each}}
