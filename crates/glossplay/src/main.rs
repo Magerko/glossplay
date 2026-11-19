@@ -44,6 +44,14 @@ Usage: glossplay [FILE or URL] [options]
   --version, --help";
 
 fn main() {
+    let all: Vec<String> = std::env::args().collect();
+    if all.get(1).map(String::as_str) == Some("--watchdog") {
+        let arg = |i: usize| all.get(i).map_or("", String::as_str);
+        std::process::exit(gp_media::tools::watchdog(arg(2), arg(3)));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        gp_media::tools::enable_watchdog(exe);
+    }
     let mut args = std::env::args().skip(1);
     let mut media = None;
     let mut plan = selftest::Plan {
@@ -140,6 +148,9 @@ version={}",
             }
         }),
     );
+    // `on_exit` has stopped the server already when the window closed normally; this also
+    // covers leaving any other way, since `process::exit` runs no destructors.
+    gp_media::tools::stop_all();
     if let Err(e) = result {
         eprintln!("{e}");
         std::process::exit(2);

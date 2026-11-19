@@ -5,6 +5,7 @@ use gp_core::Ms;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 fn quiet(mut cmd: Command) -> Command {
     #[cfg(windows)]
@@ -122,9 +123,33 @@ fn secs(ms: Ms) -> String {
     format!("{:.3}", ms.max(0) as f64 / 1000.0)
 }
 
+/// Every whisper-server started and not yet dropped, so the program can stop them on its way
+/// out even when the code that owns them never gets to run its destructors.
+static LIVE: Mutex<Vec<Weak<Mutex<Child>>>> = Mutex::new(Vec::new());
+/// The program to run as `<exe> --watchdog <parent pid> <child pid>`; none until set.
+static WATCHDOG: OnceLock<PathBuf> = OnceLock::new();
+
+/// Starts a watchdog next to every whisper-server from now on (Windows only): a second copy
+/// of `exe`, run with `--watchdog`, that kills the server once this process is gone. The job
+/// object does the same, but cannot be relied on when this process already sits in a job
+/// of someone else's.
+pub fn enable_watchdog(exe: PathBuf) {
+    let _ = WATCHDOG.set(exe);
+}
+
+/// Kills every whisper-server still running.
+pub fn stop_all() {
+    let live = std::mem::take(&mut *LIVE.lock().unwrap_or_else(|e| e.into_inner()));
+    for child in live.iter().filter_map(Weak::upgrade) {
+        let mut child = child.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 /// A running whisper-server; the process is killed when this is dropped.
 pub struct WhisperProcess {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     pub url: String,
 }
 
@@ -154,11 +179,24 @@ impl WhisperProcess {
             cmd.current_dir(dir);
         }
         let child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
-        // A failed assignment only loses the crash safety net; a normal exit still kills it.
         #[cfg(windows)]
-        let _ = win::kill_with_parent(&child);
+        {
+            let _ = win::kill_with_parent(&child);
+            if let Some(exe) = WATCHDOG.get() {
+                let mut dog = quiet(Command::new(exe));
+                dog.arg("--watchdog")
+                    .arg(std::process::id().to_string())
+                    .arg(child.id().to_string());
+                // Not waited for: it ends on its own with the server or after killing it.
+                let _ = dog.stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+            }
+        }
         // Unix has no equivalent here: PR_SET_PDEATHSIG fires when the spawning *thread*
         // exits, and the short-lived ASR thread would take down a server meant to be reused.
+        let child = Arc::new(Mutex::new(child));
+        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        live.retain(|w| w.strong_count() > 0);
+        live.push(Arc::downgrade(&child));
         Ok(WhisperProcess {
             child,
             url: format!("http://127.0.0.1:{port}"),
@@ -166,14 +204,31 @@ impl WhisperProcess {
     }
 
     pub fn has_exited(&mut self) -> bool {
-        !matches!(self.child.try_wait(), Ok(None))
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        !matches!(child.try_wait(), Ok(None))
     }
 }
 
 impl Drop for WhisperProcess {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// The `--watchdog <parent pid> <child pid>` mode: waits until either process ends and, if
+/// the parent went first, kills the child. Returns the exit code.
+pub fn watchdog(parent: &str, child: &str) -> i32 {
+    let (Ok(parent), Ok(child)) = (parent.parse::<u32>(), child.parse::<u32>()) else {
+        return 2;
+    };
+    #[cfg(windows)]
+    return win::watchdog(parent, child);
+    #[cfg(not(windows))]
+    {
+        let _ = (parent, child);
+        2
     }
 }
 
@@ -242,6 +297,33 @@ mod win {
             Ok(j) => Ok(j.0),
             Err(code) => Err(io::Error::from_raw_os_error(*code)),
         }
+    }
+
+    pub fn watchdog(parent: u32, child: u32) -> i32 {
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::{
+            INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess,
+            WaitForMultipleObjects,
+        };
+        unsafe {
+            let c = OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, child);
+            if c.is_null() {
+                return 0;
+            }
+            let p = OpenProcess(PROCESS_SYNCHRONIZE, 0, parent);
+            let parent_gone = p.is_null() || {
+                let both = [p, c];
+                WaitForMultipleObjects(2, both.as_ptr(), 0, INFINITE) == WAIT_OBJECT_0
+            };
+            if parent_gone {
+                TerminateProcess(c, 1);
+            }
+            if !p.is_null() {
+                CloseHandle(p);
+            }
+            CloseHandle(c);
+        }
+        0
     }
 
     pub fn kill_with_parent(child: &Child) -> io::Result<()> {
