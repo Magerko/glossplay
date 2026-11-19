@@ -323,6 +323,8 @@ pub struct Session {
     pub asr_running: bool,
     /// When translation last failed; requests pause for a while after a failure.
     pub translate_failed_at: Option<Instant>,
+    /// The user was told why machine translation cannot run; once per file and settings.
+    pub translator_warned: bool,
     pub tracks_discovered: bool,
 }
 
@@ -355,6 +357,7 @@ impl Session {
             asr_status: String::new(),
             asr_running: false,
             translate_failed_at: None,
+            translator_warned: false,
             tracks_discovered: false,
         }
     }

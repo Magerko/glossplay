@@ -679,13 +679,24 @@ impl App {
 
     /// Asks for translations a little ahead of the playhead, so they are ready on time.
     fn request_translations(&mut self) {
-        let Ok(translator) = self.translator.clone() else {
-            return;
-        };
         let Some(s) = &mut self.session else { return };
         if s.secondary != Secondary::Translate {
             return;
         }
+        let translator = match &self.translator {
+            Ok(t) => t.clone(),
+            Err(e) => {
+                let has_primary = s
+                    .primary
+                    .is_some_and(|i| s.tracks.get(i).is_some_and(|t| t.load == Load::Ready));
+                if has_primary && !s.translator_warned {
+                    s.translator_warned = true;
+                    let text = format!("Translation is not set up: {e} (Settings → Translation)");
+                    self.toast(text);
+                }
+                return;
+            }
+        };
         if s.translate_failed_at
             .is_some_and(|t| t.elapsed() < Duration::from_secs(30))
         {
@@ -917,6 +928,7 @@ impl App {
                 t.reset_translations();
             }
             s.translate_failed_at = None;
+            s.translator_warned = false;
         }
         if let Err(e) = paths::save_config(&self.cfg) {
             self.toast(format!("Could not save settings: {e}"));
