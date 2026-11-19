@@ -86,6 +86,9 @@ pub struct App {
     config_broken: bool,
     /// The last message shown, kept for the self-test report.
     pub last_toast: String,
+    /// The config error stays up until this moment; other toasts wait behind it.
+    config_toast_until: Option<Instant>,
+    queued_toast: Option<(String, Duration)>,
     pub last_activity: Instant,
     pub fullscreen: bool,
     pub hwdec_current: String,
@@ -170,6 +173,8 @@ impl App {
             status: None,
             config_broken: config_error.is_some(),
             last_toast: String::new(),
+            config_toast_until: None,
+            queued_toast: None,
             last_activity: Instant::now(),
             fullscreen: false,
             hwdec_current: String::new(),
@@ -181,6 +186,7 @@ impl App {
             let e = format!("{e}; using default settings");
             eprintln!("{e}");
             app.toast_for(e, Duration::from_secs(10));
+            app.config_toast_until = Some(Instant::now() + Duration::from_secs(10));
         }
         if let Some(media) = launch.media {
             app.open(&media);
@@ -194,6 +200,10 @@ impl App {
 
     pub fn toast_for(&mut self, text: impl Into<String>, shown_for: Duration) {
         let text = text.into();
+        if self.config_toast_until.is_some_and(|t| Instant::now() < t) {
+            self.queued_toast = Some((text, shown_for));
+            return;
+        }
         self.last_toast.clone_from(&text);
         self.status = Some((text, Instant::now(), shown_for));
     }
@@ -1032,6 +1042,12 @@ impl App {
             .is_some_and(|(_, at, shown_for)| at.elapsed() > *shown_for)
         {
             self.status = None;
+        }
+        if self.status.is_none()
+            && self.config_toast_until.is_none_or(|t| Instant::now() >= t)
+            && let Some((text, shown_for)) = self.queued_toast.take()
+        {
+            self.toast_for(text, shown_for);
         }
     }
 
