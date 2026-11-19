@@ -81,7 +81,10 @@ pub fn get_bytes(url: &str) -> Result<Vec<u8>, AiError> {
             body: String::new(),
         });
     }
+    // The default cap is 10 MB; yt-dlp alone is about 18.
     resp.body_mut()
+        .with_config()
+        .limit(256 * 1024 * 1024)
         .read_to_vec()
         .map_err(|e| AiError::Network(e.to_string()))
 }

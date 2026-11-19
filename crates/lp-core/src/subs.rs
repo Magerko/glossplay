@@ -117,6 +117,10 @@ fn detect(text: &str) -> Option<SubFormat> {
     {
         return Some(SubFormat::Ass);
     }
+    // I accept SRT by its timing line: web servers hand it over without a name or header.
+    if text.lines().take(20).any(|l| l.contains(" --> ")) {
+        return Some(SubFormat::Srt);
+    }
     None
 }
 
@@ -334,8 +338,12 @@ mod tests {
     #[test]
     fn srt_basic_with_tags_and_crlf() {
         let src = "1\r\n00:00:01,000 --> 00:00:02,500\r\n<i>Hello</i>, {\\an8}world\r\nsecond line\r\n\r\n2\r\n00:01:00,000 --> 00:01:01,000\r\nBye\r\n";
-        let cues = parse_subtitles(src.as_bytes(), None).unwrap_err();
-        assert_eq!(cues, SubError::UnknownFormat, "no hint and no signature");
+        let sniffed = parse_subtitles(src.as_bytes(), None).unwrap();
+        assert_eq!(sniffed.len(), 2, "SRT is recognised by its timing line");
+        assert_eq!(
+            parse_subtitles(b"just some text", None).unwrap_err(),
+            SubError::UnknownFormat
+        );
         let cues = parse_subtitles(src.as_bytes(), Some(SubFormat::Srt)).unwrap();
         assert_eq!(
             cues,

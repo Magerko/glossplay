@@ -44,3 +44,10 @@ pub fn load_config() -> (Config, Option<String>) {
 pub fn save_config(cfg: &Config) -> std::io::Result<()> {
     std::fs::write(config_path(), cfg.to_toml())
 }
+
+/// Helper programs the player downloads and updates by itself.
+pub fn tools_dir() -> PathBuf {
+    let dir = data_dir().join("tools");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}

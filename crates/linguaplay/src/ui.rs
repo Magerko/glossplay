@@ -584,6 +584,7 @@ impl App {
             ui.label(RichText::new("I am learning").color(MUTED).small());
             for (i, t) in s.tracks.iter().enumerate() {
                 let state = match &t.load {
+                    Load::NotLoaded => "",
                     Load::Loading => "  (reading…)",
                     Load::Failed(_) => "  (failed)",
                     Load::Bitmap => "  (image)",
@@ -655,8 +656,8 @@ impl App {
         if let Some(choice) = pick_primary {
             self.select_primary(choice);
         }
-        if let (Some(choice), Some(s)) = (pick_secondary, &mut self.session) {
-            s.secondary = choice;
+        if let Some(choice) = pick_secondary {
+            self.set_secondary(choice);
         }
         if toggle_asr {
             if asr_running {
@@ -682,6 +683,9 @@ impl App {
     }
 
     pub fn select_primary(&mut self, choice: Option<usize>) {
+        if let Some(i) = choice {
+            self.ensure_loaded(i);
+        }
         let Some(s) = &mut self.session else { return };
         s.primary = choice;
         self.scrolled_to = None;

@@ -9,6 +9,7 @@ mod session;
 mod theme;
 mod ui;
 mod video;
+mod ytdlp;
 
 use eframe::egui;
 use std::sync::Mutex;
@@ -29,6 +30,7 @@ Usage: linguaplay [FILE or URL] [options]
       --asr                         run speech recognition
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
+  --update-ytdlp                    download or update yt-dlp and print its version
   --size WxH                        window size
   --version, --help";
 
@@ -59,6 +61,19 @@ fn main() {
             "--autopause" => plan.autopause = true,
             "--asr" => plan.asr = true,
             "--anki" => plan.anki = true,
+            "--update-ytdlp" => {
+                return match ytdlp::ensure(false) {
+                    Ok(outcome) => println!(
+                        "{outcome:?}
+version={}",
+                        outcome.version()
+                    ),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(1);
+                    }
+                };
+            }
             "--translate-file" => translate_file = Some(value()),
             "--to" => to_lang = Some(value()),
             "--size" => {

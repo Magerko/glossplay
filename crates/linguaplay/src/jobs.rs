@@ -51,6 +51,7 @@ pub enum Msg {
         request: u64,
         result: Result<String, String>,
     },
+    YtDlp(Result<crate::ytdlp::Outcome, String>),
     Anki {
         vocab_id: i64,
         result: Result<i64, String>,
@@ -213,7 +214,7 @@ impl Jobs {
         }
     }
 
-    fn spawn(&self, work: impl FnOnce() -> Msg + Send + 'static) {
+    pub fn spawn(&self, work: impl FnOnce() -> Msg + Send + 'static) {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         std::thread::spawn(move || {
             let _ = tx.send(work());

@@ -87,10 +87,15 @@ impl Player {
             ("volume", volume.as_str()),
             ("volume-max", "150"),
         ];
-        let ytdl_opt = format!("ytdl_hook-ytdl_path={}", cfg.ytdl_path);
-        if !cfg.ytdl_path.is_empty() {
-            options.push(("script-opts", &ytdl_opt));
-        }
+        // Unless the user points at their own yt-dlp, mpv uses the copy I keep up to date.
+        let ytdl = if cfg.ytdl_path.is_empty() {
+            crate::ytdlp::binary_path().to_string_lossy().into_owned()
+        } else {
+            cfg.ytdl_path.clone()
+        };
+        let ytdl_opt = format!("ytdl_hook-ytdl_path={ytdl}");
+        options.push(("ytdl", "yes"));
+        options.push(("script-opts", &ytdl_opt));
         Ok(Player {
             mpv: Arc::new(Mpv::new(&cfg.mpv_path, &options)?),
         })

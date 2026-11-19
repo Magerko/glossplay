@@ -51,6 +51,7 @@ pub struct State {
     seen_primary: Option<String>,
     seen_secondary: Option<String>,
     word_opened: bool,
+    subs_applied: bool,
     anki_sent: bool,
     asr_first_cue: Option<Duration>,
     asr_minute_ready: Option<Duration>,
@@ -70,6 +71,7 @@ impl State {
             seen_primary: None,
             seen_secondary: None,
             word_opened: false,
+            subs_applied: false,
             anki_sent: false,
             asr_first_cue: None,
             asr_minute_ready: None,
@@ -127,6 +129,23 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
             }
         }
         Phase::Tracks => {
+            if !st.subs_applied {
+                st.subs_applied = true;
+                let s = app.session.as_ref().unwrap();
+                let find = |lang: &str| {
+                    s.tracks
+                        .iter()
+                        .position(|t| t.track.lang.as_deref() == Some(lang) && t.is_text())
+                };
+                let primary = st.plan.subs.first().and_then(|l| find(l));
+                let secondary = st.plan.subs.get(1).and_then(|l| find(l));
+                if let Some(p) = primary {
+                    app.select_primary(Some(p));
+                }
+                if let Some(sec) = secondary {
+                    app.set_secondary(Secondary::Track(sec));
+                }
+            }
             let s = app.session.as_ref().unwrap();
             let loading = s
                 .tracks
@@ -134,19 +153,6 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 .any(|t| t.load == Load::Loading && t.origin != Origin::Asr);
             if loading && st.started.elapsed() < Duration::from_secs(60) {
                 return;
-            }
-            let find = |lang: &str| {
-                s.tracks
-                    .iter()
-                    .position(|t| t.track.lang.as_deref() == Some(lang) && t.is_text())
-            };
-            let primary = st.plan.subs.first().and_then(|l| find(l));
-            let secondary = st.plan.subs.get(1).and_then(|l| find(l));
-            if let Some(p) = primary {
-                app.select_primary(Some(p));
-            }
-            if let (Some(sec), Some(s)) = (secondary, &mut app.session) {
-                s.secondary = Secondary::Track(sec);
             }
             st.started = Instant::now();
             st.start_pos = app.snap.pos;

@@ -77,6 +77,8 @@ pub struct App {
     pub scrolled_to: Option<usize>,
     pub settings_draft: Option<Config>,
     pub url_input: String,
+    /// A link opened before yt-dlp finished downloading; played as soon as it is there.
+    pending_url: Option<String>,
     pub status: Option<(String, Instant)>,
     pub last_activity: Instant,
     pub fullscreen: bool,
@@ -92,6 +94,9 @@ impl App {
         theme::apply(&cc.egui_ctx, cfg.general.ui_scale);
 
         let player = Player::new(&cfg.player).map_err(|e| e.to_string())?;
+        if launch.selftest.is_some() {
+            player.mpv.set_flag("mute", true);
+        }
         let loader = cc
             .get_proc_address
             .clone()
@@ -117,6 +122,10 @@ impl App {
             .map_err(|e| e.to_string())?;
         let vocab = store.list_words().unwrap_or_default();
         std::thread::spawn(lp_core::tokens::warm_up);
+        let jobs = Jobs::new(cc.egui_ctx.clone(), store);
+        if cfg.player.ytdl_path.is_empty() {
+            jobs.spawn(|| Msg::YtDlp(crate::ytdlp::ensure(false)));
+        }
 
         let mut app = App {
             translator: make_translator(&cfg),
@@ -126,7 +135,8 @@ impl App {
             vocab,
             player,
             video: VideoSurface::new(render),
-            jobs: Jobs::new(cc.egui_ctx.clone(), store),
+            jobs,
+            pending_url: None,
             session: None,
             generation: 0,
             snap: Snapshot::default(),
@@ -169,6 +179,14 @@ impl App {
             .is_some();
         if is_subtitle && self.session.is_some() {
             self.add_external_subtitle(media.to_owned(), None, true);
+            return;
+        }
+        let needs_ytdlp = media.starts_with("http")
+            && self.cfg.player.ytdl_path.is_empty()
+            && !crate::ytdlp::binary_path().is_file();
+        if needs_ytdlp {
+            self.pending_url = Some(media.to_owned());
+            self.toast("Downloading yt-dlp, the video will start in a moment…");
             return;
         }
         self.generation += 1;
@@ -239,31 +257,22 @@ impl App {
                     },
                     Load::Bitmap,
                 ),
-                (Some(file), _) => (Origin::External { path: file.clone() }, Load::Loading),
+                (Some(file), _) => (
+                    Origin::External {
+                        path: crate::session::subtitle_url(file),
+                    },
+                    Load::NotLoaded,
+                ),
                 (None, Some(stream)) => (
                     Origin::Embedded {
                         mpv_id: t.id,
                         stream,
                     },
-                    Load::Loading,
+                    Load::NotLoaded,
                 ),
                 (None, None) => continue,
             };
-            match &origin {
-                Origin::External { path } => {
-                    self.jobs.load_external(s.generation, index, path.clone())
-                }
-                Origin::Embedded { stream, .. } if load == Load::Loading => {
-                    self.jobs.load_embedded(
-                        s.generation,
-                        index,
-                        self.ffmpeg.clone(),
-                        s.media.clone(),
-                        *stream,
-                    );
-                }
-                _ => {}
-            }
+            let _ = index;
             s.tracks.push(SubTrack::new(t.label(), lang, origin, load));
         }
         if !s.is_url() {
@@ -284,6 +293,15 @@ impl App {
             }
         }
         self.choose_default_tracks();
+        if let Some((primary, secondary)) = self.session.as_ref().map(|s| (s.primary, s.secondary))
+        {
+            if let Some(i) = primary {
+                self.ensure_loaded(i);
+            }
+            if let Secondary::Track(i) = secondary {
+                self.ensure_loaded(i);
+            }
+        }
         let no_text = self
             .session
             .as_ref()
@@ -327,6 +345,40 @@ impl App {
                 self.player.mpv.set_flag("sub-visibility", true);
             }
             None => self.player.mpv.set_flag("sub-visibility", false),
+        }
+    }
+
+    /// Reads a track the first time it is needed. An online video can offer dozens of
+    /// languages, and every embedded track costs a pass over the file.
+    pub fn ensure_loaded(&mut self, index: usize) {
+        let Some(s) = &mut self.session else { return };
+        let Some(t) = s
+            .tracks
+            .get_mut(index)
+            .filter(|t| t.load == Load::NotLoaded)
+        else {
+            return;
+        };
+        t.load = Load::Loading;
+        match &t.origin {
+            Origin::External { path } => self.jobs.load_external(s.generation, index, path.clone()),
+            Origin::Embedded { stream, .. } => self.jobs.load_embedded(
+                s.generation,
+                index,
+                self.ffmpeg.clone(),
+                s.media.clone(),
+                *stream,
+            ),
+            Origin::Asr => {}
+        }
+    }
+
+    pub fn set_secondary(&mut self, choice: Secondary) {
+        if let Some(s) = &mut self.session {
+            s.secondary = choice;
+        }
+        if let Secondary::Track(i) = choice {
+            self.ensure_loaded(i);
         }
     }
 
@@ -526,6 +578,19 @@ impl App {
                             Err(e) if e.contains("does not support") => Async::Idle,
                             Err(e) => Async::Failed(e),
                         };
+                    }
+                }
+                Msg::YtDlp(result) => {
+                    match result {
+                        Ok(crate::ytdlp::Outcome::Updated { version }) => {
+                            self.toast(format!("yt-dlp updated to {version}"));
+                        }
+                        Ok(_) => {}
+                        Err(e) => self.toast(e),
+                    }
+                    let ready = crate::ytdlp::binary_path().is_file();
+                    if let Some(url) = self.pending_url.take().filter(|_| ready) {
+                        self.open(&url);
                     }
                 }
                 Msg::Anki { vocab_id, result } => match result {

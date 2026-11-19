@@ -14,6 +14,8 @@ pub enum Origin {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Load {
+    /// Known to exist but not read yet; a track is only read once it is selected.
+    NotLoaded,
     Loading,
     Ready,
     Failed(String),
@@ -277,6 +279,25 @@ pub fn sidecar_subtitles(media: &str) -> Vec<(String, Option<String>)> {
     found
 }
 
+/// mpv hands over the subtitles of online videos as an EDL entry:
+/// `edl://!no_clip;!delay_open,media_type=sub,codec=vtt;%<length>%<url>`.
+pub fn subtitle_url(name: &str) -> String {
+    let Some(rest) = name.strip_prefix("edl://") else {
+        return name.to_owned();
+    };
+    let Some(at) = rest.rfind(";%") else {
+        return name.to_owned();
+    };
+    let escaped = &rest[at + 2..];
+    match escaped.split_once('%') {
+        Some((len, url)) => match len.parse::<usize>() {
+            Ok(n) if url.is_char_boundary(n.min(url.len())) => url[..n.min(url.len())].to_owned(),
+            _ => url.to_owned(),
+        },
+        None => name.to_owned(),
+    }
+}
+
 /// Maps the language tags found in the wild ("eng", "en-US", "rus") to two-letter codes.
 pub fn normalize_lang(tag: &str) -> String {
     let tag = tag.to_ascii_lowercase();
@@ -356,6 +377,18 @@ mod tests {
             t.translation,
             [Tr::Missing, Tr::Missing, Tr::Done("в".into())]
         );
+    }
+
+    #[test]
+    fn online_subtitle_urls_are_unwrapped() {
+        let url = "https://example.com/api/timedtext?v=abc&fmt=vtt;x=1";
+        let edl = format!(
+            "edl://!no_clip;!delay_open,media_type=sub,codec=vtt;%{}%{url}",
+            url.len()
+        );
+        assert_eq!(subtitle_url(&edl), url);
+        assert_eq!(subtitle_url("C:/films/a.srt"), "C:/films/a.srt");
+        assert_eq!(subtitle_url(url), url);
     }
 
     #[test]
