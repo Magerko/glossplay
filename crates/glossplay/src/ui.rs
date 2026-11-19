@@ -60,12 +60,14 @@ impl eframe::App for App {
         self.word_popup(&ctx);
         self.settings_window(&ctx);
         self.asr_setup_dialog(&ctx);
+        self.tts_setup_dialog(&ctx);
         self.toast_ui(&ctx);
         crate::selftest::step(self, &ctx);
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         self.stop_asr();
+        self.dub = None;
         self.jobs.shutdown();
         self.video.destroy(gl);
     }
@@ -122,6 +124,11 @@ fn toggle_chip(ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
 
 impl App {
     fn handle_input(&mut self, ctx: &egui::Context) {
+        // A self-test window can take the focus while someone types elsewhere; their keys
+        // must not unmute it or change what is measured.
+        if self.quiet {
+            return;
+        }
         let dropped: Vec<String> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -164,14 +171,10 @@ impl App {
             self.player.seek_relative(5_000);
         }
         if pressed(Key::ArrowUp) {
-            self.player
-                .mpv
-                .set_f64("volume", (self.snap.volume + 5.0).min(150.0));
+            self.set_volume(self.volume + 5.0);
         }
         if pressed(Key::ArrowDown) {
-            self.player
-                .mpv
-                .set_f64("volume", (self.snap.volume - 5.0).max(0.0));
+            self.set_volume(self.volume - 5.0);
         }
         if pressed(Key::A) {
             self.cue_nav(-1);
@@ -339,6 +342,9 @@ impl App {
             .count();
         if pending > 0 {
             text.push_str("   ·   reading subtitles…");
+        }
+        if let Some(d) = &self.dub {
+            text.push_str(&format!("   ·   {}", d.status()));
         }
         ui.painter().text(
             strip.left_center() + vec2(16.0, 0.0),
@@ -563,13 +569,13 @@ impl App {
                     );
                 }
                 if fit.volume {
-                    let mut volume = self.snap.volume as f32;
+                    let mut volume = self.volume as f32;
                     ui.spacing_mut().slider_width = VOLUME_WIDTH;
                     if ui
                         .add(egui::Slider::new(&mut volume, 0.0..=150.0).show_value(false))
                         .changed()
                     {
-                        self.player.mpv.set_f64("volume", volume as f64);
+                        self.set_volume(volume as f64);
                     }
                 }
                 if icon_button(ui, if self.snap.muted { "🔇" } else { "🔊" }, "Mute (M)") {
@@ -697,7 +703,11 @@ impl App {
         let mut pick_audio = None;
         let mut toggle_autopause = false;
         let mut open_settings = false;
-        ui.menu_button(RichText::new("Subtitles").size(13.0), |ui| {
+        let dub_on = self.dub.is_some();
+        let (mut toggle_dub, mut volumes_changed, mut volumes_done) = (false, false, false);
+        let mut original = self.cfg.tts.original_volume as f32;
+        let mut voice = self.cfg.tts.voice_volume as f32;
+        let menu = ui.menu_button(RichText::new("Subtitles").size(13.0), |ui| {
             let Some(s) = &self.session else { return };
             ui.set_min_width(260.0);
             ui.label(RichText::new("I am learning").color(MUTED).small());
@@ -759,6 +769,31 @@ impl App {
             if ui.button(label).clicked() {
                 toggle_asr = true;
             }
+            if ui
+                .selectable_label(dub_on, crate::setup_text::MENU_VOICE_OVER)
+                .on_hover_text(crate::setup_text::MENU_VOICE_OVER_HINT)
+                .clicked()
+            {
+                toggle_dub = true;
+            }
+            if dub_on {
+                egui::Grid::new("dub-volumes")
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        for (label, value) in [
+                            (crate::setup_text::SLIDER_ORIGINAL, &mut original),
+                            (crate::setup_text::SLIDER_VOICE, &mut voice),
+                        ] {
+                            ui.label(RichText::new(label).color(MUTED));
+                            let r =
+                                ui.add(egui::Slider::new(value, 0.0..=150.0).integer().suffix("%"));
+                            volumes_changed |= r.changed();
+                            volumes_done |= r.drag_stopped() || (r.changed() && !r.dragged());
+                            ui.end_row();
+                        }
+                    });
+            }
             if ui.button("Add a subtitle file…").clicked() {
                 add_file = true;
             }
@@ -802,6 +837,23 @@ impl App {
                 open_settings = true;
             }
         });
+        if self.selftest.as_ref().is_some_and(|s| s.plan.subs_menu) {
+            egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&menu.response));
+        }
+        if toggle_dub {
+            self.set_dub(!dub_on);
+        }
+        if volumes_changed {
+            self.cfg.tts.original_volume = f64::from(original);
+            self.cfg.tts.voice_volume = f64::from(voice);
+            self.apply_volume();
+        }
+        if volumes_done
+            && !self.quiet
+            && let Err(e) = crate::paths::save_config(&self.cfg)
+        {
+            self.toast(format!("Could not save settings: {e}"));
+        }
         if toggle_autopause {
             self.toggle_autopause();
         }
@@ -1210,6 +1262,7 @@ impl App {
         };
         let (mut open, mut save, mut cancel) = (true, false, false);
         let (asr_setup, mut asr_action) = (&self.asr_setup, None);
+        let (tts_setup, mut tts_action) = (&self.tts_setup, None);
         egui::Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
@@ -1346,6 +1399,8 @@ impl App {
                                 );
                                 ui.end_row();
                             });
+                        section(ui, crate::setup_text::SECTION_VOICE_OVER);
+                        tts_action = crate::tts_ui::settings_section(ui, &mut draft, tts_setup);
                         section(ui, "Anki");
                         egui::Grid::new("anki")
                             .num_columns(2)
@@ -1403,8 +1458,12 @@ impl App {
                 });
             });
         self.asr_setup.scroll_to = false;
+        self.tts_setup.scroll_to = false;
         if let Some(action) = asr_action {
             self.asr_settings_action(action, &draft);
+        }
+        if let Some(action) = tts_action {
+            self.tts_settings_action(action, &draft);
         }
         if save {
             self.apply_settings(draft);

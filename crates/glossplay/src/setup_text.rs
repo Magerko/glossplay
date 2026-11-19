@@ -218,7 +218,111 @@ pub fn file_line(stage_text: &str, done: u64, total: u64) -> String {
     }
 }
 
+// Voice-over: the install, the menu, the settings and the status line.
+
+pub const TTS_COMPONENT_NAME: &str = "Voice-over (OmniVoice)";
+pub const TTS_LABEL_VULKAN: &str = "audio.cpp voice engine for any graphics card (Vulkan)";
+pub const TTS_LABEL_NVIDIA: &str = "audio.cpp voice engine for NVIDIA graphics cards (CUDA)";
+pub const TTS_LABEL_CUDA_LIBS: &str = "NVIDIA CUDA libraries for the voice engine";
+pub const TTS_LABEL_MODEL: &str = "OmniVoice voice model (q8_0)";
+pub const TTS_DIALOG_TITLE: &str = "Voice-over";
+pub const TTS_DIALOG_INTRO: &str = "Glossplay can speak the translation over the video, with the original sound turned down. The voice is made on this computer by OmniVoice, so nothing is sent anywhere. It needs a one-time download and a graphics card.";
+pub const TTS_SOURCES: &str = "Downloaded from GitHub (0xShug0/audio.cpp, release v0.9.5) and Hugging Face (audio-cpp/audio.cpp-gguf).";
+pub const TTS_LICENCE_NC: &str = "Non-commercial use only. The OmniVoice voice model (k2-fsa/OmniVoice) is licensed under CC BY-NC 4.0: neither the model nor what it says may be used for commercial purposes.";
+pub const TTS_LICENCE_BOSON: &str = "Built with Higgs Materials licensed from Boson AI USA, Inc. (the audio tokenizer inside the model, under the Boson Higgs Audio 2 Community License).";
+pub const TTS_NO_IMPERSONATION: &str =
+    "Do not use the voice engine to imitate a real person's voice without their consent.";
+pub const TTS_LICENCE_ENGINE: &str = "The audio.cpp engine is Apache-2.0 (ShugoAI). The NVIDIA build includes NVIDIA CUDA libraries, redistributed under the NVIDIA CUDA licence.";
+pub const TTS_LINK_CC: &str = "CC BY-NC 4.0";
+pub const TTS_URL_CC: &str = "https://creativecommons.org/licenses/by-nc/4.0/";
+pub const TTS_LINK_BOSON: &str = "Boson Higgs Audio 2 Community License";
+pub const TTS_URL_BOSON: &str =
+    "https://huggingface.co/bosonai/higgs-audio-v2-tokenizer/blob/main/LICENSE";
+pub const TTS_LINK_MODEL: &str = "OmniVoice model card";
+pub const TTS_URL_MODEL: &str = "https://huggingface.co/k2-fsa/OmniVoice";
+pub const TTS_AGREE: &str =
+    "I will use the voice-over for non-commercial purposes only and accept these licences";
+pub const TTS_NEEDS_GPU: &str = "The voice engine needs a graphics card. On the processor alone it is 6–10 times slower than the video plays and cannot keep up.";
+pub const TTS_NO_VULKAN: &str = "No Vulkan graphics driver was found on this computer, so the voice engine would run on the processor: 6–10 times slower than the video plays. Install the graphics card driver first.";
+pub const TTS_NVIDIA_WITHOUT_GPU: &str =
+    "No NVIDIA graphics card was found; the NVIDIA build will not start without one.";
+pub const TTS_ENGINE_VULKAN: &str = "Any graphics card (Vulkan)";
+pub const TTS_ENGINE_NVIDIA: &str = "NVIDIA graphics card (CUDA): a little faster, much bigger";
+pub const TTS_BUILD_VULKAN: &str = "Vulkan build";
+pub const TTS_BUILD_NVIDIA: &str = "NVIDIA build";
+pub const TTS_READY: &str = "Ready. The voice-over is installed.";
+pub const TTS_READY_ON: &str = "The voice-over is on now.";
+pub const TTS_READY_HOW: &str = "Turn it on in Subtitles → Voice-over.";
+pub const TTS_TOAST_READY: &str = "The voice-over is installed";
+pub const TTS_TOAST_REMOVED: &str = "The voice-over was removed";
+pub const TTS_NOT_SET_UP: &str =
+    "The voice-over is not set up: choose Subtitles → Voice-over to install it";
+pub const TTS_NO_ENGINE_HERE: &str = "There is no ready-made voice engine for this system: run an OpenAI-style speech server yourself and set its address under Advanced.";
+pub const TTS_NEEDS_TRANSLATION: &str =
+    "The voice-over speaks the translation: choose one under Subtitles → Translation";
+
+pub fn tts_installed_status(build: &str, bytes: u64) -> String {
+    format!("Installed: {build}, OmniVoice q8_0 ({})", size(bytes))
+}
+
+pub fn tts_cli_plan(build: &str, download: u64, dir: &Path) -> String {
+    format!(
+        "Installing the voice-over: {build} + OmniVoice q8_0, {} to download, into {}",
+        size(download),
+        dir.display()
+    )
+}
+
+pub const MENU_VOICE_OVER: &str = "Voice-over (dub the translation)";
+pub const MENU_VOICE_OVER_HINT: &str =
+    "Speak the translation over the video and turn the original sound down";
+pub const SLIDER_ORIGINAL: &str = "Original";
+pub const SLIDER_VOICE: &str = "Voice-over";
+pub const SECTION_VOICE_OVER: &str = "Voice-over";
+pub const TTS_ENABLE: &str = "Speak the translation over the video";
+pub const ROW_ORIGINAL_VOLUME: &str = "Original sound, %";
+pub const ROW_VOICE_VOLUME: &str = "Voice, %";
+pub const TTS_ADVANCED: &str = "Advanced: my own speech server";
+pub const ROW_SERVER: &str = "Server address";
+pub const HINT_SERVER: &str = "empty = the installed engine; http://host:port/v1";
+pub const ROW_TTS_MODEL: &str = "Model";
+pub const HINT_TTS_MODEL: &str = "omnivoice";
+pub const ROW_VOICE: &str = "Voice";
+pub const HINT_VOICE: &str = "the server's default";
+
+pub fn tts_language(lang: &str) -> String {
+    format!("Spoken in: {lang} (the \"Translate into\" language)")
+}
+
+pub const DUB_STARTING: &str = "Voice-over: starting the voice engine…";
+pub const DUB_FIRST_START: &str =
+    " the first start on this graphics card takes up to half a minute";
+pub const DUB_PREPARING: &str = "Voice-over: preparing…";
+pub const DUB_ON: &str = "Voice-over";
+
+pub fn dub_stopped(e: &str) -> String {
+    format!("Voice-over stopped: {e}")
+}
+
+pub fn dub_line_failed(e: &str) -> String {
+    format!("Voice-over: a line could not be spoken ({e})")
+}
+
+pub const DUB_ENGINE_GONE: &str = "the voice engine did not start; check the install in Settings";
+
+pub fn dub_engine_quit(times: usize) -> String {
+    format!("the voice engine quit unexpectedly {times} times")
+}
+
+pub fn dub_cannot_start(e: &dyn std::fmt::Display) -> String {
+    format!("could not start the voice engine: {e}")
+}
+
+pub const DUB_NO_AUDIO_OUT: &str = "could not open a second audio player for the voice";
+
 // Command line.
+
+pub const TTS_CLI_BAD_ENGINE: &str = "--tts-variant must be vulkan or nvidia";
 
 pub const CLI_BAD_ENGINE: &str = "--asr-variant must be auto, nvidia or cpu";
 

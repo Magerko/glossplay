@@ -3,6 +3,7 @@
 mod app;
 mod asr_setup;
 mod components;
+mod dub;
 mod jobs;
 mod paths;
 mod player;
@@ -12,6 +13,8 @@ mod setup_text;
 mod setup_ui;
 mod shell;
 mod theme;
+mod tts_setup;
+mod tts_ui;
 mod ui;
 mod video;
 mod ytdlp;
@@ -48,6 +51,13 @@ Usage: glossplay [FILE or URL] [options]
       --asr-model NAME              large-v3-turbo, large-v3-turbo-q5_0, small or base
                                     (default: the one that suits the engine)
   --asr-status                      show what is installed and what this computer would get
+      --dub                         (with --selftest) speak the translation over the video,
+                                    pause once in the middle, turn it off at the end
+      --dub-save DIR                copy every voice-over clip played into DIR
+      --tts-dialog --settings-voice --subs-menu   what to show in the screenshot
+  --install-tts                     download and install the voice-over engine, then exit
+      --tts-variant vulkan|nvidia   engine build (default vulkan: any graphics card)
+  --tts-status                      show what is installed for the voice-over
   --shell-register                  add Glossplay to Explorer's \"Open with\" and context menu
                                     (current user only; it does not become the default program)
   --shell-unregister                remove those entries
@@ -74,6 +84,7 @@ fn main() {
     let mut size = [1280.0, 720.0];
     let (mut translate_file, mut to_lang) = (None, None);
     let (mut install_asr, mut asr_variant, mut asr_model) = (false, None, None);
+    let (mut install_tts, mut tts_variant) = (false, None);
     while let Some(arg) = args.next() {
         let mut value = || args.next().unwrap_or_default();
         match arg.as_str() {
@@ -111,6 +122,14 @@ fn main() {
             "--asr-variant" => asr_variant = Some(value()),
             "--asr-model" => asr_model = Some(value()),
             "--asr-status" => std::process::exit(asr_setup::cli_status()),
+            "--dub" => plan.dub = true,
+            "--dub-save" => plan.dub_save = Some(value().into()),
+            "--tts-dialog" => plan.tts_dialog = true,
+            "--settings-voice" => plan.settings_voice = true,
+            "--subs-menu" => plan.subs_menu = true,
+            "--install-tts" => install_tts = true,
+            "--tts-variant" => tts_variant = Some(value()),
+            "--tts-status" => std::process::exit(tts_setup::cli_status()),
             "--translate-file" => translate_file = Some(value()),
             "--to" => to_lang = Some(value()),
             "--size" => {
@@ -121,6 +140,9 @@ fn main() {
             }
             _ => media = Some(arg),
         }
+    }
+    if install_tts {
+        std::process::exit(tts_setup::cli_install(tts_variant.as_deref().unwrap_or("")));
     }
     if install_asr {
         std::process::exit(asr_setup::cli_install(

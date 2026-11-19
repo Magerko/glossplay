@@ -237,6 +237,10 @@ impl Jobs {
         drop(process);
     }
 
+    pub fn context(&self) -> egui::Context {
+        self.ctx.clone()
+    }
+
     pub fn spawn(&self, work: impl FnOnce() -> Msg + Send + 'static) {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         std::thread::spawn(move || {

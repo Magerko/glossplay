@@ -47,7 +47,6 @@ pub struct Snapshot {
     pub duration: Ms,
     pub paused: bool,
     pub idle: bool,
-    pub volume: f64,
     pub speed: f64,
     pub muted: bool,
 }
@@ -138,7 +137,6 @@ impl Player {
             duration: ms("duration"),
             paused: self.mpv.get_flag("pause").unwrap_or(true),
             idle: self.mpv.get_flag("idle-active").unwrap_or(true),
-            volume: self.mpv.get_f64("volume").unwrap_or(100.0),
             speed: self.mpv.get_f64("speed").unwrap_or(1.0),
             muted: self.mpv.get_flag("mute").unwrap_or(false),
         }

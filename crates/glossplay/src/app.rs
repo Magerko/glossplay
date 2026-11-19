@@ -95,6 +95,15 @@ pub struct App {
     pub audio_tracks: Vec<TrackInfo>,
     pub selftest: Option<selftest::State>,
     pub asr_setup: crate::setup_ui::AsrSetup,
+    pub tts_setup: crate::tts_ui::TtsSetup,
+    /// The voice-over, while it is on.
+    pub dub: Option<crate::dub::Dub>,
+    /// The volume the user set; the player plays quieter while the voice-over is on.
+    pub volume: f64,
+    /// A self-test run: nothing is heard and no choice is saved. Kept apart from `selftest`,
+    /// which is taken out of the app while the test steps.
+    pub quiet: bool,
+    pub dub_save: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -104,7 +113,9 @@ impl App {
         theme::apply(&cc.egui_ctx, cfg.general.ui_scale);
 
         let player = Player::new(&cfg.player).map_err(|e| e.to_string())?;
-        if launch.selftest.is_some() {
+        let quiet = launch.selftest.is_some();
+        let dub_save = launch.selftest.as_ref().and_then(|p| p.dub_save.clone());
+        if quiet {
             player.mpv.set_flag("mute", true);
         }
         let loader = cc
@@ -182,8 +193,16 @@ impl App {
             audio_tracks: Vec::new(),
             selftest: launch.selftest.map(selftest::State::new),
             asr_setup: crate::setup_ui::AsrSetup::new(),
+            tts_setup: crate::tts_ui::TtsSetup::new(),
+            dub: None,
+            volume: cfg.player.volume,
+            quiet,
+            dub_save,
             cfg,
         };
+        if app.cfg.tts.enabled && !app.quiet && app.dub_ready() {
+            app.set_dub(true);
+        }
         if let Some(e) = config_error {
             let e = format!("{e}; using default settings");
             eprintln!("{e}");
@@ -693,6 +712,9 @@ impl App {
                     }
                     Err(e) => self.toast(format!("Anki: {e}")),
                 },
+                Msg::Component { id, event } if id == crate::tts_setup::ID => {
+                    self.on_tts_event(event)
+                }
                 Msg::Component { id, event } => self.on_component_event(&id, event),
                 _ => {}
             }
@@ -930,7 +952,23 @@ impl App {
     pub fn apply_settings(&mut self, new: Config) {
         let rescale = new.general.ui_scale != self.cfg.general.ui_scale;
         let shell_changed = new.general.shell_integration != self.cfg.general.shell_integration;
+        let (old_tts, old_lang) = (self.cfg.tts.clone(), self.cfg.general.native_lang.clone());
         self.cfg = new;
+        let tts = &self.cfg.tts;
+        let voice_changed = (
+            &tts.base_url,
+            &tts.model,
+            &tts.voice,
+            &self.cfg.general.native_lang,
+        ) != (&old_tts.base_url, &old_tts.model, &old_tts.voice, &old_lang);
+        if voice_changed || !tts.enabled {
+            self.dub = None;
+        }
+        if self.cfg.tts.enabled && self.dub.is_none() {
+            self.set_dub(true);
+            self.cfg.tts.enabled = self.dub.is_some();
+        }
+        self.apply_volume();
         if shell_changed && shell::SUPPORTED && self.selftest.is_none() {
             let result = if self.cfg.general.shell_integration {
                 shell::register()
@@ -1024,6 +1062,10 @@ impl App {
         self.handle_messages();
         self.prev_pos = self.snap.pos;
         self.snap = self.player.snapshot();
+        if self.quiet && !self.snap.muted {
+            // Nothing in a self-test may be heard; a click on the mute button cannot undo it.
+            self.player.mpv.set_flag("mute", true);
+        }
         if let Some(s) = &self.session {
             if let Some(asr) = &s.asr {
                 asr.playhead.store(self.snap.pos, Ordering::Relaxed);
@@ -1036,6 +1078,7 @@ impl App {
             }
         }
         self.request_translations();
+        self.update_dub();
         if !self.snap.paused && !self.snap.idle {
             ctx.request_repaint_after(Duration::from_millis(100));
         }

@@ -421,6 +421,34 @@ impl Session {
             .collect()
     }
 
+    /// Primary lines starting in `[from, to]` with the translation shown under each, for the
+    /// voice-over. Lines without a translation yet are left out, but still bound the window
+    /// of the line before them.
+    pub fn dub_lines(&self, from: Ms, to: Ms) -> Vec<gp_core::dub_plan::Line> {
+        let Some(t) = self.primary_track() else {
+            return Vec::new();
+        };
+        if self.secondary == Secondary::Off {
+            return Vec::new();
+        }
+        let cues = &t.track.cues;
+        let first = cues.partition_point(|c| c.start < from);
+        let last = cues.partition_point(|c| c.start <= to);
+        (first..last)
+            .filter_map(|i| {
+                let c = &cues[i];
+                let next_start = cues[i + 1..].iter().map(|n| n.start).find(|&s| s > c.start);
+                Some(gp_core::dub_plan::Line {
+                    start: c.start,
+                    end: c.end,
+                    text: self.translation_of(i)?,
+                    group: t.group_of(i),
+                    next_start,
+                })
+            })
+            .collect()
+    }
+
     /// The text shown as translation for one primary cue, whatever its source.
     pub fn translation_of(&self, cue: usize) -> Option<String> {
         let t = self.primary_track()?;

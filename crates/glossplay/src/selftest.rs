@@ -31,6 +31,26 @@ pub struct Plan {
     pub setup_dialog: bool,
     pub settings: bool,
     pub setup_install: bool,
+    /// Turn the voice-over on when playback starts; pause once in the middle, and turn it
+    /// off again at the end.
+    pub dub: bool,
+    /// A copy of every voice-over clip played goes here.
+    pub dub_save: Option<PathBuf>,
+    pub tts_dialog: bool,
+    pub settings_voice: bool,
+    /// Keep the Subtitles menu open for the screenshot.
+    pub subs_menu: bool,
+}
+
+/// The pause in the middle of a voice-over run: the clip must stop with the video.
+enum PauseCheck {
+    Waiting,
+    Paused {
+        since: Instant,
+        /// The voice player's position through the pause: (ms since pausing, seconds).
+        samples: Vec<(u128, f64)>,
+    },
+    Done,
 }
 
 enum Phase {
@@ -44,6 +64,10 @@ enum Phase {
         replayed: bool,
     },
     Capture,
+    /// The voice-over is off; the original sound must come back to its volume.
+    DubOff {
+        since: Instant,
+    },
     Done,
 }
 
@@ -65,6 +89,11 @@ pub struct State {
     asr_done: Option<Duration>,
     capture: video::Capture,
     failures: Vec<String>,
+    pause_check: PauseCheck,
+    dub_started: Option<Instant>,
+    dub_ready_at_start: Option<usize>,
+    /// The voice player's audio output and mute, read while a clip plays.
+    voice_output: Option<(String, bool)>,
 }
 
 impl State {
@@ -87,6 +116,10 @@ impl State {
             asr_done: None,
             capture: Arc::default(),
             failures: Vec::new(),
+            pause_check: PauseCheck::Waiting,
+            dub_started: None,
+            dub_ready_at_start: None,
+            voice_output: None,
         }
     }
 }
@@ -99,6 +132,9 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
     if st.plan.settings {
         // The section is below the fold of the settings window; it has to be in the screenshot.
         app.asr_setup.scroll_to = true;
+    }
+    if st.plan.settings_voice {
+        app.tts_setup.scroll_to = true;
     }
     advance(&mut st, app, ctx);
     app.selftest = Some(st);
@@ -134,6 +170,12 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                     app.open_asr_setup(false);
                 }
                 if st.plan.settings {
+                    app.settings_draft = Some(app.cfg.clone());
+                }
+                if st.plan.tts_dialog {
+                    app.open_tts_setup(false);
+                }
+                if st.plan.settings_voice {
                     app.settings_draft = Some(app.cfg.clone());
                 }
                 if st.plan.setup_install {
@@ -196,6 +238,18 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
             st.start_pos = app.snap.pos;
             app.player.set_paused(st.plan.paused);
             st.phase = Phase::Play;
+            if st.plan.dub {
+                // Only now: turned on earlier, it could stop playback to wait for a clip
+                // and the line above would undo that.
+                app.set_dub(true);
+                st.dub_started = Some(Instant::now());
+                if app.dub.is_none() {
+                    st.failures
+                        .push(format!("the voice-over did not start: {}", app.last_toast));
+                    report(st, app);
+                    return finish(st, ctx);
+                }
+            }
             if st.plan.autopause {
                 let cue = app
                     .session
@@ -316,7 +370,25 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                     st.anki_sent = true;
                 }
             }
-            if elapsed.as_secs_f64() >= st.plan.seconds {
+            if st.plan.dub {
+                check_pause(st, app);
+                if st.dub_ready_at_start.is_none()
+                    && st
+                        .dub_started
+                        .is_some_and(|t| t.elapsed() > Duration::from_secs(1))
+                {
+                    st.dub_ready_at_start = app.dub.as_ref().map(|d| d.clips_ready());
+                }
+            }
+            // With the voice-over the run is measured in video played: waiting for the first
+            // clips and the pause in the middle do not count.
+            let over = if st.plan.dub {
+                (app.snap.pos - st.start_pos) as f64 >= st.plan.seconds * 1000.0
+                    || elapsed.as_secs_f64() > st.plan.seconds + 120.0
+            } else {
+                elapsed.as_secs_f64() >= st.plan.seconds
+            };
+            if over {
                 report(st, app);
                 if st.plan.screenshot.is_some() {
                     let layer = egui::LayerId::new(egui::Order::Debug, egui::Id::unique("capture"));
@@ -326,7 +398,7 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                     ));
                     st.phase = Phase::Capture;
                 } else {
-                    finish(st, ctx);
+                    after_capture(st, app, ctx);
                 }
             }
         }
@@ -339,10 +411,193 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                         .failures
                         .push(format!("could not save the screenshot: {e}")),
                 }
+                after_capture(st, app, ctx);
+            }
+        }
+        Phase::DubOff { since } => {
+            let since = *since;
+            if since.elapsed() >= Duration::from_secs(2) {
+                let main = app.player.mpv.get_f64("volume").unwrap_or(-1.0);
+                println!("main_volume_after_off={main:.0}");
+                if (main - app.volume).abs() > 0.5 {
+                    st.failures.push(format!(
+                        "the original sound stayed at {main:.0} after the voice-over was turned off, not {:.0}",
+                        app.volume
+                    ));
+                }
+                let left = app.dub.is_some() || app.tts_setup.running();
+                println!("dub_after_off={}", if left { "on" } else { "off" });
                 finish(st, ctx);
             }
         }
         Phase::Done => {}
+    }
+}
+
+/// After the screenshot: a voice-over run turns it off and watches the volume come back.
+fn after_capture(st: &mut State, app: &mut App, ctx: &egui::Context) {
+    if st.plan.dub && app.dub.is_some() {
+        app.set_dub(false);
+        st.phase = Phase::DubOff {
+            since: Instant::now(),
+        };
+    } else {
+        finish(st, ctx);
+    }
+}
+
+/// Pauses the video for 1.5 s while a clip plays; the voice must stop with it.
+fn check_pause(st: &mut State, app: &mut App) {
+    let Some(d) = &app.dub else { return };
+    match st.pause_check {
+        PauseCheck::Waiting => {
+            let halfway = (app.snap.pos - st.start_pos) as f64 >= st.plan.seconds * 1000.0 * 0.4;
+            let into_clip = d.voice_pos().unwrap_or(0.0) >= 0.3;
+            if halfway && d.playing() && into_clip && !d.holding() && !app.snap.paused {
+                st.voice_output = Some(d.voice_output());
+                app.player.set_paused(true);
+                st.pause_check = PauseCheck::Paused {
+                    since: Instant::now(),
+                    samples: Vec::new(),
+                };
+            }
+        }
+        PauseCheck::Paused {
+            since,
+            ref mut samples,
+        } => {
+            let ms = since.elapsed().as_millis();
+            if samples.last().is_none_or(|(t, _)| ms >= t + 100) {
+                samples.push((ms, d.voice_pos().unwrap_or(-1.0)));
+            }
+            if ms >= 1_800 {
+                // The pause reaches the voice player one tick later; from 300 ms on it must
+                // stand still.
+                let settled: Vec<f64> = samples
+                    .iter()
+                    .filter(|(t, _)| *t >= 300)
+                    .map(|(_, p)| *p)
+                    .collect();
+                let b = settled.first().copied().unwrap_or(-1.0);
+                let a = settled.last().copied().unwrap_or(-1.0);
+                let still = (a - b).abs() < 0.02;
+                let series: Vec<String> =
+                    samples.iter().map(|(t, p)| format!("{t}:{p:.3}")).collect();
+                println!("dub_pause_series={}", series.join(" "));
+                println!(
+                    "dub_pause_check=voice_pos_at_300ms={b:.3} voice_pos_at_1800ms={a:.3} {}",
+                    if still { "ok" } else { "MOVED" }
+                );
+                if !still {
+                    st.failures
+                        .push("the voice kept playing while the video was paused".into());
+                }
+                app.player.set_paused(false);
+                st.pause_check = PauseCheck::Done;
+            }
+        }
+        PauseCheck::Done => {}
+    }
+}
+
+fn report_dub(st: &mut State, app: &App) {
+    let Some(d) = &app.dub else {
+        st.failures
+            .push("the voice-over was off at the end of the run".into());
+        return;
+    };
+    let s = d.stats();
+    let (ao, voice_muted) = st.voice_output.clone().unwrap_or_else(|| d.voice_output());
+    let main_muted = app.player.mpv.get_flag("mute").unwrap_or(false);
+    println!("dub_voice_ao={ao} voice_muted={voice_muted} main_muted={main_muted}");
+    if ao != "null" || !voice_muted || !main_muted {
+        st.failures
+            .push("a self-test must not be heard, and the voice-over could be".into());
+    }
+    println!("dub_engine={}", s.engine);
+    println!("dub_status={}", d.status());
+    println!(
+        "dub_clips_ready_after_1s={}",
+        st.dub_ready_at_start
+            .map_or("-".to_owned(), |n| n.to_string())
+    );
+    println!("dub_clips_ready={}", d.clips_total());
+    println!(
+        "dub_first_clip_wall_ms={}",
+        s.first_clip
+            .map_or("-".to_owned(), |t| t.as_millis().to_string())
+    );
+    println!("dub_synth_requests={}", s.synth_requests);
+    println!("dub_cache_hits={}", s.cache_hits);
+    println!("dub_server_starts={}", s.server_starts);
+    if let Some(pid) = d.server_pid() {
+        println!("dub_server_pid={pid}");
+    }
+    println!("dub_played={}", s.played.len());
+    let mut bad = Vec::new();
+    for p in &s.played {
+        let offset = p.started_at.map(|a| a - p.start);
+        println!(
+            "dub={} started_at={} offset_ms={} clip_ms={} window_ms={} speed={:.2}{}{} text={}",
+            p.start,
+            p.started_at.map_or("-".to_owned(), |a| a.to_string()),
+            offset.map_or("-".to_owned(), |o| o.to_string()),
+            p.clip_ms,
+            p.window,
+            p.compression,
+            if p.catch_up { " catch_up" } else { "" },
+            if p.clip_ms > p.window + 300 {
+                " over_window"
+            } else {
+                ""
+            },
+            p.text
+        );
+        let on_time = offset.is_some_and(|o| (0..=400).contains(&o));
+        if !p.catch_up && !on_time {
+            bad.push(p.start);
+        }
+    }
+    println!("dub_skipped={}", s.skipped);
+    println!("dub_max_lag_ms={}", s.max_lag());
+    println!("dub_overlaps={}", s.overlaps);
+    println!("dub_hold_ms={}", s.hold.as_millis());
+    if !s.latency_ms.is_empty() {
+        let n = s.latency_ms.len() as f64;
+        let avg = s.latency_ms.iter().sum::<f64>() / n;
+        let max = s.latency_ms.iter().copied().fold(f64::MIN, f64::max);
+        let min = s.latency_ms.iter().copied().fold(f64::MAX, f64::min);
+        println!("dub_start_latency_ms=avg {avg:.0} min {min:.0} max {max:.0}");
+    }
+    let main = app.player.mpv.get_f64("volume").unwrap_or(-1.0);
+    let expected =
+        gp_core::dub_plan::original_volume(app.volume, true, app.cfg.tts.original_volume);
+    println!(
+        "volumes: user={:.0} original_percent={:.0} main_player={main:.0} voice_player={:.0}",
+        app.volume,
+        app.cfg.tts.original_volume,
+        d.voice_volume()
+    );
+    if s.played.is_empty() {
+        st.failures.push("the voice-over played nothing".into());
+    }
+    if s.overlaps > 0 {
+        st.failures
+            .push(format!("{} clips overlapped another", s.overlaps));
+    }
+    if !bad.is_empty() {
+        st.failures.push(format!(
+            "clips started outside 0…400 ms of their line: {bad:?}"
+        ));
+    }
+    if (main - expected).abs() > 0.5 {
+        st.failures.push(format!(
+            "the original sound plays at {main:.0}, not {expected:.0}"
+        ));
+    }
+    if (d.voice_volume() - app.cfg.tts.voice_volume).abs() > 0.5 {
+        st.failures
+            .push("the voice plays at the wrong volume".into());
     }
 }
 
@@ -478,6 +733,9 @@ fn report(st: &mut State, app: &App) {
             st.failures
                 .push("no secondary subtitle line was shown".into());
         }
+    }
+    if st.plan.dub {
+        report_dub(st, app);
     }
     if st.plan.setup_install {
         let installed = app.asr_setup.installed.as_ref();
