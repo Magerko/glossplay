@@ -111,14 +111,13 @@ impl SubTrack {
         self.load = Load::Ready;
     }
 
-    /// Adds cues from speech recognition. A sentence that is made of the same cues as before
-    /// keeps its translation; one that changed (it got its continuation) is translated again.
-    pub fn merge_cues(&mut self, new: Vec<Cue>) {
+    /// Takes the newest transcript from speech recognition. A sentence that is made of the
+    /// same cues as before keeps its translation; one that changed (it got its continuation,
+    /// or the next window redrew its last cue) is translated again.
+    pub fn update_cues(&mut self, cues: Vec<Cue>) {
         let old_cues = std::mem::take(&mut self.track.cues);
         let old_tr = std::mem::take(&mut self.translation);
         let old_groups = std::mem::take(&mut self.groups);
-        let mut cues = old_cues.clone();
-        gp_core::asr_plan::merge(&mut cues, new);
 
         let mut j = 0;
         let was: Vec<Option<usize>> = cues
@@ -571,6 +570,14 @@ mod tests {
         t
     }
 
+    /// Speech recognition hands over the whole transcript with these cues added.
+    fn add(t: &mut SubTrack, new: Vec<Cue>) {
+        let mut cues = t.track.cues.clone();
+        cues.extend(new);
+        cues.sort_by_key(|c| c.start);
+        t.update_cues(cues);
+    }
+
     #[test]
     fn dual_lines_from_two_tracks_and_from_translation() {
         let mut s = Session::new(1, "movie.mkv".into());
@@ -618,7 +625,7 @@ mod tests {
     fn merging_asr_cues_keeps_translations_aligned() {
         let mut t = ready("en", vec![cue(0, 1_000, "A"), cue(5_000, 6_000, "C")]);
         t.translation[1] = Tr::Done("в".into());
-        t.merge_cues(vec![cue(2_000, 3_000, "B")]);
+        add(&mut t, vec![cue(2_000, 3_000, "B")]);
         let texts: Vec<&str> = t.track.cues.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, ["A", "B", "C"]);
         assert_eq!(
@@ -634,7 +641,10 @@ mod tests {
             vec![cue(10_000, 11_000, "A"), cue(20_000, 21_000, "C")],
         );
         let keys = t.request_translations(&[0, 1]);
-        t.merge_cues(vec![cue(1_000, 2_000, "B0"), cue(15_000, 16_000, "B")]);
+        add(
+            &mut t,
+            vec![cue(1_000, 2_000, "B0"), cue(15_000, 16_000, "B")],
+        );
         assert_eq!(
             t.translation,
             [Tr::Missing, Tr::Requested, Tr::Missing, Tr::Requested]
@@ -746,10 +756,13 @@ mod tests {
 
         // The next window brings the end of the sentence.
         t.growing.as_mut().unwrap()[1] = true;
-        t.merge_cues(vec![
-            cue(29_000, 31_000, "went home."),
-            cue(40_000, 41_000, "Bye."),
-        ]);
+        add(
+            &mut t,
+            vec![
+                cue(29_000, 31_000, "went home."),
+                cue(40_000, 41_000, "Bye."),
+            ],
+        );
         assert_eq!(t.groups, [0..1, 1..3, 3..4]);
         assert_eq!(
             t.translation[0],
@@ -793,7 +806,7 @@ mod tests {
             vec![cue(0, 1_000, "One."), cue(10_000, 11_000, "Two.")],
         );
         let asked = t.request_translations(&[0, 1]);
-        t.merge_cues(vec![cue(5_000, 6_000, "Between.")]);
+        add(&mut t, vec![cue(5_000, 6_000, "Between.")]);
         assert_eq!(
             t.translation,
             [Tr::Requested, Tr::Missing, Tr::Requested],

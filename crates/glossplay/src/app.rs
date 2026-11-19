@@ -468,8 +468,9 @@ impl App {
 
         let lang = Some(self.cfg.general.learn_lang.clone()).filter(|l| !l.is_empty());
         let engine_id = format!(
-            "whisper.cpp:{}",
-            model.file_stem().unwrap_or_default().to_string_lossy()
+            "whisper.cpp:{}#{}",
+            model.file_stem().unwrap_or_default().to_string_lossy(),
+            asr_plan::CACHE_FORMAT
         );
         let cached = self
             .jobs
@@ -479,18 +480,14 @@ impl App {
             .load_transcript(&s.media_key, &engine_id, lang.as_deref().unwrap_or(""))
             .ok()
             .flatten();
-        let (mut done, mut cues) = (vec![false; asr_plan::window_count(duration)], Vec::new());
+        let mut done = vec![false; asr_plan::window_count(duration)];
+        let mut heard = asr_plan::Transcript::default();
         if let Some(saved) = cached {
-            let (restored, mask_used) =
-                asr_plan::restore_done(duration, saved.covered, &saved.done);
-            done = restored;
-            cues = saved.cues;
-            if !mask_used {
-                // Without a matching mask only the prefix is known to be complete.
-                cues.retain(|c| c.start < saved.covered);
-            }
+            done = asr_plan::restore_done(duration, saved.covered, &saved.done).0;
+            heard = saved.heard;
+            heard.retain(|k| done.get(k) == Some(&true));
         }
-        s.tracks[index].set_cues(cues.clone());
+        s.tracks[index].set_cues(heard.cues());
         s.tracks[index].growing = done.contains(&false).then(|| done.clone());
 
         // Silero VAD keeps Whisper from inventing text over silence; I use it when the model
@@ -523,7 +520,7 @@ impl App {
             model,
             vad_model,
             done,
-            cues,
+            heard,
         }));
     }
 
@@ -609,7 +606,7 @@ impl App {
                         if let Some(done) = t.growing.as_mut().and_then(|d| d.get_mut(window)) {
                             *done = true;
                         }
-                        t.merge_cues(cues);
+                        t.update_cues(cues);
                     }
                     self.tokens.clear();
                 }

@@ -1,16 +1,9 @@
 use crate::{AiError, http};
 use gp_core::Ms;
+pub use gp_core::asr_plan::{Piece, Segment as AsrSegment};
 use serde_json::Value;
 
 pub const SAMPLE_RATE: u32 = 16_000;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AsrSegment {
-    /// Relative to the start of the submitted audio.
-    pub start: Ms,
-    pub end: Ms,
-    pub text: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AsrOutput {
@@ -91,10 +84,24 @@ fn parse_verbose_json(v: &Value) -> Result<AsrOutput, AiError> {
         .filter_map(|s| {
             let text = s["text"].as_str()?.trim();
             let (start, end) = (to_ms(&s["start"])?, to_ms(&s["end"])?);
+            // Word pieces keep their leading space: it tells a new word from the rest of one.
+            let pieces = s["words"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|w| {
+                    Some(Piece {
+                        start: to_ms(&w["start"])?,
+                        end: to_ms(&w["end"])?,
+                        text: w["word"].as_str()?.to_owned(),
+                    })
+                })
+                .collect();
             (!text.is_empty() && end > start).then(|| AsrSegment {
                 start,
                 end,
                 text: text.to_owned(),
+                pieces,
             })
         })
         .collect();
@@ -144,25 +151,41 @@ mod tests {
         let reply = r#"{"task":"transcribe","language":"english","duration":10.0,
             "segments":[{"id":0,"text":" Hello there.","start":0.0,"end":1.5},
                         {"id":1,"text":"  ","start":1.5,"end":2.0},
-                        {"id":2,"text":" General Kenobi.","start":2.25,"end":4.004}],
+                        {"id":2,"text":" General Kenobi.","start":2.25,"end":4.004,
+                         "words":[{"word":" General","start":2.25,"end":2.8,"t_dtw":-1},
+                                  {"word":" Ken","start":2.8,"end":3.1},
+                                  {"word":"obi","start":3.1,"end":3.5},
+                                  {"word":".","start":3.5,"end":4.004}]}],
             "language_probabilities":{"en":0.97,"de":0.02}}"#;
         let srv = TestServer::start(vec![(200, reply.into())]);
         let engine = WhisperServer::new(&srv.url, "large-v3-turbo");
         assert_eq!(engine.id(), "whisper.cpp:large-v3-turbo");
         let out = engine.transcribe(&[0i16; 1600], None).unwrap();
         assert_eq!(out.language.as_deref(), Some("en"));
+        let piece = |start, end, text: &str| Piece {
+            start,
+            end,
+            text: text.into(),
+        };
         assert_eq!(
             out.segments,
             vec![
                 AsrSegment {
                     start: 0,
                     end: 1500,
-                    text: "Hello there.".into()
+                    text: "Hello there.".into(),
+                    pieces: Vec::new(),
                 },
                 AsrSegment {
                     start: 2250,
                     end: 4004,
-                    text: "General Kenobi.".into()
+                    text: "General Kenobi.".into(),
+                    pieces: vec![
+                        piece(2250, 2800, " General"),
+                        piece(2800, 3100, " Ken"),
+                        piece(3100, 3500, "obi"),
+                        piece(3500, 4004, "."),
+                    ],
                 },
             ]
         );

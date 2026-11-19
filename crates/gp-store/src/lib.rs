@@ -1,4 +1,5 @@
-use gp_core::{Cue, Ms};
+use gp_core::Ms;
+use gp_core::asr_plan::{Transcript as Heard, Word};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::fmt;
 use std::path::Path;
@@ -52,12 +53,12 @@ pub struct VocabEntry {
 }
 
 /// Cached speech recognition: finished windows (empty for a pre-v2 row, where the
-/// windows before `covered` are the finished ones) and every cue found so far.
+/// windows before `covered` are the finished ones) and the words each of them heard.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transcript {
     pub covered: Ms,
     pub done: Vec<bool>,
-    pub cues: Vec<Cue>,
+    pub heard: Heard,
 }
 
 pub struct Store {
@@ -192,16 +193,30 @@ impl Store {
         let Some((covered, json, done)) = row else {
             return Ok(None);
         };
-        let raw: Vec<(Ms, Ms, String)> = serde_json::from_str(&json)
+        let raw: Vec<(usize, Ms, Ms, String, u8)> = serde_json::from_str(&json)
             .map_err(|e| StoreError::Corrupt(format!("transcript for {media_key}: {e}")))?;
-        let cues = raw
-            .into_iter()
-            .map(|(start, end, text)| Cue { start, end, text })
-            .collect();
+        let mut windows: Vec<(usize, Vec<Word>)> = Vec::new();
+        for (k, start, end, text, flags) in raw {
+            let word = Word {
+                start,
+                end,
+                text,
+                opens: flags & 1 != 0,
+                spaced: flags & 2 != 0,
+            };
+            match windows.last_mut() {
+                Some((last, words)) if *last == k => words.push(word),
+                _ => windows.push((k, vec![word])),
+            }
+        }
+        let mut heard = Heard::default();
+        for (k, words) in windows {
+            heard.insert(k, words);
+        }
         Ok(Some(Transcript {
             covered,
             done: done.chars().map(|c| c == '1').collect(),
-            cues,
+            heard,
         }))
     }
 
@@ -213,11 +228,16 @@ impl Store {
         lang: &str,
         covered: Ms,
         done: &[bool],
-        cues: &[Cue],
+        heard: &Heard,
     ) -> Result<()> {
-        let raw: Vec<(Ms, Ms, &str)> = cues
-            .iter()
-            .map(|c| (c.start, c.end, c.text.as_str()))
+        let raw: Vec<(usize, Ms, Ms, &str, u8)> = heard
+            .windows()
+            .flat_map(|(k, words)| {
+                words.iter().map(move |w| {
+                    let flags = u8::from(w.opens) | u8::from(w.spaced) << 1;
+                    (k, w.start, w.end, w.text.as_str(), flags)
+                })
+            })
             .collect();
         let json = serde_json::to_string(&raw).expect("tuples of numbers and strings serialize");
         let mask: String = done.iter().map(|d| if *d { '1' } else { '0' }).collect();
@@ -365,28 +385,40 @@ mod tests {
     fn transcript_roundtrip_and_overwrite() {
         let s = Store::open_in_memory().unwrap();
         assert_eq!(s.load_transcript("f:1", "w", "").unwrap(), None);
-        let cues = vec![Cue {
-            start: 0,
-            end: 900,
-            text: "He said \"hi\"\nok".into(),
-        }];
-        s.save_transcript("f:1", "w", "", 30_000, &[true, false], &cues)
+        let word = |start, text: &str, opens, spaced| Word {
+            start,
+            end: start + 400,
+            text: text.into(),
+            opens,
+            spaced,
+        };
+        let mut heard = Heard::default();
+        heard.insert(
+            0,
+            vec![
+                word(0, "He", true, true),
+                word(500, "said \"hi\"", false, true),
+            ],
+        );
+        heard.insert(3, vec![word(90_000, "彼", true, false)]);
+        s.save_transcript("f:1", "w", "", 30_000, &[true, false, false, true], &heard)
             .unwrap();
         assert_eq!(
             s.load_transcript("f:1", "w", "").unwrap(),
             Some(Transcript {
                 covered: 30_000,
-                done: vec![true, false],
-                cues: cues.clone()
+                done: vec![true, false, false, true],
+                heard: heard.clone()
             })
         );
-        s.save_transcript("f:1", "w", "", 60_000, &[], &[]).unwrap();
+        s.save_transcript("f:1", "w", "", 60_000, &[], &Heard::default())
+            .unwrap();
         assert_eq!(
             s.load_transcript("f:1", "w", "").unwrap(),
             Some(Transcript {
                 covered: 60_000,
                 done: vec![],
-                cues: vec![]
+                heard: Heard::default()
             })
         );
     }
@@ -395,7 +427,8 @@ mod tests {
     fn out_of_order_windows_are_kept() {
         let s = Store::open_in_memory().unwrap();
         let done = [false, false, true, true, false];
-        s.save_transcript("f:2", "w", "en", 0, &done, &[]).unwrap();
+        s.save_transcript("f:2", "w", "en", 0, &done, &Heard::default())
+            .unwrap();
         let got = s.load_transcript("f:2", "w", "en").unwrap().unwrap();
         assert_eq!(got.done, done);
         assert_eq!(got.covered, 0);
@@ -410,7 +443,7 @@ mod tests {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch(&format!(
                 "BEGIN; {} PRAGMA user_version = 1; COMMIT;
-                 INSERT INTO transcript VALUES ('f:3', 'w', 'en', 45000, '[[0,900,\"old\"]]');",
+                 INSERT INTO transcript VALUES ('f:3', 'w', 'en', 45000, '[]');",
                 MIGRATIONS[0]
             ))
             .unwrap();
@@ -419,8 +452,7 @@ mod tests {
         let got = s.load_transcript("f:3", "w", "en").unwrap().unwrap();
         assert_eq!(got.covered, 45_000);
         assert!(got.done.is_empty(), "old rows have no mask");
-        assert_eq!(got.cues.len(), 1);
-        s.save_transcript("f:3", "w", "en", 0, &[false, true], &got.cues)
+        s.save_transcript("f:3", "w", "en", 0, &[false, true], &got.heard)
             .unwrap();
         assert_eq!(
             s.load_transcript("f:3", "w", "en").unwrap().unwrap().done,

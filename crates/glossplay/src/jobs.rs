@@ -32,6 +32,7 @@ pub enum Msg {
     },
     AsrCues {
         generation: u64,
+        /// The whole transcript so far: a new window may also change cues next to it.
         cues: Vec<Cue>,
         window: usize,
         language: Option<String>,
@@ -147,7 +148,7 @@ pub struct AsrParams {
     pub vad_model: Option<PathBuf>,
     /// Windows already transcribed in an earlier run.
     pub done: Vec<bool>,
-    pub cues: Vec<Cue>,
+    pub heard: asr_plan::Transcript,
 }
 
 /// Cancels the worker when dropped, so switching files never leaves two of them running.
@@ -450,8 +451,25 @@ fn run_asr(
 
     let total = p.done.len();
     let lang_key = p.lang.clone().unwrap_or_default();
+    let cache_engine = format!("{}#{}", engine.id(), asr_plan::CACHE_FORMAT);
+    let save = |p: &AsrParams| {
+        let covered = asr_plan::covered_prefix(&p.done, p.duration);
+        let _ = store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .save_transcript(
+                &p.media_key,
+                &cache_engine,
+                &lang_key,
+                covered,
+                &p.done,
+                &p.heard,
+            );
+    };
+    let mut saved = Instant::now();
     while let Some(k) = asr_plan::next_window(&p.done, playhead.load(Ordering::Relaxed)) {
         if stopped() {
+            save(&p);
             return Ok(());
         }
         let finished = p.done.iter().filter(|d| **d).count();
@@ -463,47 +481,39 @@ fn run_asr(
         let pcm = tools::extract_pcm(&p.ffmpeg, &p.media, p.audio_index, start, len)
             .map_err(|e| e.to_string())?;
         let mut language = None;
-        let cues = if pcm.is_empty() {
+        let words = if pcm.is_empty() {
             Vec::new()
         } else {
             let out = match engine.transcribe(&pcm, p.lang.as_deref()) {
                 Ok(out) => out,
                 // The server was killed under me on purpose; that is not an error to show.
-                Err(_) if stopped() => return Ok(()),
+                Err(_) if stopped() => {
+                    save(&p);
+                    return Ok(());
+                }
                 Err(e) => return Err(e.to_string()),
             };
             language = out.language;
-            let segments = out.segments.into_iter().map(|s| Cue {
-                start: s.start,
-                end: s.end,
-                text: s.text,
-            });
-            asr_plan::accept(k, start, segments)
+            asr_plan::words(start, &out.segments)
         };
         p.done[k] = true;
-        asr_plan::merge(&mut p.cues, cues.clone());
+        p.heard.insert(k, words);
         let _ = tx.send(Msg::AsrCues {
             generation: p.generation,
-            cues,
+            cues: p.heard.cues(),
             window: k,
             language,
         });
         ctx.request_repaint();
 
-        // Saved after every window: the player may be closed at any moment.
-        let covered = asr_plan::covered_prefix(&p.done, p.duration);
-        let _ = store
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .save_transcript(
-                &p.media_key,
-                &engine.id(),
-                &lang_key,
-                covered,
-                &p.done,
-                &p.cues,
-            );
+        // The player may be closed at any moment, but the whole transcript is rewritten on
+        // every save, which for a film adds up; once every couple of seconds is enough.
+        if saved.elapsed() >= Duration::from_secs(2) {
+            save(&p);
+            saved = Instant::now();
+        }
     }
+    save(&p);
     status("Transcript ready".into(), false);
     Ok(())
 }
