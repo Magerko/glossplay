@@ -331,22 +331,27 @@ fn names(units: &[String], starts: &[usize]) -> Vec<usize> {
         .collect()
 }
 
-/// Whether a capitalised word of the translation can be the same name as one of the source:
-/// "Alice" and "Алисе", not "Normans" and "Вильгельма". Only for Latin and Cyrillic, the
-/// scripts with capitals that I can tell apart this way.
-fn same_initial(src: &str, tr: &str) -> bool {
-    let first = |w: &str| {
+/// Whether a capitalised word of the translation can be the same name as one of the source,
+/// by its first two letters: "Alice" and "Алисе", not "Normans" and "Вильгельма". Only for
+/// Latin and Cyrillic, the scripts with capitals that I can tell apart this way.
+fn alike(src: &str, tr: &str) -> bool {
+    let letters = |w: &str| -> Vec<char> {
         w.chars()
-            .next()
-            .map(|c| c.to_lowercase().next().unwrap_or(c))
+            .filter(|c| c.is_alphabetic())
+            .take(2)
+            .flat_map(char::to_lowercase)
+            .collect()
     };
-    let (Some(s), Some(t)) = (first(src), first(tr)) else {
-        return false;
-    };
+    let (s, t) = (letters(src), letters(tr));
+    !s.is_empty() && !t.is_empty() && s.iter().zip(&t).all(|(&s, &t)| sounds(t).contains(s))
+}
+
+/// The Latin letters a letter of a name may be written with.
+fn sounds(t: char) -> String {
     if t.is_ascii() {
-        return s == t;
+        return t.to_string();
     }
-    let sounds = match t {
+    match t {
         'а' => "a",
         'б' => "b",
         'в' => "vw",
@@ -374,8 +379,38 @@ fn same_initial(src: &str, tr: &str) -> bool {
         'ю' => "juy",
         'я' => "jy",
         _ => "",
-    };
-    sounds.contains(s)
+    }
+    .to_owned()
+}
+
+/// Names of the source matched to names of the translation, in order, skipping those
+/// without a match ("North Umbria" is "Северной Умбрии"): (source cue, translation unit).
+fn name_pairs(src: &Source, tr: &Side) -> Vec<(usize, usize)> {
+    let (a, b) = (&src.side.names, &tr.names);
+    let same = |i: usize, j: usize| alike(&src.side.units[a[i]], &tr.units[b[j]]);
+    // Longest common subsequence: lcs[i][j] for a[i..] and b[j..].
+    let mut lcs = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            lcs[i][j] = if same(i, j) {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < a.len() && j < b.len() {
+        if same(i, j) && lcs[i][j] == lcs[i + 1][j + 1] + 1 {
+            out.push((src.cue_of[a[i]], b[j]));
+            (i, j) = (i + 1, j + 1);
+        } else if lcs[i + 1][j] >= lcs[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
 }
 
 struct Source {
@@ -415,7 +450,12 @@ impl Source {
 /// - otherwise anywhere, at the cue's share of the whole.
 ///
 /// By name, every name of the translation stays with the cue its source name is in.
-fn cuts(tr: &Side, src: &Source, by_sentence: bool, by_name: bool) -> Option<Vec<usize>> {
+fn cuts(
+    tr: &Side,
+    src: &Source,
+    by_sentence: bool,
+    anchors: &[(usize, usize)],
+) -> Option<Vec<usize>> {
     let (w, n) = (tr.len(), src.cue_end.len());
     let sw = src.side.len();
     let mut spans = Vec::with_capacity(n - 1);
@@ -440,16 +480,6 @@ fn cuts(tr: &Side, src: &Source, by_sentence: bool, by_name: bool) -> Option<Vec
         };
         spans.push(span);
     }
-    let anchors: Vec<(usize, usize)> = if by_name {
-        src.side
-            .names
-            .iter()
-            .zip(&tr.names)
-            .map(|(&s, &t)| (src.cue_of[s], t))
-            .collect()
-    } else {
-        Vec::new()
-    };
     let cost = |k: usize, b: usize| -> f64 {
         let (lo, hi, target) = spans[k];
         if b < lo.max(1) || b > hi || anchors.iter().any(|&(c, t)| (c <= k) != (t < b)) {
@@ -522,22 +552,15 @@ pub fn distribute(translation: &str, sources: &[&str]) -> Vec<String> {
     let tr = Side::new(units, &vec![sep.len(); w]);
     let src = Source::new(sources);
     let by_sentence = tr.starts.len() > 1 && tr.starts.len() == src.side.starts.len();
-    let by_name = !tr.names.is_empty()
-        && tr.names.len() == src.side.names.len()
-        && src
-            .side
-            .names
-            .iter()
-            .zip(&tr.names)
-            .all(|(&s, &t)| same_initial(&src.side.units[s], &tr.units[t]));
+    let names = name_pairs(&src, &tr);
     let bounds = [
-        (by_sentence, by_name),
-        (by_sentence, false),
-        (false, by_name),
-        (false, false),
+        (by_sentence, &names[..]),
+        (by_sentence, &[][..]),
+        (false, &names[..]),
+        (false, &[][..]),
     ]
     .into_iter()
-    .find_map(|(s, nm)| cuts(&tr, &src, s, nm))
+    .find_map(|(s, anchors)| cuts(&tr, &src, s, anchors))
     .unwrap_or_else(|| (0..=n).map(|k| k * w / n).collect());
     (0..n)
         .map(|k| tr.units[bounds[k]..bounds[k + 1]].join(sep))
@@ -997,6 +1020,28 @@ mod tests {
         );
         assert!(p[0].starts_with("Поведение Вильгельма поначалу"), "{p:?}");
         assert!(!p[1].contains("Вильгельма"), "{p:?}");
+
+        // Names on both sides, but not all of them: the ones that match still hold.
+        let cues = [
+            cue(221_491, 226_821, "Edwin and Morcar, the earls of Mercia"),
+            cue(226_940, 229_450, "and Northumbria, declared"),
+            cue(
+                229_450,
+                236_594,
+                "for him, and even Stigand, the patriotic Archbishop of Canterbury,",
+            ),
+            cue(237_105, 238_607, "found it advisable."),
+        ];
+        assert_eq!(group(&cues), one(0..4));
+        let p = cut(
+            &cues,
+            "Эдвин и Моркар, графы Мерсии и Нортумбрии, высказались за него, и даже Стиганд, \
+             патриотически настроенный архиепископ Кентерберийский, счел это целесообразным.",
+        );
+        assert_eq!(p[0], "Эдвин и Моркар, графы Мерсии", "{p:?}");
+        assert!(p[1].starts_with("и Нортумбрии,"), "{p:?}");
+        assert!(p[2].ends_with("Кентерберийский,"), "{p:?}");
+        assert_eq!(p[3], "счел это целесообразным.");
     }
 
     #[test]
