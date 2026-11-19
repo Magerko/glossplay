@@ -6,7 +6,7 @@ A video player for people who learn languages by watching. It shows the original
 translation together, writes subtitles for videos that have none, explains any word you click,
 and keeps the words you want to remember.
 
-![Dual subtitles with a word looked up](docs/screenshots/word.png)
+![Dual subtitles with a word looked up](docs/screenshots/en/word.png)
 
 ## What it does
 
@@ -35,7 +35,7 @@ and keeps the words you want to remember.
 - **Interface** in English, Russian and Ukrainian. You choose in Settings; by default it follows
   the language of the system.
 
-![Transcript made by speech recognition, with translations](docs/screenshots/transcript.png)
+![Transcript made by speech recognition, with translations](docs/screenshots/en/transcript.png)
 
 ## Status
 
@@ -44,7 +44,7 @@ This is version 0.1, the first usable release.
 | | |
 |---|---|
 | Windows 10/11 x64 | Built and tested by hand, on Windows 11 with an NVIDIA GPU. |
-| Linux, macOS | Not tested yet: the code is written to be portable, but it has not been built or run there. **Nobody has run the interface on them** — reports are welcome. Speech recognition and voice-over have to be set up by hand there: the one-button install is for Windows only. |
+| Linux, macOS | The code builds and the test suite passes there in CI. **Nobody has run the interface on them yet** — reports are welcome. Speech recognition and voice-over have to be set up by hand there: the one-button install is for Windows only. |
 
 Known limits of this version:
 
