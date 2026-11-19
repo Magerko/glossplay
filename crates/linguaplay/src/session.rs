@@ -2,7 +2,8 @@
 //! which of them are shown, and their translations.
 
 use crate::jobs::AsrHandle;
-use lp_core::{Cue, Ms, Track, TrackSource};
+use lp_core::{Cue, Ms, Track, TrackSource, asr_plan, sentences};
+use std::ops::Range;
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,12 +24,46 @@ pub enum Load {
     Bitmap,
 }
 
+/// Machine translation of one cue. Cues are translated a sentence at a time, so every cue of
+/// a sentence group is always in the same state.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tr {
     Missing,
     Requested,
     Done(String),
+    /// Translated as part of a sentence that has changed since (speech recognition added its
+    /// continuation). Still shown until the new sentence is translated, so nothing blinks.
+    Stale(String),
+    /// Stale and asked again.
+    Refreshing(String),
 }
+
+impl Tr {
+    pub fn shown(&self) -> Option<&str> {
+        match self {
+            Tr::Done(t) | Tr::Stale(t) | Tr::Refreshing(t) => Some(t),
+            Tr::Missing | Tr::Requested => None,
+        }
+    }
+
+    fn wanted(&self) -> bool {
+        matches!(self, Tr::Missing | Tr::Stale(_))
+    }
+
+    fn awaited(&self) -> bool {
+        matches!(self, Tr::Requested | Tr::Refreshing(_))
+    }
+
+    fn outdated(&self) -> Tr {
+        match self.shown() {
+            Some(t) => Tr::Stale(t.to_owned()),
+            None => Tr::Missing,
+        }
+    }
+}
+
+/// The playhead this close to a sentence that may still grow means it is translated as it is.
+const EDGE_LEAD: Ms = 3_000;
 
 pub struct SubTrack {
     pub label: String,
@@ -37,6 +72,12 @@ pub struct SubTrack {
     pub track: Track,
     /// Machine translation of each cue, filled lazily around the playhead.
     pub translation: Vec<Tr>,
+    /// Sentence groups over `track.cues`, the unit of translation.
+    pub groups: Vec<Range<usize>>,
+    /// Speech recognition windows already transcribed, while the track is still growing.
+    pub growing: Option<Vec<bool>>,
+    /// Bumped whenever all translations are thrown away, so a late answer is not taken.
+    pub epoch: u64,
 }
 
 impl SubTrack {
@@ -57,33 +98,56 @@ impl SubTrack {
             load,
             track: Track::new(source, lang, None, Vec::new()),
             translation: Vec::new(),
+            groups: Vec::new(),
+            growing: None,
+            epoch: 0,
         }
     }
 
     pub fn set_cues(&mut self, cues: Vec<Cue>) {
         self.translation = vec![Tr::Missing; cues.len()];
+        self.groups = sentences::group(&cues);
         self.track.cues = cues;
         self.load = Load::Ready;
     }
 
-    /// Adds cues from speech recognition, keeping existing translations aligned.
+    /// Adds cues from speech recognition. A sentence that is made of the same cues as before
+    /// keeps its translation; one that changed (it got its continuation) is translated again.
     pub fn merge_cues(&mut self, new: Vec<Cue>) {
-        let old: Vec<(Cue, Tr)> = self
-            .track
-            .cues
-            .drain(..)
-            .zip(self.translation.drain(..))
-            .collect();
-        let mut cues: Vec<Cue> = old.iter().map(|(c, _)| c.clone()).collect();
+        let old_cues = std::mem::take(&mut self.track.cues);
+        let old_tr = std::mem::take(&mut self.translation);
+        let old_groups = std::mem::take(&mut self.groups);
+        let mut cues = old_cues.clone();
         lp_core::asr_plan::merge(&mut cues, new);
-        let mut old = old.into_iter().peekable();
-        self.translation = cues
+
+        let mut j = 0;
+        let was: Vec<Option<usize>> = cues
             .iter()
-            .map(|c| match old.peek() {
-                Some((oc, _)) if oc == c => old.next().unwrap().1,
-                _ => Tr::Missing,
+            .map(|c| {
+                let hit = old_cues.get(j).is_some_and(|o| o == c);
+                j += usize::from(hit);
+                hit.then(|| j - 1)
             })
             .collect();
+        let groups = sentences::group(&cues);
+        let mut translation = Vec::with_capacity(cues.len());
+        for g in &groups {
+            let same = was[g.start].is_some_and(|o| {
+                let og = &old_groups[old_groups.partition_point(|r| r.end <= o)];
+                og.start == o
+                    && og.len() == g.len()
+                    && g.clone().zip(og.clone()).all(|(n, o)| was[n] == Some(o))
+            });
+            for i in g.clone() {
+                translation.push(match was[i] {
+                    Some(o) if same => old_tr[o].clone(),
+                    Some(o) => old_tr[o].outdated(),
+                    None => Tr::Missing,
+                });
+            }
+        }
+        self.translation = translation;
+        self.groups = groups;
         self.track.cues = cues;
         self.load = Load::Ready;
     }
@@ -92,40 +156,141 @@ impl SubTrack {
         self.load != Load::Bitmap
     }
 
-    /// Marks cues as sent for translation. The keys travel with the job, because by the
-    /// time the answer comes speech recognition may have inserted cues before these.
-    pub fn request_translations(&mut self, indices: &[usize]) -> Vec<CueKey> {
-        indices
+    pub fn reset_translations(&mut self) {
+        self.translation.fill(Tr::Missing);
+        self.epoch += 1;
+    }
+
+    /// The sentence group a cue belongs to.
+    pub fn group_of(&self, cue: usize) -> usize {
+        self.groups.partition_point(|g| g.end <= cue)
+    }
+
+    pub fn sentence_text(&self, group: usize) -> String {
+        sentences::sentence_text(
+            self.track.cues[self.groups[group].clone()]
+                .iter()
+                .map(|c| c.text.as_str()),
+        )
+    }
+
+    pub fn needs_translation(&self, group: usize) -> bool {
+        self.groups[group]
+            .clone()
+            .any(|i| self.translation[i].wanted())
+    }
+
+    /// A sentence at the edge of what speech recognition has done so far, which its next
+    /// window may still continue.
+    pub fn may_grow(&self, group: usize) -> bool {
+        let Some(done) = &self.growing else {
+            return false;
+        };
+        let g = &self.groups[group];
+        let last = &self.track.cues[g.end - 1];
+        if g.len() >= sentences::MAX_CUES || sentences::ends_firmly(&last.text) {
+            return false;
+        }
+        let reach = last.end + sentences::LINKED_PAUSE;
+        let reach = match self.track.cues.get(g.end) {
+            // The next cue is close: both windows around the gap are done, so nothing can be
+            // inserted between the two and the break before it is final.
+            Some(next) if next.start <= reach => return false,
+            Some(next) => reach.min(next.start),
+            None => reach,
+        };
+        (asr_plan::window_of(last.start)..=asr_plan::window_of(reach))
+            .any(|k| done.get(k) == Some(&false))
+    }
+
+    /// Whether a group should be sent for translation now, with the playhead at `pos`.
+    pub fn ready_to_translate(&self, group: usize, pos: Ms) -> bool {
+        self.needs_translation(group)
+            && (!self.may_grow(group)
+                || self.track.cues[self.groups[group].start].start <= pos + EDGE_LEAD)
+    }
+
+    /// Marks sentence groups as sent for translation. Keys travel with the job, because by
+    /// the time the answer comes speech recognition may have inserted cues before these.
+    pub fn request_translations(&mut self, groups: &[usize]) -> Vec<SentenceKey> {
+        groups
             .iter()
-            .filter_map(|&i| {
-                let cue = self.track.cues.get(i)?;
-                self.translation[i] = Tr::Requested;
-                Some(CueKey {
-                    start: cue.start,
-                    text: cue.text.clone(),
+            .filter_map(|&g| {
+                let range = self.groups.get(g)?.clone();
+                for i in range.clone() {
+                    self.translation[i] = match &self.translation[i] {
+                        Tr::Stale(t) | Tr::Refreshing(t) | Tr::Done(t) => Tr::Refreshing(t.clone()),
+                        Tr::Missing | Tr::Requested => Tr::Requested,
+                    };
+                }
+                Some(SentenceKey {
+                    text: self.sentence_text(g),
+                    cues: self.track.cues[range]
+                        .iter()
+                        .map(|c| CueKey {
+                            start: c.start,
+                            text: c.text.clone(),
+                        })
+                        .collect(),
                 })
             })
             .collect()
     }
 
-    /// Puts the answer to a translation job on the cues it was asked for; `None` means the
-    /// job failed. Whatever stays unanswered goes back to `Missing` to be asked again.
-    pub fn apply_translations(&mut self, keys: &[CueKey], results: Option<&[String]>) {
-        for (n, key) in keys.iter().enumerate() {
-            let from = self.track.cues.partition_point(|c| c.start < key.start);
-            let to = self.track.cues.partition_point(|c| c.start <= key.start);
-            // Only a cue still waiting takes the answer: one reset to `Missing` meanwhile
-            // (new provider or language) must not get a stale translation.
-            let Some(i) = (from..to).find(|&i| {
-                self.track.cues[i].text == key.text && self.translation[i] == Tr::Requested
-            }) else {
+    /// Puts the answers to a translation job on the sentences they were asked for; `None`
+    /// means the job failed and the sentences are asked again later.
+    pub fn apply_translations(
+        &mut self,
+        asked: &[SentenceKey],
+        results: Option<&[String]>,
+        epoch: u64,
+    ) {
+        if epoch != self.epoch {
+            return;
+        }
+        for (n, key) in asked.iter().enumerate() {
+            // Only a group still waiting, and still made of the same cues, takes the answer.
+            let Some(range) = self.find_group(&key.cues) else {
                 continue;
             };
-            self.translation[i] = match results.and_then(|r| r.get(n)) {
-                Some(text) => Tr::Done(text.clone()),
-                None => Tr::Missing,
-            };
+            match results.and_then(|r| r.get(n)) {
+                Some(text) => {
+                    let lens: Vec<usize> = key
+                        .cues
+                        .iter()
+                        .map(|c| sentences::cue_len(&c.text))
+                        .collect();
+                    let parts = sentences::layout(text, &lens);
+                    for (i, part) in range.zip(parts) {
+                        self.translation[i] = Tr::Done(part);
+                    }
+                }
+                None => {
+                    for i in range {
+                        self.translation[i] = match &self.translation[i] {
+                            Tr::Refreshing(t) => Tr::Stale(t.clone()),
+                            _ => Tr::Missing,
+                        };
+                    }
+                }
+            }
         }
+    }
+
+    fn find_group(&self, keys: &[CueKey]) -> Option<Range<usize>> {
+        let first = keys.first()?;
+        let from = self.track.cues.partition_point(|c| c.start < first.start);
+        let to = self.track.cues.partition_point(|c| c.start <= first.start);
+        let start = (from..to)
+            .find(|&i| self.track.cues[i].text == first.text && self.translation[i].awaited())?;
+        let range = self.groups[self.group_of(start)].clone();
+        let same = range.start == start
+            && range.len() == keys.len()
+            && range.clone().zip(keys).all(|(i, k)| {
+                let c = &self.track.cues[i];
+                c.start == k.start && c.text == k.text && self.translation[i].awaited()
+            });
+        same.then_some(range)
     }
 }
 
@@ -134,6 +299,13 @@ impl SubTrack {
 pub struct CueKey {
     pub start: Ms,
     pub text: String,
+}
+
+/// A sentence sent for translation: its text and the cues it was made of.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SentenceKey {
+    pub text: String,
+    pub cues: Vec<CueKey>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -219,14 +391,15 @@ impl Session {
                     lines_of(t, pos).into_iter().map(|l| l.text).collect()
                 }),
             Secondary::Translate => self.primary_track().map_or(Vec::new(), |t| {
-                t.track
+                let mut lines: Vec<String> = t
+                    .track
                     .active_at(pos)
                     .into_iter()
-                    .filter_map(|i| match &t.translation[i] {
-                        Tr::Done(text) => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect()
+                    .filter_map(|i| t.translation[i].shown().map(str::to_owned))
+                    .collect();
+                // Two cues of one short sentence can both show it whole; once is enough.
+                lines.dedup();
+                lines
             }),
         }
     }
@@ -256,10 +429,7 @@ impl Session {
         let t = self.primary_track()?;
         match self.secondary {
             Secondary::Off => None,
-            Secondary::Translate => match t.translation.get(cue)? {
-                Tr::Done(text) => Some(text.clone()),
-                _ => None,
-            },
+            Secondary::Translate => t.translation.get(cue)?.shown().map(str::to_owned),
             Secondary::Track(i) => {
                 let c = t.track.cues.get(cue)?;
                 let other = self.tracks.get(i).filter(|t| t.load == Load::Ready)?;
@@ -451,11 +621,11 @@ mod tests {
 
     #[test]
     fn merging_asr_cues_keeps_translations_aligned() {
-        let mut t = ready("en", vec![cue(0, 1_000, "a"), cue(5_000, 6_000, "c")]);
+        let mut t = ready("en", vec![cue(0, 1_000, "A"), cue(5_000, 6_000, "C")]);
         t.translation[1] = Tr::Done("в".into());
-        t.merge_cues(vec![cue(2_000, 3_000, "b")]);
+        t.merge_cues(vec![cue(2_000, 3_000, "B")]);
         let texts: Vec<&str> = t.track.cues.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(texts, ["a", "b", "c"]);
+        assert_eq!(texts, ["A", "B", "C"]);
         assert_eq!(
             t.translation,
             [Tr::Missing, Tr::Missing, Tr::Done("в".into())]
@@ -474,7 +644,7 @@ mod tests {
             t.translation,
             [Tr::Missing, Tr::Requested, Tr::Missing, Tr::Requested]
         );
-        t.apply_translations(&keys, Some(&["а".into(), "в".into()]));
+        t.apply_translations(&keys, Some(&["а".into(), "в".into()]), 0);
         let pairs: Vec<(&str, &Tr)> = t
             .track
             .cues
@@ -498,24 +668,144 @@ mod tests {
         let mut t = ready(
             "en",
             vec![
-                cue(0, 1_000, "a"),
-                cue(0, 1_000, "a"),
-                cue(5_000, 6_000, "c"),
+                cue(0, 1_000, "A"),
+                cue(0, 1_000, "A"),
+                cue(5_000, 6_000, "C"),
             ],
         );
+        assert_eq!(t.groups, [0..1, 1..2, 2..3], "cues on screen together");
         let stale = t.request_translations(&[2]);
         let keys = t.request_translations(&[0, 1]);
-        t.apply_translations(&keys, None);
+        t.apply_translations(&keys, None, 0);
         assert_eq!(t.translation[..2], [Tr::Missing, Tr::Missing]);
 
         let keys = t.request_translations(&[0, 1]);
-        t.apply_translations(&keys, Some(&["x".into()]));
+        t.apply_translations(&keys, Some(&["x".into()]), 0);
         assert_eq!(t.translation[..2], [Tr::Done("x".into()), Tr::Missing]);
 
-        // A settings change resets the cues while the job for "c" is still out.
-        t.translation[2] = Tr::Missing;
-        t.apply_translations(&stale, Some(&["old".into()]));
-        assert_eq!(t.translation[2], Tr::Missing);
+        // A settings change resets the cues while the job for "c" is still out, and "c" is
+        // asked again before the old answer comes.
+        t.reset_translations();
+        let fresh = t.request_translations(&[2]);
+        t.apply_translations(&stale, Some(&["old".into()]), 0);
+        assert_eq!(t.translation[2], Tr::Requested);
+        t.apply_translations(&fresh, Some(&["new".into()]), t.epoch);
+        assert_eq!(t.translation[2], Tr::Done("new".into()));
+    }
+
+    fn shown(t: &SubTrack) -> Vec<Option<&str>> {
+        t.translation.iter().map(Tr::shown).collect()
+    }
+
+    #[test]
+    fn a_sentence_is_translated_once_and_cut_across_its_cues() {
+        let mut t = ready(
+            "en",
+            vec![
+                cue(0, 1_000, "I told him that"),
+                cue(1_100, 2_000, "he didn't do it,"),
+                cue(2_100, 3_000, "she said."),
+                cue(3_100, 4_000, "Then she left."),
+            ],
+        );
+        assert_eq!(t.groups, [0..3, 3..4]);
+        let asked = t.request_translations(&[0]);
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].text, "I told him that he didn't do it, she said.");
+        assert_eq!(t.translation[3], Tr::Missing);
+        let whole = "Я сказала ему, что он этого не делал, — сказала она.";
+        t.apply_translations(&asked, Some(&[whole.into()]), 0);
+        let parts: Vec<&str> = shown(&t)[..3].iter().map(|p| p.unwrap()).collect();
+        assert!(parts.iter().all(|p| !p.is_empty()), "{parts:?}");
+        assert_eq!(parts.join(" "), whole);
+    }
+
+    #[test]
+    fn a_sentence_at_the_edge_of_recognition_waits_then_is_redone() {
+        // Windows of 30 s: the first is transcribed, the second not yet.
+        let mut t = ready(
+            "en",
+            vec![
+                cue(20_000, 22_000, "It was late."),
+                cue(27_000, 28_500, "And then he"),
+            ],
+        );
+        t.growing = Some(vec![true, false, false]);
+        assert!(!t.may_grow(0) && t.may_grow(1));
+        assert!(t.ready_to_translate(0, 0));
+        assert!(
+            !t.ready_to_translate(1, 20_000),
+            "the next window may continue it"
+        );
+        assert!(
+            t.ready_to_translate(1, 25_000),
+            "the playhead is about to reach it"
+        );
+
+        let asked = t.request_translations(&[0, 1]);
+        t.apply_translations(
+            &asked,
+            Some(&["Было поздно.".into(), "А потом он".into()]),
+            0,
+        );
+
+        // The next window brings the end of the sentence.
+        t.growing.as_mut().unwrap()[1] = true;
+        t.merge_cues(vec![
+            cue(29_000, 31_000, "went home."),
+            cue(40_000, 41_000, "Bye."),
+        ]);
+        assert_eq!(t.groups, [0..1, 1..3, 3..4]);
+        assert_eq!(
+            t.translation[0],
+            Tr::Done("Было поздно.".into()),
+            "untouched"
+        );
+        assert_eq!(
+            shown(&t)[1..3],
+            [Some("А потом он"), None],
+            "the old text stays until the new one comes"
+        );
+        assert!(t.needs_translation(1) && t.needs_translation(2));
+        assert!(!t.needs_translation(0));
+
+        let asked = t.request_translations(&[1]);
+        assert_eq!(asked[0].text, "And then he went home.");
+        assert_eq!(t.translation[1], Tr::Refreshing("А потом он".into()));
+        // An answer for the sentence as it was before is not taken.
+        let old = SentenceKey {
+            text: "And then he".into(),
+            cues: vec![CueKey {
+                start: 27_000,
+                text: "And then he".into(),
+            }],
+        };
+        t.apply_translations(&[old], Some(&["А потом он".into()]), 0);
+        assert_eq!(t.translation[2], Tr::Requested);
+        t.apply_translations(&asked, Some(&["А потом он пошёл домой.".into()]), 0);
+        // Short, and no comma to cut at: both cues show the whole sentence.
+        assert_eq!(shown(&t)[1..3], [Some("А потом он пошёл домой."); 2]);
+
+        // Recognition finished: nothing is held back any more.
+        t.growing = None;
+        assert!(!t.may_grow(2));
+    }
+
+    #[test]
+    fn merging_keeps_unchanged_sentences_and_their_requests() {
+        let mut t = ready(
+            "en",
+            vec![cue(0, 1_000, "One."), cue(10_000, 11_000, "Two.")],
+        );
+        let asked = t.request_translations(&[0, 1]);
+        t.merge_cues(vec![cue(5_000, 6_000, "Between.")]);
+        assert_eq!(
+            t.translation,
+            [Tr::Requested, Tr::Missing, Tr::Requested],
+            "a request still out is not lost"
+        );
+        t.apply_translations(&asked, Some(&["Раз.".into(), "Два.".into()]), 0);
+        assert_eq!(shown(&t), [Some("Раз."), None, Some("Два.")]);
     }
 
     #[test]

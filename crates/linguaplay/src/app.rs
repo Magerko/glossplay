@@ -1,7 +1,7 @@
-use crate::jobs::{AsrParams, Jobs, Msg, TranslateJob};
+use crate::jobs::{AsrParams, CONTEXT_SENTENCES, Jobs, Msg, TranslateJob};
 use crate::player::{Player, Snapshot, TrackInfo, TrackKind};
 use crate::session::{
-    Load, Origin, Secondary, Session, SubTrack, Tr, normalize_lang, sidecar_subtitles,
+    Load, Origin, Secondary, Session, SubTrack, normalize_lang, sidecar_subtitles,
 };
 use crate::video::VideoSurface;
 use crate::{paths, selftest, theme};
@@ -477,6 +477,7 @@ impl App {
             }
         }
         s.tracks[index].set_cues(cues.clone());
+        s.tracks[index].growing = done.contains(&false).then(|| done.clone());
 
         // Silero VAD keeps Whisper from inventing text over silence; I use it when the model
         // file sits next to the Whisper model.
@@ -568,12 +569,13 @@ impl App {
                 Msg::Translated {
                     generation,
                     track,
-                    keys,
+                    epoch,
+                    sentences,
                     result,
                 } if Some(generation) == current => {
                     let s = self.session.as_mut().unwrap();
                     let t = &mut s.tracks[track];
-                    t.apply_translations(&keys, result.as_deref().ok());
+                    t.apply_translations(&sentences, result.as_deref().ok(), epoch);
                     if let Err(error) = result {
                         s.translate_failed_at = Some(Instant::now());
                         self.toast(format!("Translation failed: {error}"));
@@ -582,13 +584,16 @@ impl App {
                 Msg::AsrCues {
                     generation,
                     cues,
+                    window,
                     language,
-                    ..
                 } if Some(generation) == current => {
                     let s = self.session.as_mut().unwrap();
                     if let Some(t) = s.tracks.iter_mut().find(|t| t.origin == Origin::Asr) {
                         if t.track.lang.is_none() {
                             t.track.lang = language;
+                        }
+                        if let Some(done) = t.growing.as_mut().and_then(|d| d.get_mut(window)) {
+                            *done = true;
                         }
                         t.merge_cues(cues);
                     }
@@ -602,6 +607,12 @@ impl App {
                     let s = self.session.as_mut().unwrap();
                     s.asr_status = text;
                     s.asr_running = running;
+                    if !running {
+                        // Finished or failed: no more cues will come to continue a sentence.
+                        for t in s.tracks.iter_mut().filter(|t| t.origin == Origin::Asr) {
+                            t.growing = None;
+                        }
+                    }
                 }
                 Msg::WordTranslated { request, result } => {
                     if let Some(p) = self.popup.as_mut().filter(|p| p.request == request) {
@@ -676,17 +687,31 @@ impl App {
         else {
             return;
         };
+        // The window ahead of the playhead, widened to whole sentences.
         let lookahead = self.cfg.translation.lookahead.max(1);
-        let to = (from + lookahead).min(t.track.cues.len());
-        let missing: Vec<usize> = (from..to)
-            .filter(|&i| t.translation[i] == Tr::Missing)
-            .collect();
+        let first = t.group_of(from);
+        let (mut wanted, mut wanted_cues, mut covered) = (Vec::new(), 0, 0);
+        for g in first..t.groups.len() {
+            if covered >= lookahead {
+                break;
+            }
+            covered += t.groups[g].len();
+            if t.ready_to_translate(g, pos) {
+                wanted.push(g);
+                wanted_cues += t.groups[g].len();
+            }
+        }
         // Waiting until half of the window is missing turns many one-line requests into a few batches.
-        let urgent = missing.first() == Some(&from);
-        if missing.is_empty() || (!urgent && missing.len() < lookahead / 2) {
+        let urgent = wanted
+            .first()
+            .is_some_and(|&g| t.track.cues[t.groups[g].start].start <= pos + 5_000);
+        if wanted.is_empty() || (!urgent && wanted_cues < lookahead / 2) {
             return;
         }
-        let keys = t.request_translations(&missing);
+        let context = (wanted[0].saturating_sub(CONTEXT_SENTENCES)..wanted[0])
+            .map(|g| t.sentence_text(g))
+            .collect();
+        let sentences = t.request_translations(&wanted);
         let src = t
             .track
             .lang
@@ -696,11 +721,9 @@ impl App {
         self.jobs.translate(TranslateJob {
             generation,
             track: index,
-            keys,
-            context: t.track.cues[from.saturating_sub(3)..from]
-                .iter()
-                .map(|c| c.text.clone())
-                .collect(),
+            epoch: t.epoch,
+            sentences,
+            context,
             src,
             dst: self.cfg.general.native_lang.clone(),
             translator,
@@ -863,7 +886,7 @@ impl App {
         if let Some(s) = &mut self.session {
             // A new provider or language makes the old translations stale.
             for t in &mut s.tracks {
-                t.translation.iter_mut().for_each(|tr| *tr = Tr::Missing);
+                t.reset_translations();
             }
             s.translate_failed_at = None;
         }

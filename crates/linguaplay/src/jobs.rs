@@ -1,7 +1,7 @@
 //! Background work. The UI thread never touches the network or the disk: it sends a job,
 //! keeps drawing, and picks up a `Msg` when the job is done.
 
-use crate::session::CueKey;
+use crate::session::SentenceKey;
 use eframe::egui;
 use lp_ai::AiError;
 use lp_ai::anki::{AnkiClient, AnkiNote};
@@ -26,12 +26,14 @@ pub enum Msg {
     Translated {
         generation: u64,
         track: usize,
-        keys: Vec<CueKey>,
+        epoch: u64,
+        sentences: Vec<SentenceKey>,
         result: Result<Vec<String>, String>,
     },
     AsrCues {
         generation: u64,
         cues: Vec<Cue>,
+        window: usize,
         language: Option<String>,
     },
     AsrStatus {
@@ -57,7 +59,9 @@ pub enum Msg {
 pub struct TranslateJob {
     pub generation: u64,
     pub track: usize,
-    pub keys: Vec<CueKey>,
+    pub epoch: u64,
+    pub sentences: Vec<SentenceKey>,
+    /// Sentences of the original just before the first one asked, for LLM providers.
     pub context: Vec<String>,
     pub src: Option<String>,
     pub dst: String,
@@ -71,6 +75,7 @@ pub struct TranslateOutcome {
 }
 
 const RETRY_DELAYS: [u64; 3] = [1, 4, 15];
+pub const CONTEXT_SENTENCES: usize = 8;
 
 /// Translates `lines`, asking the provider only for what the cache does not have.
 pub fn translate_cached(
@@ -92,10 +97,11 @@ pub fn translate_cached(
     let mut requests = 0;
     for batch in missing.chunks(translator.batch_size().max(1)) {
         let batch_lines: Vec<String> = batch.iter().map(|&i| lines[i].clone()).collect();
-        // Lines just before the batch give an LLM the context of the dialogue.
+        // Sentences just before the batch give an LLM the context of the dialogue.
         let first = batch[0];
         let mut ctx: Vec<String> = context.to_vec();
-        ctx.extend(lines[first.saturating_sub(3)..first].iter().cloned());
+        ctx.extend(lines[..first].iter().cloned());
+        let ctx = ctx.split_off(ctx.len().saturating_sub(CONTEXT_SENTENCES));
         let req = TranslateRequest {
             src_lang: src,
             dst_lang: dst,
@@ -176,7 +182,7 @@ impl Jobs {
         // One translation at a time keeps me inside provider rate limits.
         std::thread::spawn(move || {
             for job in translate_rx {
-                let lines: Vec<String> = job.keys.iter().map(|k| k.text.clone()).collect();
+                let lines: Vec<String> = job.sentences.iter().map(|s| s.text.clone()).collect();
                 let result = translate_cached(
                     &worker_store,
                     job.translator.as_ref(),
@@ -190,7 +196,8 @@ impl Jobs {
                 let _ = worker_tx.send(Msg::Translated {
                     generation: job.generation,
                     track: job.track,
-                    keys: job.keys,
+                    epoch: job.epoch,
+                    sentences: job.sentences,
                     result,
                 });
                 worker_ctx.request_repaint();
@@ -478,6 +485,7 @@ fn run_asr(
         let _ = tx.send(Msg::AsrCues {
             generation: p.generation,
             cues,
+            window: k,
             language,
         });
         ctx.request_repaint();
@@ -528,6 +536,81 @@ mod tests {
             }
             Ok(req.lines.iter().map(|l| format!("ru:{l}")).collect())
         }
+    }
+
+    /// Remembers every line it was asked to translate.
+    #[derive(Default)]
+    struct Recorder {
+        lines: Mutex<Vec<String>>,
+        context: Mutex<Vec<String>>,
+    }
+
+    impl Translator for Recorder {
+        fn id(&self) -> String {
+            "recorder".into()
+        }
+        fn batch_size(&self) -> usize {
+            20
+        }
+        fn translate(&self, req: &TranslateRequest) -> Result<Vec<String>, AiError> {
+            self.lines.lock().unwrap().extend(req.lines.iter().cloned());
+            *self.context.lock().unwrap() = req.context_before.to_vec();
+            Ok(req
+                .lines
+                .iter()
+                .map(|l| match l.as_str() {
+                    "I told him that he didn't do it, she said." => {
+                        "Я сказала ему, что он этого не делал, — сказала она.".to_owned()
+                    }
+                    other => format!("ru:{other}"),
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn fragments_of_one_sentence_go_out_as_one_line_and_come_back_cut() {
+        use crate::session::{Load, Origin, SubTrack};
+        let cue = |start: Ms, text: &str| Cue {
+            start,
+            end: start + 1_000,
+            text: text.into(),
+        };
+        let mut track = SubTrack::new("en".into(), Some("en".into()), Origin::Asr, Load::Loading);
+        track.set_cues(vec![
+            cue(0, "Hello."),
+            cue(1_100, "I told him that"),
+            cue(2_200, "he didn't do it,"),
+            cue(3_300, "she said."),
+        ]);
+        let groups: Vec<usize> = (1..track.groups.len()).collect();
+        let context: Vec<String> = vec![track.sentence_text(0)];
+        let asked = track.request_translations(&groups);
+        let lines: Vec<String> = asked.iter().map(|s| s.text.clone()).collect();
+
+        let store = Mutex::new(Store::open_in_memory().unwrap());
+        let recorder = Recorder::default();
+        let out = translate_cached(&store, &recorder, Some("en"), "ru", &lines, &context).unwrap();
+        assert_eq!(
+            *recorder.lines.lock().unwrap(),
+            ["I told him that he didn't do it, she said."]
+        );
+        assert_eq!(*recorder.context.lock().unwrap(), ["Hello."]);
+
+        track.apply_translations(&asked, Some(&out.results), track.epoch);
+        let whole = "Я сказала ему, что он этого не делал, — сказала она.";
+        let parts: Vec<String> = (1..4)
+            .map(|i| match &track.translation[i] {
+                crate::session::Tr::Done(p) => p.clone(),
+                other => panic!("cue {i}: {other:?}"),
+            })
+            .collect();
+        assert!(parts.iter().all(|p| !p.is_empty()), "{parts:?}");
+        assert_eq!(parts.join(" "), whole);
+
+        // The sentence is cached as a whole: asking again costs nothing.
+        let again = translate_cached(&store, &recorder, Some("en"), "ru", &lines, &[]).unwrap();
+        assert_eq!((again.requests, again.results[0].as_str()), (0, whole));
     }
 
     fn fifty() -> Vec<String> {

@@ -1,6 +1,7 @@
 pub mod asr_plan;
 pub mod config;
 pub mod media_key;
+pub mod sentences;
 pub mod subs;
 pub mod tokens;
 pub mod track;

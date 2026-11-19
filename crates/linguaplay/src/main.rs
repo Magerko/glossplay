@@ -25,12 +25,14 @@ Usage: linguaplay [FILE or URL] [options]
   --selftest                        play FILE without interaction, print a report, exit
       --seconds N                   how long to play (default 6)
       --at SECONDS                  start position
-      --subs A,B                    languages of the primary and secondary track
+      --subs A,B                    languages of the primary and secondary track;
+                                    B = mt shows the machine translation instead
       --autopause                   check auto-pause and repeat on the next line
       --asr                         run speech recognition
       --anki                        save the opened word and send it to Anki
       --strict                      also fail on software decoding or many dropped frames
-      --export-srt FILE.srt         write the primary subtitle track to a file
+      --export-srt FILE.srt         write the primary subtitle track to a file, and the
+                                    translation shown under it to FILE.tr.srt
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
   --update-ytdlp                    download or update yt-dlp and print its version

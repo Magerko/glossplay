@@ -133,12 +133,15 @@ impl Translator for Google {
         "google".into()
     }
 
+    // Lines are whole sentences now, several times longer than single cues, so fewer go
+    // into one request to keep it a modest size.
     fn batch_size(&self) -> usize {
-        25
+        16
     }
 
     fn translate(&self, req: &TranslateRequest) -> Result<Vec<String>, AiError> {
-        // One line per cue: the endpoint keeps newlines, which lets me send a batch in one call.
+        // One line per sentence: the endpoint keeps newlines, which lets me send a batch in one
+        // call, and it sees the neighbouring sentences as context.
         let q = req
             .lines
             .iter()
@@ -184,7 +187,8 @@ impl Translator for DeepL {
     }
 
     fn translate(&self, req: &TranslateRequest) -> Result<Vec<String>, AiError> {
-        let mut body = json!({ "text": req.lines, "target_lang": req.dst_lang.to_uppercase() });
+        let lines: Vec<String> = req.lines.iter().map(|l| l.replace('\n', " ")).collect();
+        let mut body = json!({ "text": lines, "target_lang": req.dst_lang.to_uppercase() });
         if let Some(src) = req.src_lang {
             body["source_lang"] = json!(src.to_uppercase());
         }
@@ -219,25 +223,37 @@ fn llm_translate_prompt(req: &TranslateRequest) -> (String, String) {
         .src_lang
         .map_or("the source language".to_owned(), |l| format!("\"{l}\""));
     let system = format!(
-        "You translate film and video subtitles from {src} into \"{dst}\" (language codes are BCP-47). \
-         Each input line is one subtitle cue. Translate the way people actually speak: natural, \
-         concise, keeping tone, humour and register; keep names as they are usually rendered in the \
-         target language. A cue may be a fragment of a sentence that continues in the next cue — \
-         translate it as a fragment so the cues still line up. Never merge, split, drop or reorder cues.\n\
-         Reply with a JSON array of exactly {n} strings and nothing else.",
+        "You translate the dialogue of a film or video from {src} into \"{dst}\" (language codes \
+         are BCP-47). The input is a JSON array of consecutive sentences of the dialogue, in the \
+         order they are spoken; an item may hold a couple of short sentences of one speaker, and a \
+         leading dash marks a new speaker. Translate each item as a whole sentence, the way people \
+         actually speak in the target language: natural and conversational, not word for word. \
+         Keep the register, tone and humour (casual stays casual, rude stays rude, formal stays \
+         formal). Use the surrounding sentences to get gender, number, formal or informal address \
+         and who is speaking right, and keep them consistent from item to item. Render names the \
+         way they are usually rendered in the target language. Never merge, split, drop or \
+         reorder items, and do not add explanations.\n\
+         Reply with a JSON array of exactly {n} strings, item i being the translation of input \
+         item i, and nothing else.",
         dst = req.dst_lang,
         n = req.lines.len(),
     );
+    let flat = |l: &String| l.replace('\n', " ");
     let mut user = String::new();
     if !req.context_before.is_empty() {
-        user.push_str("Preceding cues, for context only (do not translate):\n");
-        for line in req.context_before {
-            user.push_str(&format!("- {}\n", line.replace('\n', " ")));
+        user.push_str(
+            "Earlier sentences of the same dialogue, only to understand it (do not translate them):\n",
+        );
+        for (i, line) in req.context_before.iter().enumerate() {
+            user.push_str(&format!("{}. {}\n", i + 1, flat(line)));
         }
         user.push('\n');
     }
-    let lines: Vec<String> = req.lines.iter().map(|l| l.replace('\n', " ")).collect();
-    user.push_str("Cues to translate, as a JSON array:\n");
+    let lines: Vec<String> = req.lines.iter().map(flat).collect();
+    user.push_str(&format!(
+        "Sentences to translate ({} items), as a JSON array:\n",
+        lines.len()
+    ));
     user.push_str(&serde_json::to_string(&lines).expect("strings serialize"));
     (system, user)
 }
@@ -541,6 +557,35 @@ mod tests {
         assert_eq!(body["output_config"]["effort"], "low");
         assert_eq!(body["fallbacks"], "default");
         assert!(body.get("temperature").is_none() && body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn llm_prompt_carries_whole_sentences_and_their_context() {
+        let reply = json!({ "stop_reason": "end_turn", "content": [
+            { "type": "text", "text": "[\"Я сказала ему, что он этого не делал, — сказала она.\", \"Ушла.\"]" } ] })
+        .to_string();
+        let srv = TestServer::start(vec![(200, reply)]);
+        let t = build_translator(&cfg("anthropic", &srv.url)).unwrap();
+        let input = lines(&["I told him that he didn't do it, she said.", "- She left."]);
+        let ctx = lines(&["Where is Tom?", "He went\nhome."]);
+        let r = TranslateRequest {
+            context_before: &ctx,
+            ..req(&input)
+        };
+        assert_eq!(t.translate(&r).unwrap().len(), 2);
+        let got = srv.received.lock().unwrap();
+        let body: Value = serde_json::from_str(&got[0].body).unwrap();
+        let system = body["system"].as_str().unwrap();
+        let user = body["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains("consecutive sentences") && system.contains("exactly 2 strings"));
+        assert!(system.contains("register") && system.contains("gender"));
+        assert!(
+            user.contains("1. Where is Tom?\n2. He went home.\n"),
+            "context, numbered and on one line each: {user}"
+        );
+        assert!(user.contains(r#"["I told him that he didn't do it, she said.","- She left."]"#));
+        let context_at = user.find("Where is Tom?").unwrap();
+        assert!(context_at < user.find("I told him").unwrap());
     }
 
     #[test]

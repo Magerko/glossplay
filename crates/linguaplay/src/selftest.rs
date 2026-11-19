@@ -150,6 +150,8 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 }
                 if let Some(sec) = secondary {
                     app.set_secondary(Secondary::Track(sec));
+                } else if st.plan.subs.get(1).is_some_and(|l| l == "mt") {
+                    app.set_secondary(Secondary::Translate);
                 }
             }
             let s = app.session.as_ref().unwrap();
@@ -160,7 +162,9 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
             if loading && st.started.elapsed() < Duration::from_secs(60) {
                 return;
             }
-            export_srt(st, app);
+            if !st.plan.asr {
+                export_srt(st, app);
+            }
             st.started = Instant::now();
             st.start_pos = app.snap.pos;
             app.player.set_paused(st.plan.paused);
@@ -429,6 +433,10 @@ fn report(st: &mut State, app: &App) {
             .unwrap_or_default()
             .replace('\n', " / ")
     );
+    report_pairs(st, app);
+    // Speech recognition has no lines yet when playback starts; they are exported at the end.
+    export_srt(st, app);
+    export_translation(st, app);
     if !st.plan.subs.is_empty() {
         if st.seen_primary.is_none() {
             st.failures
@@ -464,6 +472,31 @@ fn report(st: &mut State, app: &App) {
     }
 }
 
+/// The first translated lines from where playback started, so a run shows whether the
+/// translation of neighbouring lines reads as one text. `sentence=` lines show the groups.
+fn report_pairs(st: &State, app: &App) {
+    let Some(s) = &app.session else { return };
+    let Some(t) = s.primary_track() else { return };
+    let from = t.track.index_at_or_before(st.start_pos).unwrap_or(0);
+    let pairs: Vec<(usize, String)> = (from..t.track.cues.len())
+        .filter_map(|i| Some((i, s.translation_of(i)?)))
+        .take(12)
+        .collect();
+    let mut last_group = None;
+    for (i, tr) in pairs {
+        let g = t.group_of(i);
+        if s.secondary == Secondary::Translate && last_group != Some(g) {
+            println!("sentence={}", t.sentence_text(g));
+            last_group = Some(g);
+        }
+        println!(
+            "pair={} => {}",
+            t.track.cues[i].text.replace('\n', " / "),
+            tr.replace('\n', " / ")
+        );
+    }
+}
+
 fn export_srt(st: &mut State, app: &App) {
     let Some(path) = st.plan.export_srt.clone().filter(|_| !st.srt_exported) else {
         return;
@@ -493,6 +526,30 @@ fn export_srt(st: &mut State, app: &App) {
         Err(e) => st
             .failures
             .push(format!("could not write {}: {e}", path.display())),
+    }
+}
+
+/// The translation is only there after playing for a while, so it is written at the end.
+fn export_translation(st: &mut State, app: &App) {
+    let Some(path) = st.plan.export_srt.clone() else {
+        return;
+    };
+    let translated = app
+        .session
+        .as_ref()
+        .map_or(Vec::new(), |s| s.translation_cues());
+    if !translated.is_empty() {
+        let tr_path = path.with_extension("tr.srt");
+        match std::fs::write(&tr_path, lp_core::write_srt(&translated)) {
+            Ok(()) => println!(
+                "exported_translation_srt={} cues={}",
+                tr_path.display(),
+                translated.len()
+            ),
+            Err(e) => st
+                .failures
+                .push(format!("could not write {}: {e}", tr_path.display())),
+        }
     }
 }
 
