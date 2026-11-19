@@ -1,6 +1,7 @@
 //! Keeps a private copy of yt-dlp up to date. Sites change often and an old yt-dlp simply
 //! stops working, so I check for a new release once a day and replace the binary.
 
+use crate::i18n::{Tr, t, tf};
 use crate::paths;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -210,7 +211,7 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
         // Offline or rate-limited: an older yt-dlp is still better than none. I keep the old
         // check time so the next launch tries again.
         Err(_) if have => return Ok(Outcome::Fresh { version: installed }),
-        Err(e) => return Err(format!("Could not reach GitHub to download yt-dlp: {e}")),
+        Err(e) => return Err(tf(Tr::YtdlpNoGithub, &[&e])),
     };
     if have && latest == installed {
         // `installed_is_intact` may just have refreshed the record, so I read it back.
@@ -224,11 +225,11 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
 
     let base = format!("{RELEASES}/download/{latest}");
     let bytes = gp_ai::fetch(&format!("{base}/{}", asset_name()))
-        .map_err(|e| format!("Could not download yt-dlp: {e}"))?;
+        .map_err(|e| tf(Tr::YtdlpDownloadFailed, &[&e]))?;
     // This catches a damaged or truncated download; it is no defence against a compromised GitHub.
     let expected = published_hash(&latest)?;
     if !hash_matches(&bytes, &expected) {
-        return Err("The downloaded yt-dlp does not match its checksum; not installing it".into());
+        return Err(t(Tr::YtdlpBadChecksum).into());
     }
     // Download next to the target and rename, so a broken download never replaces a working copy.
     // The pid keeps two running players from writing the same file.
@@ -248,11 +249,11 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
 /// The SHA-256 the release `version` published for this platform's binary.
 fn published_hash(version: &str) -> Result<String, String> {
     let sums = gp_ai::fetch(&format!("{RELEASES}/download/{version}/SHA2-256SUMS"))
-        .map_err(|e| format!("Could not download the yt-dlp checksums: {e}"))?;
+        .map_err(|e| tf(Tr::YtdlpChecksumsFailed, &[&e]))?;
     let sums = String::from_utf8_lossy(&sums);
     find_hash(&sums, asset_name())
         .map(str::to_owned)
-        .ok_or_else(|| format!("The checksum list has no entry for {}", asset_name()))
+        .ok_or_else(|| tf(Tr::YtdlpNoChecksum, &[&asset_name()]))
 }
 
 fn install(partial: &Path, binary: &Path, bytes: &[u8]) -> Result<(), String> {

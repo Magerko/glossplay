@@ -1,6 +1,7 @@
 //! Background work. The UI thread never touches the network or the disk: it sends a job,
 //! keeps drawing, and picks up a `Msg` when the job is done.
 
+use crate::i18n::{Tr, t, tf};
 use crate::session::SentenceKey;
 use eframe::egui;
 use gp_ai::AiError;
@@ -155,7 +156,7 @@ pub struct AsrParams {
     /// CPU threads for whisper-server; `None` keeps its default.
     pub threads: Option<usize>,
     /// Added to the progress text until the first window is done.
-    pub first_run_note: Option<&'static str>,
+    pub first_run_note: Option<String>,
     /// Windows already transcribed in an earlier run.
     pub done: Vec<bool>,
     pub heard: asr_plan::Transcript,
@@ -276,7 +277,7 @@ impl Jobs {
     ) {
         self.spawn(move || {
             let result = ffmpeg
-                .ok_or_else(|| "ffmpeg was not found".to_owned())
+                .ok_or_else(|| t(Tr::FfmpegNotFound).to_owned())
                 .and_then(|f| {
                     tools::extract_subtitles(&f, &media, stream).map_err(|e| e.to_string())
                 })
@@ -385,10 +386,8 @@ impl Jobs {
                     })
                 })
                 .map_err(|e| match e {
-                    AiError::Network(_) => {
-                        "Anki is not running or AnkiConnect is not installed".to_owned()
-                    }
-                    AiError::Duplicate => "this word is already in the deck".to_owned(),
+                    AiError::Network(_) => t(Tr::AnkiNotRunning).to_owned(),
+                    AiError::Duplicate => t(Tr::AlreadyInDeck).to_owned(),
                     other => other.to_string(),
                 });
             Msg::Anki { vocab_id, result }
@@ -427,7 +426,7 @@ impl Jobs {
                 status: &status,
             };
             if let Err(e) = run_asr(params, &asr, &playhead, &store, &tx, &ctx) {
-                send(format!("Speech recognition stopped: {e}"), false, true);
+                send(tf(Tr::AsrStopped, &[&e]), false, true);
             }
         });
         handle
@@ -466,14 +465,14 @@ impl Asr<'_> {
                 return Ok(None);
             }
             if slot.as_mut().is_none_or(|w| w.has_exited()) {
-                (self.status)("Starting speech recognition…".into(), true);
+                (self.status)(t(Tr::AsrStarting).into(), true);
                 let process = WhisperProcess::spawn_with_threads(
                     &p.server,
                     &p.model,
                     p.vad_model.as_deref(),
                     p.threads,
                 )
-                .map_err(|e| format!("cannot start whisper-server: {e}"))?;
+                .map_err(|e| tf(Tr::CannotStartWhisper, &[&e]))?;
                 *slot = Some(process);
             }
             slot.as_ref().unwrap().url.clone()
@@ -485,10 +484,10 @@ impl Asr<'_> {
                 return Ok(None);
             }
             if self.died() {
-                return Err("whisper-server quit while loading; check the model path".into());
+                return Err(t(Tr::WhisperQuitLoading).into());
             }
             if started.elapsed() > Duration::from_secs(120) {
-                return Err("whisper-server did not become ready; check the model path".into());
+                return Err(t(Tr::WhisperNotReady).into());
             }
             std::thread::sleep(Duration::from_millis(150));
         }
@@ -524,7 +523,7 @@ fn run_asr(
     ctx: &egui::Context,
 ) -> Result<(), String> {
     if p.done.iter().all(|d| *d) {
-        (asr.status)("Transcript ready".into(), false);
+        (asr.status)(t(Tr::TranscriptReady).into(), false);
         return Ok(());
     }
     let Some(mut engine) = asr.server(&p)? else {
@@ -560,16 +559,18 @@ fn run_asr(
         }
         let finished = p.done.iter().filter(|d| **d).count();
         (asr.status)(
-            format!(
-                "Transcribing {}%{}",
-                finished * 100 / total.max(1),
-                p.first_run_note.unwrap_or("")
+            tf(
+                Tr::Transcribing,
+                &[
+                    &(finished * 100 / total.max(1)),
+                    &p.first_run_note.as_deref().unwrap_or(""),
+                ],
             ),
             true,
         );
         let (start, len) = asr_plan::audio_range(k);
         let pcm = tools::extract_pcm(&p.ffmpeg, &p.media, p.audio_index, start, len)
-            .map_err(|e| format!("could not read the audio: {e}"))?;
+            .map_err(|e| tf(Tr::CouldNotReadAudio, &[&e]))?;
         let mut language = None;
         let words = if pcm.is_empty() {
             Vec::new()
@@ -585,15 +586,12 @@ fn run_asr(
                     save(&p);
                     if !asr.died() {
                         return Err(match e {
-                            AiError::Network(_) => "whisper-server stopped answering".into(),
-                            other => format!("whisper-server failed: {other}"),
+                            AiError::Network(_) => t(Tr::WhisperStopped).into(),
+                            other => tf(Tr::WhisperFailed, &[&other]),
                         });
                     }
                     if restarts == MAX_RESTARTS {
-                        return Err(format!(
-                            "whisper-server quit unexpectedly {} times",
-                            restarts + 1
-                        ));
+                        return Err(tf(Tr::WhisperQuitTimes, &[&(restarts + 1)]));
                     }
                     restarts += 1;
                     let Some(fresh) = asr.server(&p)? else {
@@ -628,7 +626,7 @@ fn run_asr(
         }
     }
     save(&p);
-    (asr.status)("Transcript ready".into(), false);
+    (asr.status)(t(Tr::TranscriptReady).into(), false);
     Ok(())
 }
 

@@ -13,18 +13,19 @@ const AUDIO: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma
 const APP_KEY: &str = "Applications\\glossplay.exe";
 const VERB: &str = "Glossplay";
 
+use crate::i18n::{Tr, from_langid, text_in};
+
 fn all_extensions() -> impl Iterator<Item = &'static str> {
     VIDEO.iter().chain(AUDIO).copied()
 }
 
-/// Menu caption for the system UI language (a Windows LANGID).
+/// Menu caption for the system UI language (a Windows LANGID). Chinese is not an interface
+/// language of the player, so its caption lives here rather than among the interface texts.
 pub fn label_for(lang_id: u16) -> &'static str {
-    match lang_id & 0x3ff {
-        0x19 => "Воспроизвести в Glossplay",
-        0x22 => "Відтворити в Glossplay",
-        0x04 => "用 Glossplay 播放",
-        _ => "Play with Glossplay",
+    if lang_id & 0x3ff == 0x04 {
+        return "用 Glossplay 播放";
     }
+    text_in(from_langid(lang_id), Tr::ShellPlayWith)
 }
 
 /// Keys (relative to Software\Classes) that hold the context-menu verb. The generic
@@ -50,9 +51,9 @@ fn verb_keys(perceived: &[(&str, Option<String>)]) -> Vec<String> {
 #[cfg(windows)]
 mod imp {
     use super::*;
+    use crate::i18n::system_langid;
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-    use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
     use windows_sys::Win32::System::Registry::*;
     use windows_sys::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
 
@@ -208,14 +209,10 @@ mod imp {
         unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED as i32, SHCNF_IDLIST, null(), null()) };
     }
 
-    pub fn ui_language() -> u16 {
-        unsafe { GetUserDefaultUILanguage() }
-    }
-
     pub fn register() -> Result<String, String> {
         let exe = exe_path()?;
         let command = command_for(&exe);
-        let label = label_for(ui_language());
+        let label = label_for(system_langid());
 
         set(APP_KEY, Some("FriendlyAppName"), "Glossplay")?;
         set(&format!("{APP_KEY}\\shell\\open\\command"), None, &command)?;

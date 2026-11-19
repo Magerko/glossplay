@@ -1,3 +1,4 @@
+use crate::i18n::{self, Tr, t, tf};
 use crate::jobs::{AsrParams, CONTEXT_SENTENCES, Jobs, Msg, TranslateJob};
 use crate::player::{Player, Snapshot, TrackInfo, TrackKind};
 use crate::session::{
@@ -20,8 +21,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-
-const NO_FFMPEG_TOAST: &str = "ffmpeg was not found — subtitles are shown without word lookup. Install ffmpeg or set its path in Settings.";
 
 pub enum Async {
     Idle,
@@ -109,6 +108,10 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Result<App, String> {
         let (cfg, config_error) = paths::load_config();
+        // A self-test has its language set already; the config must not change it.
+        if launch.selftest.is_none() {
+            i18n::apply_setting(&cfg.general.ui_lang);
+        }
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, cfg.general.ui_scale);
 
@@ -204,7 +207,7 @@ impl App {
             app.set_dub(true);
         }
         if let Some(e) = config_error {
-            let e = format!("{e}; using default settings");
+            let e = tf(Tr::ConfigUsingDefaults, &[&e]);
             eprintln!("{e}");
             app.toast_for(e, Duration::from_secs(10));
             app.config_toast_until = Some(Instant::now() + Duration::from_secs(10));
@@ -247,7 +250,7 @@ impl App {
             if !crate::ytdlp::is_busy() {
                 self.jobs.spawn(|| Msg::YtDlp(crate::ytdlp::ensure(true)));
             }
-            self.toast("Downloading yt-dlp, the video will start in a moment…");
+            self.toast(t(Tr::DownloadingYtdlp));
             return;
         }
         // `canonicalize` would add a `\?` prefix on Windows that mpv and ffmpeg do not accept.
@@ -467,22 +470,22 @@ impl App {
             Err(e) => return self.toast(e),
         };
         let Some(ffmpeg) = self.ffmpeg.clone() else {
-            return self.toast("ffmpeg is required for transcription");
+            return self.toast(t(Tr::FfmpegRequired));
         };
         let duration = self.snap.duration.max(self.player.snapshot().duration);
         let Some(s) = &mut self.session else { return };
         if s.is_url() {
-            return self.toast("Live transcription works with local files only for now");
+            return self.toast(t(Tr::LocalFilesOnly));
         }
         if duration <= 0 {
-            return self.toast("The file has no known duration yet — try again in a moment");
+            return self.toast(t(Tr::NoDurationYet));
         }
         let index = match s.tracks.iter().position(|t| t.origin == Origin::Asr) {
             Some(i) => i,
             None => {
                 let lang = Some(self.cfg.general.learn_lang.clone()).filter(|l| !l.is_empty());
                 s.tracks.push(SubTrack::new(
-                    "Speech recognition".into(),
+                    t(Tr::AsrTrackLabel).into(),
                     lang,
                     Origin::Asr,
                     Load::Loading,
@@ -544,7 +547,7 @@ impl App {
             .then(|| crate::asr_setup::cpu_threads(crate::asr_setup::physical_cores()));
         let first_run_note = installed
             .filter(|i| i.engine == Some(crate::asr_setup::Engine::Nvidia) && !i.warmed_up)
-            .map(|_| crate::setup_text::FIRST_RUN);
+            .map(|_| format!(" — {}", t(Tr::FirstRun)));
         s.asr_running = true;
         s.asr = Some(self.jobs.start_asr(AsrParams {
             generation: s.generation,
@@ -585,27 +588,25 @@ impl App {
                     match result {
                         Ok(cues) => s.tracks[track].set_cues(cues),
                         Err(e) => {
-                            let t = &mut s.tracks[track];
-                            t.load = Load::Failed(e.clone());
-                            let mpv_id = match t.origin {
+                            let sub = &mut s.tracks[track];
+                            sub.load = Load::Failed(e.clone());
+                            let mpv_id = match sub.origin {
                                 Origin::Embedded { mpv_id, .. } if s.primary == Some(track) => {
                                     Some(mpv_id)
                                 }
                                 _ => None,
                             };
-                            let label = t.label.clone();
-                            let embedded = matches!(t.origin, Origin::Embedded { .. });
+                            let label = sub.label.clone();
+                            let embedded = matches!(sub.origin, Origin::Embedded { .. });
                             let no_ffmpeg = self.ffmpeg.is_none();
                             let text = match (mpv_id, no_ffmpeg) {
-                                (Some(_), true) => Some(NO_FFMPEG_TOAST.to_owned()),
-                                (Some(_), false) => Some(format!(
-                                    "Could not read the subtitles \"{label}\": {e} — they are shown without word lookup."
-                                )),
+                                (Some(_), true) => Some(t(Tr::NoFfmpegToast).to_owned()),
+                                (Some(_), false) => {
+                                    Some(tf(Tr::CouldNotReadSubsShown, &[&label, &e]))
+                                }
                                 // Same cause as the message for the main track; one is enough.
                                 (None, true) if embedded => None,
-                                (None, _) => {
-                                    Some(format!("Could not load the subtitles \"{label}\": {e}"))
-                                }
+                                (None, _) => Some(tf(Tr::CouldNotLoadSubs, &[&label, &e])),
                             };
                             if mpv_id.is_some() {
                                 self.mpv_draws(mpv_id);
@@ -629,7 +630,7 @@ impl App {
                     t.apply_translations(&sentences, result.as_deref().ok(), epoch);
                     if let Err(error) = result {
                         s.translate_failed_at = Some(Instant::now());
-                        self.toast(format!("Translation failed: {error}"));
+                        self.toast(tf(Tr::TranslationFailed, &[&error]));
                     }
                 }
                 Msg::AsrCues {
@@ -687,7 +688,7 @@ impl App {
                 Msg::YtDlp(result) => {
                     match result {
                         Ok(crate::ytdlp::Outcome::Updated { version }) => {
-                            self.toast(format!("yt-dlp updated to {version}"));
+                            self.toast(tf(Tr::YtdlpUpdated, &[&version]));
                         }
                         Ok(_) => {}
                         // A failed start-up check stays quiet; only a link waiting for yt-dlp needs to hear.
@@ -708,9 +709,9 @@ impl App {
                             .unwrap()
                             .set_anki_id(vocab_id, note_id);
                         self.reload_vocab();
-                        self.toast("Added to Anki");
+                        self.toast(t(Tr::AddedToAnki));
                     }
-                    Err(e) => self.toast(format!("Anki: {e}")),
+                    Err(e) => self.toast(tf(Tr::AnkiError, &[&e])),
                 },
                 Msg::Component { id, event } if id == crate::tts_setup::ID => {
                     self.on_tts_event(event)
@@ -735,7 +736,7 @@ impl App {
                     .is_some_and(|i| s.tracks.get(i).is_some_and(|t| t.load == Load::Ready));
                 if has_primary && !s.translator_warned {
                     s.translator_warned = true;
-                    let text = format!("Translation is not set up: {e} (Settings → Translation)");
+                    let text = tf(Tr::TranslationNotSetUp, &[&e]);
                     self.toast(text);
                 }
                 return;
@@ -938,7 +939,7 @@ impl App {
             .clone()
             .filter(|_| local)
             .map(|f| (f, stream, dir.join(format!("glossplay_{vocab_id}.mp3"))));
-        self.toast("Sending to Anki…");
+        self.toast(t(Tr::SendingToAnki));
         self.jobs.export_anki(
             vocab_id,
             self.cfg.anki.url.clone(),
@@ -951,6 +952,9 @@ impl App {
 
     pub fn apply_settings(&mut self, new: Config) {
         let rescale = new.general.ui_scale != self.cfg.general.ui_scale;
+        if self.selftest.is_none() {
+            i18n::apply_setting(&new.general.ui_lang);
+        }
         let shell_changed = new.general.shell_integration != self.cfg.general.shell_integration;
         let (old_tts, old_lang) = (self.cfg.tts.clone(), self.cfg.general.native_lang.clone());
         self.cfg = new;
@@ -976,7 +980,7 @@ impl App {
                 shell::unregister()
             };
             if let Err(e) = result {
-                self.toast(format!("Explorer integration: {e}"));
+                self.toast(tf(Tr::ExplorerIntegration, &[&e]));
             }
         }
         self.translator = make_translator(&self.cfg);
@@ -994,20 +998,17 @@ impl App {
             self.config_broken = false;
             match paths::keep_broken_config() {
                 Ok(backup) => self.toast_for(
-                    format!(
-                        "The old config.toml did not parse; I kept it as {}",
-                        backup.display()
-                    ),
+                    tf(Tr::OldConfigKept, &[&backup.display()]),
                     Duration::from_secs(10),
                 ),
-                Err(e) => self.toast(format!("Could not keep a copy of the old config.toml: {e}")),
+                Err(e) => self.toast(tf(Tr::CouldNotKeepConfig, &[&e])),
             }
         }
         if let Err(e) = paths::save_config(&self.cfg) {
-            self.toast(format!("Could not save settings: {e}"));
+            self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
         if rescale {
-            self.toast("The interface scale applies after a restart");
+            self.toast(t(Tr::ScaleAfterRestart));
         }
     }
 
@@ -1042,7 +1043,7 @@ impl App {
 
     pub fn open_dialog(&mut self) {
         let picked = rfd::FileDialog::new()
-            .set_title("Open video or subtitles")
+            .set_title(t(Tr::OpenDialogTitle))
             .pick_file();
         if let Some(path) = picked {
             self.open(&path.to_string_lossy());
@@ -1055,7 +1056,8 @@ impl App {
         while let Some(event) = self.player.mpv.poll_event() {
             match event {
                 Event::FileLoaded => self.discover_tracks(),
-                Event::EndFile { error: true } => self.toast("Could not play this file"),
+                Event::EndFile { error: true } => self.toast(t(Tr::CouldNotPlay)),
+
                 _ => {}
             }
         }

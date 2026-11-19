@@ -1,4 +1,5 @@
 use crate::app::{App, Async, SidebarTab};
+use crate::i18n::{Tr, t, tf};
 use crate::session::{Load, Origin, Secondary};
 use crate::theme::{
     self, ACCENT, BG, DANGER, LINE, MUTED, PANEL, RAISED, SUB_PRIMARY, SUB_SECONDARY, TEXT,
@@ -107,9 +108,9 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> bool {
         }
     }
     resp.on_hover_text(if paused {
-        "Play (Space)"
+        t(Tr::PlayHint)
     } else {
-        "Pause (Space)"
+        t(Tr::PauseHint)
     })
     .clicked()
 }
@@ -219,9 +220,9 @@ impl App {
         self.trainer.autopause = !self.trainer.autopause;
         self.cfg.training.autopause = self.trainer.autopause;
         self.toast(if self.trainer.autopause {
-            "Auto-pause after each line: on"
+            t(Tr::AutoPauseOn)
         } else {
-            "Auto-pause: off"
+            t(Tr::AutoPauseOff)
         });
     }
 
@@ -278,46 +279,40 @@ impl App {
         );
         let ui = &mut child;
         ui.label(RichText::new("Glossplay").size(34.0).strong());
-        ui.label(RichText::new("Watch in the language you are learning").color(MUTED));
+        ui.label(RichText::new(t(Tr::Tagline)).color(MUTED));
         ui.add_space(18.0);
         if ui
             .add(
-                egui::Button::new(RichText::new("Open a video…").size(16.0))
+                egui::Button::new(RichText::new(t(Tr::OpenVideo)).size(16.0))
                     .min_size(vec2(200.0, 36.0)),
             )
             .clicked()
         {
             self.open_dialog();
         }
-        ui.label(
-            RichText::new("or drop a file anywhere in this window")
-                .color(MUTED)
-                .small(),
-        );
+        ui.label(RichText::new(t(Tr::DropHint)).color(MUTED).small());
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             let field = egui::TextEdit::singleline(&mut self.url_input)
-                .hint_text("Paste a video link")
+                .hint_text(t(Tr::PasteLink))
                 .desired_width(340.0);
             let entered = ui.add(field).lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-            if (ui.button("Play").clicked() || entered) && !self.url_input.trim().is_empty() {
+            if (ui.button(t(Tr::PlayButton)).clicked() || entered)
+                && !self.url_input.trim().is_empty()
+            {
                 let url = self.url_input.trim().to_owned();
                 self.open(&url);
             }
         });
         ui.add_space(18.0);
-        ui.label(
-            RichText::new("Space pause · A / S / D previous, repeat, next line · P auto-pause\nT transcript · F full screen · click a word to look it up")
-                .color(MUTED)
-                .small(),
-        );
+        ui.label(RichText::new(t(Tr::ShortcutsHelp)).color(MUTED).small());
         ui.add_space(8.0);
-        if ui.link("Settings").clicked() {
+        if ui.link(t(Tr::SettingsLink)).clicked() {
             self.settings_draft = Some(self.cfg.clone());
         }
         if self.asr_setup.installed.is_none() {
             ui.add_space(4.0);
-            if ui.link(crate::setup_text::SET_UP_LINK).clicked() {
+            if ui.link(t(Tr::SetUpLink)).clicked() {
                 self.open_asr_setup(false);
             }
         }
@@ -341,7 +336,7 @@ impl App {
             .filter(|t| t.load == Load::Loading && t.origin != Origin::Asr)
             .count();
         if pending > 0 {
-            text.push_str("   ·   reading subtitles…");
+            text.push_str(&format!("   ·   {}", t(Tr::ReadingSubtitles)));
         }
         if let Some(d) = &self.dub {
             text.push_str(&format!("   ·   {}", d.status()));
@@ -517,28 +512,28 @@ impl App {
             theme::clock(self.snap.pos)
         };
         ui.horizontal(|ui| {
-            if icon_button(ui, "⏮", "Previous line (A)") {
+            if icon_button(ui, "⏮", t(Tr::PrevLineHint)) {
                 self.cue_nav(-1);
             }
             if play_button(ui, self.snap.paused) {
                 self.close_popup();
                 self.player.set_paused(!self.snap.paused);
             }
-            if icon_button(ui, "⏭", "Next line (D)") {
+            if icon_button(ui, "⏭", t(Tr::NextLineHint)) {
                 self.cue_nav(1);
             }
-            if icon_button(ui, "🔁", "Repeat this line (S)") {
+            if icon_button(ui, "🔁", t(Tr::RepeatLineHint)) {
                 self.cue_nav(0);
             }
             ui.label(RichText::new(clock).color(MUTED).monospace());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if fit.fullscreen && icon_button(ui, "⛶", "Full screen (F)") {
+                if fit.fullscreen && icon_button(ui, "⛶", t(Tr::FullscreenHint)) {
                     self.toggle_fullscreen(ui.ctx());
                 }
-                if fit.settings && icon_button(ui, "⚙", "Settings") {
+                if fit.settings && icon_button(ui, "⚙", t(Tr::SettingsHint)) {
                     self.settings_draft = Some(self.cfg.clone());
                 }
-                if fit.sidebar && icon_button(ui, "☰", "Transcript and saved words (T)") {
+                if fit.sidebar && icon_button(ui, "☰", t(Tr::SidebarHint)) {
                     self.sidebar_open = !self.sidebar_open;
                 }
                 self.subtitle_menu(ui, &fit);
@@ -546,8 +541,8 @@ impl App {
                     && toggle_chip(
                         ui,
                         self.trainer.autopause,
-                        "Auto-pause",
-                        "Pause after every line (P)",
+                        t(Tr::AutoPause),
+                        t(Tr::AutoPauseHint),
                     )
                 {
                     self.toggle_autopause();
@@ -578,7 +573,11 @@ impl App {
                         self.set_volume(volume as f64);
                     }
                 }
-                if icon_button(ui, if self.snap.muted { "🔇" } else { "🔊" }, "Mute (M)") {
+                if icon_button(
+                    ui,
+                    if self.snap.muted { "🔇" } else { "🔊" },
+                    t(Tr::MuteHint),
+                ) {
                     self.player.mpv.set_flag("mute", !self.snap.muted);
                 }
             });
@@ -609,8 +608,8 @@ impl App {
         let icon = 28.0;
         let left = 28.0 + 32.0 + 28.0 + 28.0 + 3.0 * gap;
         let speed_w = chip_w("0.00×");
-        let autopause_w = chip_w("Auto-pause");
-        let subtitles_w = chip_w("Subtitles");
+        let autopause_w = chip_w(t(Tr::AutoPause));
+        let subtitles_w = chip_w(t(Tr::SubtitlesMenu));
         let needed = |f: &ControlsFit| {
             let mut right = vec![icon, subtitles_w];
             for (on, w) in [
@@ -692,7 +691,7 @@ impl App {
     fn subtitle_menu(&mut self, ui: &mut egui::Ui, fit: &ControlsFit) {
         let provider = match &self.translator {
             Ok(t) => t.id(),
-            Err(_) => "not set up".to_owned(),
+            Err(_) => t(Tr::ProviderNotSetUp).to_owned(),
         };
         let asr_running = self.session.as_ref().is_some_and(|s| s.asr_running);
         let mut pick_primary = None;
@@ -707,35 +706,38 @@ impl App {
         let (mut toggle_dub, mut volumes_changed, mut volumes_done) = (false, false, false);
         let mut original = self.cfg.tts.original_volume as f32;
         let mut voice = self.cfg.tts.voice_volume as f32;
-        let menu = ui.menu_button(RichText::new("Subtitles").size(13.0), |ui| {
+        let menu = ui.menu_button(RichText::new(t(Tr::SubtitlesMenu)).size(13.0), |ui| {
             let Some(s) = &self.session else { return };
             ui.set_min_width(260.0);
-            ui.label(RichText::new("I am learning").color(MUTED).small());
-            for (i, t) in s.tracks.iter().enumerate() {
-                let state = match &t.load {
-                    Load::NotLoaded => "",
-                    Load::Loading => "  (reading…)",
-                    Load::Failed(_) => "  (failed)",
-                    Load::Bitmap => "  (image)",
-                    Load::Ready => "",
+            ui.label(RichText::new(t(Tr::Learning)).color(MUTED).small());
+            for (i, sub) in s.tracks.iter().enumerate() {
+                let state = match &sub.load {
+                    Load::NotLoaded | Load::Ready => String::new(),
+                    Load::Loading => format!("  ({})", t(Tr::StateReading)),
+                    Load::Failed(_) => format!("  ({})", t(Tr::StateFailed)),
+                    Load::Bitmap => format!("  ({})", t(Tr::StateImage)),
                 };
-                let resp = ui.selectable_label(s.primary == Some(i), format!("{}{state}", t.label));
-                if let Load::Failed(e) = &t.load {
+                let resp =
+                    ui.selectable_label(s.primary == Some(i), format!("{}{state}", sub.label));
+                if let Load::Failed(e) = &sub.load {
                     resp.clone().on_hover_text(e);
                 }
                 if resp.clicked() {
                     pick_primary = Some(Some(i));
                 }
             }
-            if ui.selectable_label(s.primary.is_none(), "None").clicked() {
+            if ui
+                .selectable_label(s.primary.is_none(), t(Tr::NoneChoice))
+                .clicked()
+            {
                 pick_primary = Some(None);
             }
             ui.separator();
-            ui.label(RichText::new("Translation").color(MUTED).small());
+            ui.label(RichText::new(t(Tr::TranslationLabel)).color(MUTED).small());
             if ui
                 .selectable_label(
                     s.secondary == Secondary::Translate,
-                    format!("Translate automatically ({provider})"),
+                    tf(Tr::TranslateAuto, &[&provider]),
                 )
                 .clicked()
             {
@@ -755,23 +757,23 @@ impl App {
                 }
             }
             if ui
-                .selectable_label(s.secondary == Secondary::Off, "Off")
+                .selectable_label(s.secondary == Secondary::Off, t(Tr::OffChoice))
                 .clicked()
             {
                 pick_secondary = Some(Secondary::Off);
             }
             ui.separator();
             let label = if asr_running {
-                "Stop transcribing speech"
+                t(Tr::StopTranscribing)
             } else {
-                "Transcribe speech (Whisper)"
+                t(Tr::TranscribeSpeech)
             };
             if ui.button(label).clicked() {
                 toggle_asr = true;
             }
             if ui
-                .selectable_label(dub_on, crate::setup_text::MENU_VOICE_OVER)
-                .on_hover_text(crate::setup_text::MENU_VOICE_OVER_HINT)
+                .selectable_label(dub_on, t(Tr::MenuVoiceOver))
+                .on_hover_text(t(Tr::MenuVoiceOverHint))
                 .clicked()
             {
                 toggle_dub = true;
@@ -782,8 +784,8 @@ impl App {
                     .spacing([10.0, 4.0])
                     .show(ui, |ui| {
                         for (label, value) in [
-                            (crate::setup_text::SLIDER_ORIGINAL, &mut original),
-                            (crate::setup_text::SLIDER_VOICE, &mut voice),
+                            (t(Tr::SliderOriginal), &mut original),
+                            (t(Tr::SliderVoice), &mut voice),
                         ] {
                             ui.label(RichText::new(label).color(MUTED));
                             let r =
@@ -794,28 +796,28 @@ impl App {
                         }
                     });
             }
-            if ui.button("Add a subtitle file…").clicked() {
+            if ui.button(t(Tr::AddSubFile)).clicked() {
                 add_file = true;
             }
             ui.separator();
             let has_primary = s.primary_track().is_some();
             let shown = s.secondary != Secondary::Off;
             if ui
-                .add_enabled(has_primary, egui::Button::new("Save transcript as .srt…"))
+                .add_enabled(has_primary, egui::Button::new(t(Tr::SaveTranscriptSrt)))
                 .clicked()
             {
                 save_srt = Some(false);
             }
             if shown
                 && ui
-                    .add_enabled(has_primary, egui::Button::new("Save translation as .srt…"))
+                    .add_enabled(has_primary, egui::Button::new(t(Tr::SaveTranslationSrt)))
                     .clicked()
             {
                 save_srt = Some(true);
             }
             if self.audio_tracks.len() > 1 {
                 ui.separator();
-                ui.label(RichText::new("Audio").color(MUTED).small());
+                ui.label(RichText::new(t(Tr::AudioLabel)).color(MUTED).small());
                 for a in &self.audio_tracks {
                     if ui.selectable_label(a.selected, a.label()).clicked() {
                         pick_audio = Some(a.id);
@@ -828,12 +830,12 @@ impl App {
             }
             if !fit.autopause
                 && ui
-                    .selectable_label(self.trainer.autopause, "Auto-pause after each line (P)")
+                    .selectable_label(self.trainer.autopause, t(Tr::AutoPauseMenu))
                     .clicked()
             {
                 toggle_autopause = true;
             }
-            if !fit.settings && ui.button("Settings…").clicked() {
+            if !fit.settings && ui.button(t(Tr::SettingsMenu)).clicked() {
                 open_settings = true;
             }
         });
@@ -852,7 +854,7 @@ impl App {
             && !self.quiet
             && let Err(e) = crate::paths::save_config(&self.cfg)
         {
-            self.toast(format!("Could not save settings: {e}"));
+            self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
         if toggle_autopause {
             self.toggle_autopause();
@@ -875,7 +877,7 @@ impl App {
         }
         if add_file {
             let picked = rfd::FileDialog::new()
-                .add_filter("Subtitles", &["srt", "vtt", "ass", "ssa"])
+                .add_filter(t(Tr::SubtitlesMenu), &["srt", "vtt", "ass", "ssa"])
                 .pick_file();
             if let Some(path) = picked {
                 self.open(&path.to_string_lossy());
@@ -921,8 +923,8 @@ impl App {
             return;
         };
         match std::fs::write(&path, gp_core::write_srt(&cues)) {
-            Ok(()) => self.toast(format!("Saved {} lines to {}", cues.len(), path.display())),
-            Err(e) => self.toast(format!("Could not save {}: {e}", path.display())),
+            Ok(()) => self.toast(tf(Tr::SavedLines, &[&cues.len(), &path.display()])),
+            Err(e) => self.toast(tf(Tr::CouldNotSaveFile, &[&path.display(), &e])),
         }
     }
 
@@ -943,18 +945,22 @@ impl App {
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Transcript, "Transcript");
-            let words = format!("Words ({})", self.vocab.len());
+            ui.selectable_value(
+                &mut self.sidebar_tab,
+                SidebarTab::Transcript,
+                t(Tr::TabTranscript),
+            );
+            let words = tf(Tr::TabWords, &[&self.vocab.len()]);
             ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Words, words);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if icon_button(ui, "✕", "Close (T)") {
+                if icon_button(ui, "✕", t(Tr::CloseHint)) {
                     self.sidebar_open = false;
                 }
             });
         });
         ui.add(
             egui::TextEdit::singleline(&mut self.search)
-                .hint_text("🔍 Search")
+                .hint_text(t(Tr::SearchHint))
                 .desired_width(f32::INFINITY),
         );
         ui.add_space(4.0);
@@ -966,11 +972,11 @@ impl App {
 
     fn transcript(&mut self, ui: &mut egui::Ui) {
         let Some(s) = &self.session else {
-            ui.label(RichText::new("Open a video to see its transcript.").color(MUTED));
+            ui.label(RichText::new(t(Tr::OpenToSeeTranscript)).color(MUTED));
             return;
         };
         let Some(t) = s.primary_track() else {
-            ui.label(RichText::new("No text subtitles yet.").color(MUTED));
+            ui.label(RichText::new(t(Tr::NoTextSubtitles)).color(MUTED));
             return;
         };
         let needle = self.search.to_lowercase();
@@ -1058,12 +1064,7 @@ impl App {
 
     fn word_list(&mut self, ui: &mut egui::Ui) {
         if self.vocab.is_empty() {
-            ui.label(
-                RichText::new(
-                    "Click a word in the subtitles and press Save — it will show up here.",
-                )
-                .color(MUTED),
-            );
+            ui.label(RichText::new(t(Tr::WordsEmpty)).color(MUTED));
             return;
         }
         let needle = self.search.to_lowercase();
@@ -1104,16 +1105,16 @@ impl App {
                             ui.horizontal(|ui| {
                                 if current_media.as_deref() == Some(w.media_path.as_str())
                                     && ui
-                                        .small_button("▶ Show")
-                                        .on_hover_text("Jump to this moment")
+                                        .small_button(t(Tr::ShowWord))
+                                        .on_hover_text(t(Tr::JumpHint))
                                         .clicked()
                                 {
                                     jump = Some(w.cue_start_ms);
                                 }
                                 let label = if entry.anki_note_id.is_some() {
-                                    "✔ In Anki"
+                                    t(Tr::InAnki)
                                 } else {
-                                    "Send to Anki"
+                                    t(Tr::SendToAnki)
                                 };
                                 if ui
                                     .add_enabled(
@@ -1125,7 +1126,7 @@ impl App {
                                     anki = Some(entry.id);
                                 }
                                 if ui
-                                    .small_button(RichText::new("Delete").color(DANGER))
+                                    .small_button(RichText::new(t(Tr::DeleteWord)).color(DANGER))
                                     .clicked()
                                 {
                                     delete = Some(entry.id);
@@ -1178,7 +1179,7 @@ impl App {
                                     .family(theme::subs_family(lang.as_deref(), &p.word)),
                             );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if icon_button(ui, "✕", "Close (Esc)") {
+                                if icon_button(ui, "✕", t(Tr::CloseEscHint)) {
                                     close = true;
                                 }
                             });
@@ -1198,9 +1199,9 @@ impl App {
                                 ui.add_space(4.0);
                                 ui.label(text);
                             }
-                            Async::Pending => drop(ui.label(
-                                RichText::new("Explaining in context…").color(MUTED).small(),
-                            )),
+                            Async::Pending => drop(
+                                ui.label(RichText::new(t(Tr::Explaining)).color(MUTED).small()),
+                            ),
                             Async::Failed(e) => {
                                 drop(ui.label(RichText::new(e).color(DANGER).small()))
                             }
@@ -1224,22 +1225,22 @@ impl App {
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             let label = if p.saved_id.is_some() {
-                                "★ Saved"
+                                t(Tr::WordSaved)
                             } else {
-                                "☆ Save word"
+                                t(Tr::SaveWord)
                             };
                             if ui.button(label).clicked() {
                                 save = true;
                             }
                             let label = if in_anki {
-                                "✔ In Anki"
+                                t(Tr::InAnki)
                             } else {
-                                "Send to Anki"
+                                t(Tr::SendToAnki)
                             };
                             if ui.add_enabled(!in_anki, egui::Button::new(label)).clicked() {
                                 anki = true;
                             }
-                            if ui.button("Copy").clicked() {
+                            if ui.button(t(Tr::CopyWord)).clicked() {
                                 ui.ctx().copy_text(p.word.clone());
                             }
                         });
@@ -1263,33 +1264,46 @@ impl App {
         let (mut open, mut save, mut cancel) = (true, false, false);
         let (asr_setup, mut asr_action) = (&self.asr_setup, None);
         let (tts_setup, mut tts_action) = (&self.tts_setup, None);
-        egui::Window::new("Settings")
+        egui::Window::new(t(Tr::SettingsTitle))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
-                    .max_height(520.0)
+                    .max_height(dialog_height(ctx).min(520.0))
                     .show(ui, |ui| {
                         let wide = 300.0;
                         let section = |ui: &mut egui::Ui, title: &str| {
                             ui.add_space(8.0);
                             ui.label(RichText::new(title).strong().color(ACCENT));
                         };
-                        section(ui, "Languages");
+                        section(ui, t(Tr::SectionLanguages));
                         egui::Grid::new("lang")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("I am learning");
+                                ui.label(t(Tr::InterfaceLanguage));
+                                egui::ComboBox::from_id_salt("ui-lang")
+                                    .selected_text(ui_lang_name(&draft.general.ui_lang))
+                                    .show_ui(ui, |ui| {
+                                        for code in ["auto", "en", "ru", "uk"] {
+                                            ui.selectable_value(
+                                                &mut draft.general.ui_lang,
+                                                code.to_owned(),
+                                                ui_lang_name(code),
+                                            );
+                                        }
+                                    });
+                                ui.end_row();
+                                ui.label(t(Tr::Learning));
                                 ui.add(
                                     egui::TextEdit::singleline(&mut draft.general.learn_lang)
-                                        .hint_text("en, ja, de… empty = detect")
+                                        .hint_text(t(Tr::LearnHint))
                                         .desired_width(wide),
                                 );
                                 ui.end_row();
-                                ui.label("Translate into");
+                                ui.label(t(Tr::TranslateInto));
                                 ui.add(
                                     egui::TextEdit::singleline(&mut draft.general.native_lang)
                                         .hint_text("ru, uk, en…")
@@ -1297,18 +1311,18 @@ impl App {
                                 );
                                 ui.end_row();
                             });
-                        section(ui, "Subtitles");
+                        section(ui, t(Tr::SectionSubtitles));
                         egui::Grid::new("subs")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("Text size");
+                                ui.label(t(Tr::TextSize));
                                 ui.add(egui::Slider::new(
                                     &mut draft.subtitles.font_size,
                                     16.0..=60.0,
                                 ));
                                 ui.end_row();
-                                ui.label("Translation size");
+                                ui.label(t(Tr::TranslationSize));
                                 ui.add(egui::Slider::new(
                                     &mut draft.subtitles.secondary_scale,
                                     0.5..=1.2,
@@ -1317,16 +1331,16 @@ impl App {
                                 ui.label("");
                                 ui.checkbox(
                                     &mut draft.subtitles.auto_translate,
-                                    "Translate when there is no track in my language",
+                                    t(Tr::AutoTranslateCheck),
                                 );
                                 ui.end_row();
                             });
-                        section(ui, "Translation");
+                        section(ui, t(Tr::SectionTranslation));
                         egui::Grid::new("tr")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("Service");
+                                ui.label(t(Tr::ServiceRow));
                                 egui::ComboBox::from_id_salt("provider")
                                     .selected_text(provider_name(&draft.translation.provider))
                                     .show_ui(ui, |ui| {
@@ -1344,11 +1358,11 @@ impl App {
                                     "openai" | "anthropic"
                                 );
                                 if llm {
-                                    ui.label("Model");
+                                    ui.label(t(Tr::ModelRow));
                                     let hint = if draft.translation.provider == "anthropic" {
                                         "claude-opus-5-5"
                                     } else {
-                                        "model name"
+                                        t(Tr::ModelNameHint)
                                     };
                                     ui.add(
                                         egui::TextEdit::singleline(&mut draft.translation.model)
@@ -1358,18 +1372,16 @@ impl App {
                                     ui.end_row();
                                 }
                                 if draft.translation.provider == "openai" {
-                                    ui.label("Server address");
+                                    ui.label(t(Tr::ServerAddressRow));
                                     ui.add(
                                         egui::TextEdit::singleline(&mut draft.translation.base_url)
-                                            .hint_text(
-                                                "empty = OpenAI; Ollama: http://localhost:11434/v1",
-                                            )
+                                            .hint_text(t(Tr::OpenAiAddressHint))
                                             .desired_width(wide),
                                     );
                                     ui.end_row();
                                 }
                                 if draft.translation.provider != "google" {
-                                    ui.label("API key");
+                                    ui.label(t(Tr::ApiKeyRow));
                                     ui.add(
                                         egui::TextEdit::singleline(&mut draft.translation.api_key)
                                             .password(true)
@@ -1378,10 +1390,9 @@ impl App {
                                     ui.end_row();
                                 }
                             });
-                        section(ui, "Speech recognition");
-                        asr_action =
-                            crate::setup_ui::settings_section(ui, &mut draft, asr_setup);
-                        ui.label(RichText::new(crate::setup_text::ADVANCED).color(MUTED));
+                        section(ui, t(Tr::SectionSpeechRecognition));
+                        asr_action = crate::setup_ui::settings_section(ui, &mut draft, asr_setup);
+                        ui.label(RichText::new(t(Tr::Advanced)).color(MUTED));
                         egui::Grid::new("asr")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
@@ -1389,42 +1400,39 @@ impl App {
                                 ui.label("whisper-server");
                                 path_field(ui, &mut draft.asr.server_path, wide);
                                 ui.end_row();
-                                ui.label("Model file");
+                                ui.label(t(Tr::ModelFileRow));
                                 path_field(ui, &mut draft.asr.model_path, wide);
                                 ui.end_row();
                                 ui.label("");
-                                ui.checkbox(
-                                    &mut draft.asr.enabled,
-                                    "Transcribe automatically when a video has no subtitles",
-                                );
+                                ui.checkbox(&mut draft.asr.enabled, t(Tr::AsrAutoCheck));
                                 ui.end_row();
                             });
-                        section(ui, crate::setup_text::SECTION_VOICE_OVER);
+                        section(ui, t(Tr::SectionVoiceOver));
                         tts_action = crate::tts_ui::settings_section(ui, &mut draft, tts_setup);
                         section(ui, "Anki");
                         egui::Grid::new("anki")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("Deck");
+                                ui.label(t(Tr::DeckRow));
                                 ui.add(
                                     egui::TextEdit::singleline(&mut draft.anki.deck)
                                         .desired_width(wide),
                                 );
                                 ui.end_row();
-                                ui.label("AnkiConnect address");
+                                ui.label(t(Tr::AnkiAddressRow));
                                 ui.add(
                                     egui::TextEdit::singleline(&mut draft.anki.url)
                                         .desired_width(wide),
                                 );
                                 ui.end_row();
                             });
-                        section(ui, "Player");
+                        section(ui, t(Tr::SectionPlayer));
                         egui::Grid::new("player")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("Hardware decoding");
+                                ui.label(t(Tr::HwdecRow));
                                 ui.add(
                                     egui::TextEdit::singleline(&mut draft.player.hwdec)
                                         .hint_text("auto")
@@ -1434,14 +1442,14 @@ impl App {
                                 ui.label("ffmpeg");
                                 path_field(ui, &mut draft.player.ffmpeg_path, wide);
                                 ui.end_row();
-                                ui.label("Interface scale");
+                                ui.label(t(Tr::InterfaceScaleRow));
                                 ui.add(egui::Slider::new(&mut draft.general.ui_scale, 0.75..=2.0));
                                 ui.end_row();
                                 if crate::shell::SUPPORTED {
                                     ui.label("");
                                     ui.checkbox(
                                         &mut draft.general.shell_integration,
-                                        "Show Glossplay in Explorer's \"Open with\" and context menu",
+                                        t(Tr::ShellCheck),
                                     );
                                     ui.end_row();
                                 }
@@ -1449,10 +1457,13 @@ impl App {
                     });
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("Save").strong()).clicked() {
+                    if ui
+                        .button(RichText::new(t(Tr::SaveButton)).strong())
+                        .clicked()
+                    {
                         save = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t(Tr::Cancel)).clicked() {
                         cancel = true;
                     }
                 });
@@ -1495,11 +1506,21 @@ impl App {
 
 fn provider_name(id: &str) -> &'static str {
     match id {
-        "google" => "Google Translate (no key needed)",
+        "google" => t(Tr::ProviderGoogle),
         "deepl" => "DeepL",
-        "openai" => "OpenAI-compatible (OpenAI, Ollama, LM Studio)",
+        "openai" => t(Tr::ProviderOpenAi),
         "anthropic" => "Claude",
-        _ => "Unknown",
+        _ => t(Tr::ProviderUnknown),
+    }
+}
+
+/// Each language is named in itself, so it can be found whatever the interface says.
+fn ui_lang_name(code: &str) -> &'static str {
+    match code {
+        "en" => "English",
+        "ru" => "Русский",
+        "uk" => "Українська",
+        _ => t(Tr::LangAuto),
     }
 }
 
@@ -1507,10 +1528,10 @@ fn path_field(ui: &mut egui::Ui, value: &mut String, width: f32) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(value)
-                .hint_text("found automatically if empty")
+                .hint_text(t(Tr::PathAutoHint))
                 .desired_width(width - 70.0),
         );
-        if ui.button("Browse").clicked()
+        if ui.button(t(Tr::BrowseButton)).clicked()
             && let Some(path) = rfd::FileDialog::new().pick_file()
         {
             *value = path.to_string_lossy().into_owned();
@@ -1544,4 +1565,9 @@ fn outlined(
         );
     }
     painter.galley(at, galley, color);
+}
+
+/// How tall the scrolling part of a dialog may be, so its buttons stay inside a small window.
+pub fn dialog_height(ctx: &egui::Context) -> f32 {
+    (ctx.content_rect().height() - 110.0).clamp(120.0, 700.0)
 }

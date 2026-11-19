@@ -4,10 +4,12 @@
 use crate::app::App;
 use crate::components::{self, Event, InstallError, Progress};
 use crate::dub::{Dub, DubConfig, Source};
+use crate::i18n::{Tr, t, tf};
 use crate::jobs::Msg;
 use crate::setup_text as text;
 use crate::theme::{ACCENT, DANGER, MUTED, SUB_SECONDARY};
 use crate::tts_setup::{self, ENGINE_AVAILABLE, Engine, TtsInstall};
+use crate::ui::dialog_height;
 use eframe::egui::{self, Align, Align2, RichText, vec2};
 use gp_core::config::Config;
 use std::sync::Arc;
@@ -69,8 +71,8 @@ impl App {
         } else {
             match tts_setup::installed() {
                 Some(i) if i.server.is_some() => Source::Installed(i),
-                Some(_) => return Err(text::TTS_NO_ENGINE_HERE.into()),
-                None => return Err(text::TTS_NOT_SET_UP.into()),
+                Some(_) => return Err(t(Tr::TtsNoEngineHere).into()),
+                None => return Err(t(Tr::TtsNotSetUp).into()),
             }
         };
         let data = crate::paths::data_dir();
@@ -122,7 +124,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|s| s.secondary == crate::session::Secondary::Off);
                 if no_translation {
-                    self.toast(text::TTS_NEEDS_TRANSLATION);
+                    self.toast(t(Tr::TtsNeedsTranslation));
                 }
             }
             Err(e) => self.toast(e),
@@ -135,7 +137,7 @@ impl App {
             return;
         }
         if let Err(e) = crate::paths::save_config(&self.cfg) {
-            self.toast(format!("Could not save settings: {e}"));
+            self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
     }
 
@@ -226,7 +228,7 @@ impl App {
         }
         gp_media::tools::stop_named(SERVER_NAME);
         match components::remove(tts_setup::ID) {
-            Ok(()) => self.toast(text::TTS_TOAST_REMOVED),
+            Ok(()) => self.toast(t(Tr::TtsToastRemoved)),
             Err(e) => self.toast(e),
         }
         self.tts_setup.installed = tts_setup::installed();
@@ -249,7 +251,7 @@ impl App {
             Ok(_) => {
                 let enable = std::mem::take(&mut s.enable_after);
                 s.outcome = Some(Outcome::Ready { enabled: enable });
-                self.toast(text::TTS_TOAST_READY);
+                self.toast(t(Tr::TtsToastReady));
                 if enable {
                     self.set_dub(true);
                 }
@@ -289,75 +291,80 @@ impl App {
         let mut agreed = self.tts_setup.agreed;
         let (mut open, mut install, mut cancel, mut close) = (true, None, false, false);
         let s = &self.tts_setup;
-        egui::Window::new(text::TTS_DIALOG_TITLE)
+        egui::Window::new(t(Tr::TtsDialogTitle))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .order(egui::Order::Foreground)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.set_width(DIALOG_WIDTH);
-                ui.label(text::TTS_DIALOG_INTRO);
-                ui.add_space(8.0);
-                hardware_line(ui);
-                ui.add_enabled_ui(!s.running(), |ui| choice(ui, "tts-dialog", &mut engine));
-                let e = tts_setup::resolve(&engine);
-                ui.add_space(6.0);
-                plan(ui, e);
-                warnings(ui, e);
-                if let Some(i) = &s.installed {
-                    ui.label(RichText::new(i.status()).color(MUTED));
-                }
-                ui.add_space(6.0);
-                licences(ui);
-                ui.add_space(6.0);
-                ui.add_enabled_ui(!s.running(), |ui| {
-                    ui.checkbox(&mut agreed, RichText::new(text::TTS_AGREE).strong());
-                });
-                ui.add_space(8.0);
-                if let Some(p) = &s.progress {
-                    progress(ui, p);
-                    ui.add_space(6.0);
-                    if ui.button(text::CANCEL).clicked() {
-                        cancel = true;
-                    }
-                    return;
-                }
-                match &s.outcome {
-                    Some(Outcome::Ready { enabled }) => {
-                        ui.label(RichText::new(text::TTS_READY).color(ACCENT).strong());
-                        ui.label(if *enabled {
-                            text::TTS_READY_ON
-                        } else {
-                            text::TTS_READY_HOW
-                        });
+                egui::ScrollArea::vertical()
+                    .max_height(dialog_height(ctx))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.set_width(DIALOG_WIDTH);
+                        ui.label(t(Tr::TtsDialogIntro));
+                        ui.add_space(8.0);
+                        hardware_line(ui);
+                        ui.add_enabled_ui(!s.running(), |ui| choice(ui, "tts-dialog", &mut engine));
+                        let e = tts_setup::resolve(&engine);
                         ui.add_space(6.0);
-                        if ui.button(text::CLOSE).clicked() {
-                            close = true;
+                        plan(ui, e);
+                        warnings(ui, e);
+                        if let Some(i) = &s.installed {
+                            ui.label(RichText::new(i.status()).color(MUTED));
                         }
-                        return;
-                    }
-                    Some(Outcome::Failed(e)) => {
-                        ui.label(RichText::new(e).color(DANGER));
-                    }
-                    Some(Outcome::Cancelled) => {
-                        ui.label(RichText::new(text::CANCELLED).color(MUTED));
-                    }
-                    None => {}
-                }
-                ui.horizontal(|ui| {
-                    let label = match s.outcome {
-                        Some(Outcome::Failed(_)) => text::TRY_AGAIN,
-                        _ => text::INSTALL,
-                    };
-                    let button = egui::Button::new(RichText::new(label).strong());
-                    if ui.add_enabled(agreed, button).clicked() {
-                        install = Some(e);
-                    }
-                    if ui.button(text::CANCEL).clicked() {
-                        close = true;
-                    }
-                });
+                        ui.add_space(6.0);
+                        licences(ui);
+                        ui.add_space(6.0);
+                        ui.add_enabled_ui(!s.running(), |ui| {
+                            ui.checkbox(&mut agreed, RichText::new(t(Tr::TtsAgree)).strong());
+                        });
+                        ui.add_space(8.0);
+                        if let Some(p) = &s.progress {
+                            progress(ui, p);
+                            ui.add_space(6.0);
+                            if ui.button(t(Tr::Cancel)).clicked() {
+                                cancel = true;
+                            }
+                            return;
+                        }
+                        match &s.outcome {
+                            Some(Outcome::Ready { enabled }) => {
+                                ui.label(RichText::new(t(Tr::TtsReady)).color(ACCENT).strong());
+                                ui.label(if *enabled {
+                                    t(Tr::TtsReadyOn)
+                                } else {
+                                    t(Tr::TtsReadyHow)
+                                });
+                                ui.add_space(6.0);
+                                if ui.button(t(Tr::Close)).clicked() {
+                                    close = true;
+                                }
+                                return;
+                            }
+                            Some(Outcome::Failed(e)) => {
+                                ui.label(RichText::new(e).color(DANGER));
+                            }
+                            Some(Outcome::Cancelled) => {
+                                ui.label(RichText::new(t(Tr::Cancelled)).color(MUTED));
+                            }
+                            None => {}
+                        }
+                        ui.horizontal(|ui| {
+                            let label = match s.outcome {
+                                Some(Outcome::Failed(_)) => t(Tr::TryAgain),
+                                _ => t(Tr::Install),
+                            };
+                            let button = egui::Button::new(RichText::new(label).strong());
+                            if ui.add_enabled(agreed, button).clicked() {
+                                install = Some(e);
+                            }
+                            if ui.button(t(Tr::Cancel)).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
             });
         if s.running() {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -386,10 +393,10 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
         ui.scroll_to_rect(at, Some(Align::TOP));
     }
     let mut action = None;
-    ui.checkbox(&mut draft.tts.enabled, text::TTS_ENABLE);
+    ui.checkbox(&mut draft.tts.enabled, t(Tr::TtsEnable));
     let status = match &s.installed {
         Some(i) => i.status(),
-        None => text::NOT_INSTALLED_STATUS.to_owned(),
+        None => t(Tr::NotInstalledStatus).to_owned(),
     };
     ui.label(status);
     if let Some(p) = &s.progress {
@@ -401,26 +408,26 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
     });
     let size = tts_setup::component(tts_setup::resolve(&draft.tts.install_engine)).download_size();
     ui.label(
-        RichText::new(format!("{}: {}", text::ROW_TOTAL, text::size(size)))
+        RichText::new(format!("{}: {}", t(Tr::RowTotal), text::size(size)))
             .color(MUTED)
             .small(),
     );
     ui.horizontal(|ui| {
         if s.running() {
-            if ui.button(text::CANCEL).clicked() {
+            if ui.button(t(Tr::Cancel)).clicked() {
                 action = Some(Action::Cancel);
             }
             return;
         }
         let label = if s.installed.is_some() {
-            text::REINSTALL
+            t(Tr::Reinstall)
         } else {
-            text::INSTALL
+            t(Tr::Install)
         };
         if ui.button(label).clicked() {
             action = Some(Action::OpenDialog);
         }
-        if s.installed.is_some() && ui.button(text::REMOVE).clicked() {
+        if s.installed.is_some() && ui.button(t(Tr::Remove)).clicked() {
             action = Some(Action::Remove);
         }
     });
@@ -429,26 +436,26 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
         .num_columns(2)
         .spacing([16.0, 6.0])
         .show(ui, |ui| {
-            ui.label(text::ROW_ORIGINAL_VOLUME);
+            ui.label(t(Tr::RowOriginalVolume));
             ui.add(egui::Slider::new(&mut draft.tts.original_volume, 0.0..=150.0).integer());
             ui.end_row();
-            ui.label(text::ROW_VOICE_VOLUME);
+            ui.label(t(Tr::RowVoiceVolume));
             ui.add(egui::Slider::new(&mut draft.tts.voice_volume, 0.0..=150.0).integer());
             ui.end_row();
         });
-    ui.label(RichText::new(text::TTS_ADVANCED).color(MUTED));
+    ui.label(RichText::new(t(Tr::TtsAdvanced)).color(MUTED));
     egui::Grid::new("tts-own")
         .num_columns(2)
         .spacing([16.0, 6.0])
         .show(ui, |ui| {
             for (label, hint, value) in [
-                (text::ROW_SERVER, text::HINT_SERVER, &mut draft.tts.base_url),
+                (t(Tr::RowServer), t(Tr::HintServer), &mut draft.tts.base_url),
                 (
-                    text::ROW_TTS_MODEL,
+                    t(Tr::RowTtsModel),
                     text::HINT_TTS_MODEL,
                     &mut draft.tts.model,
                 ),
-                (text::ROW_VOICE, text::HINT_VOICE, &mut draft.tts.voice),
+                (t(Tr::RowVoice), t(Tr::HintVoice), &mut draft.tts.voice),
             ] {
                 ui.label(label);
                 ui.add(
@@ -465,9 +472,9 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
 
 fn choice(ui: &mut egui::Ui, salt: &str, engine: &mut String) {
     ui.horizontal(|ui| {
-        ui.label(text::ROW_ENGINE);
+        ui.label(t(Tr::RowEngine));
         if !ENGINE_AVAILABLE {
-            ui.label(text::ENGINE_OWN);
+            ui.label(t(Tr::EngineOwn));
             return;
         }
         let current = tts_setup::resolve(engine);
@@ -488,9 +495,9 @@ fn hardware_line(ui: &mut egui::Ui) {
     let line = match crate::asr_setup::hardware() {
         Some(hw) => match &hw.gpu {
             Some(g) => text::gpu_line(&g.name, g.vram_mb),
-            None => text::NO_NVIDIA.to_owned(),
+            None => t(Tr::NoNvidia).to_owned(),
         },
-        None => text::CHECKING_HARDWARE.to_owned(),
+        None => t(Tr::CheckingHardware).to_owned(),
     };
     ui.label(RichText::new(line).color(MUTED));
 }
@@ -507,7 +514,7 @@ fn plan(ui: &mut egui::Ui, engine: Engine) {
                 ui.label(text::size(f.size));
                 ui.end_row();
             }
-            ui.label(RichText::new(text::ROW_TOTAL).strong());
+            ui.label(RichText::new(t(Tr::RowTotal)).strong());
             ui.label(RichText::new(text::size(c.download_size())).strong());
             ui.end_row();
         });
@@ -523,13 +530,13 @@ fn plan(ui: &mut egui::Ui, engine: Engine) {
     ui.label(
         RichText::new(format!(
             "{}: {}",
-            text::ROW_PLACE,
+            t(Tr::RowPlace),
             components::dir(&c.id).display()
         ))
         .color(MUTED)
         .small(),
     );
-    ui.label(RichText::new(text::TTS_SOURCES).color(MUTED).small());
+    ui.label(RichText::new(t(Tr::TtsSources)).color(MUTED).small());
 }
 
 fn warnings(ui: &mut egui::Ui, engine: Engine) {
@@ -537,17 +544,17 @@ fn warnings(ui: &mut egui::Ui, engine: Engine) {
         ui.label(RichText::new(t).color(SUB_SECONDARY));
     };
     if !ENGINE_AVAILABLE {
-        warn(text::TTS_NO_ENGINE_HERE);
+        warn(t(Tr::TtsNoEngineHere));
         return;
     }
     if !tts_setup::vulkan_loader_present() {
-        warn(text::TTS_NO_VULKAN);
+        warn(t(Tr::TtsNoVulkan));
     } else {
-        warn(text::TTS_NEEDS_GPU);
+        warn(t(Tr::TtsNeedsGpu));
     }
     let no_nvidia = crate::asr_setup::hardware().is_some_and(|hw| hw.gpu.is_none());
     if engine == Engine::Nvidia && no_nvidia {
-        warn(text::TTS_NVIDIA_WITHOUT_GPU);
+        warn(t(Tr::TtsNvidiaWithoutGpu));
     }
 }
 
@@ -558,10 +565,10 @@ fn licences(ui: &mut egui::Ui) {
         .inner_margin(10)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new(text::TTS_LICENCE_NC).strong().color(DANGER));
-            ui.label(RichText::new(text::TTS_NO_IMPERSONATION).strong());
-            ui.label(text::TTS_LICENCE_BOSON);
-            ui.label(RichText::new(text::TTS_LICENCE_ENGINE).color(MUTED).small());
+            ui.label(RichText::new(t(Tr::TtsLicenceNc)).strong().color(DANGER));
+            ui.label(RichText::new(t(Tr::TtsNoImpersonation)).strong());
+            ui.label(t(Tr::TtsLicenceBoson));
+            ui.label(RichText::new(t(Tr::TtsLicenceEngine)).color(MUTED).small());
             ui.horizontal_wrapped(|ui| {
                 ui.hyperlink_to(text::TTS_LINK_CC, text::TTS_URL_CC);
                 ui.label("·");

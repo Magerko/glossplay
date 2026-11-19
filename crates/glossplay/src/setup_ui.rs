@@ -4,9 +4,11 @@
 use crate::app::App;
 use crate::asr_setup::{self, AsrInstall, ENGINE_AVAILABLE, Engine, Hardware, MODELS, Variant};
 use crate::components::{self, Event, InstallError, Progress};
+use crate::i18n::{Tr, t, tf};
 use crate::jobs::Msg;
 use crate::setup_text as text;
 use crate::theme::{ACCENT, DANGER, MUTED, SUB_SECONDARY};
+use crate::ui::dialog_height;
 use eframe::egui::{self, Align, Align2, RichText, vec2};
 use gp_core::config::Config;
 use std::sync::Arc;
@@ -81,7 +83,7 @@ impl App {
         self.stop_asr();
         gp_media::tools::stop_named(gp_media::tools::WHISPER);
         if let Err(e) = crate::paths::save_config(&self.cfg) {
-            self.toast(format!("Could not save settings: {e}"));
+            self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
         let component = asr_setup::component(&v);
         let cancel = Arc::new(AtomicBool::new(false));
@@ -115,7 +117,7 @@ impl App {
         self.stop_asr();
         gp_media::tools::stop_named(gp_media::tools::WHISPER);
         match components::remove(asr_setup::ID) {
-            Ok(()) => self.toast(text::TOAST_REMOVED),
+            Ok(()) => self.toast(t(Tr::ToastRemoved)),
             Err(e) => self.toast(e),
         }
         self.asr_setup.installed = asr_setup::installed();
@@ -141,7 +143,7 @@ impl App {
             Ok(_) => {
                 let start = std::mem::take(&mut s.start_after) && self.session.is_some();
                 s.outcome = Some(Outcome::Ready { started: start });
-                self.toast(text::TOAST_READY);
+                self.toast(t(Tr::ToastReady));
                 if start {
                     self.start_asr();
                 }
@@ -189,81 +191,86 @@ impl App {
         );
         let (mut open, mut install, mut cancel, mut close) = (true, None, false, false);
         let s = &self.asr_setup;
-        egui::Window::new(text::DIALOG_TITLE)
+        egui::Window::new(t(Tr::DialogTitle))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .order(egui::Order::Foreground)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.set_width(DIALOG_WIDTH);
-                ui.label(text::DIALOG_INTRO);
-                ui.add_space(10.0);
-                let Some(hw) = hw else {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(text::CHECKING_HARDWARE);
-                    });
-                    return;
-                };
-                hardware_line(ui, hw);
-                ui.add_space(4.0);
-                ui.add_enabled_ui(!s.running(), |ui| {
-                    choices(ui, "setup-dialog", &mut engine, &mut model, hw);
-                });
-                let v = asr_setup::resolve(&engine, &model, hw.gpu.as_ref());
-                ui.add_space(6.0);
-                plan(ui, &v);
-                warnings(ui, &engine, &v, hw);
-                if let Some(i) = &s.installed {
-                    ui.label(RichText::new(i.status()).color(MUTED));
-                }
-                ui.add_space(4.0);
-                ui.label(RichText::new(text::LICENCE_NOTE).color(MUTED).small());
-                ui.add_space(10.0);
-                if let Some(p) = &s.progress {
-                    progress(ui, p);
-                    ui.add_space(6.0);
-                    if ui.button(text::CANCEL).clicked() {
-                        cancel = true;
-                    }
-                    return;
-                }
-                match &s.outcome {
-                    Some(Outcome::Ready { started }) => {
-                        ui.label(RichText::new(text::READY).color(ACCENT).strong());
-                        ui.label(if *started {
-                            text::READY_STARTED
-                        } else {
-                            text::READY_HOW
+                egui::ScrollArea::vertical()
+                    .max_height(dialog_height(ctx))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.set_width(DIALOG_WIDTH);
+                        ui.label(t(Tr::DialogIntro));
+                        ui.add_space(10.0);
+                        let Some(hw) = hw else {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(t(Tr::CheckingHardware));
+                            });
+                            return;
+                        };
+                        hardware_line(ui, hw);
+                        ui.add_space(4.0);
+                        ui.add_enabled_ui(!s.running(), |ui| {
+                            choices(ui, "setup-dialog", &mut engine, &mut model, hw);
                         });
+                        let v = asr_setup::resolve(&engine, &model, hw.gpu.as_ref());
                         ui.add_space(6.0);
-                        if ui.button(text::CLOSE).clicked() {
-                            close = true;
+                        plan(ui, &v);
+                        warnings(ui, &engine, &v, hw);
+                        if let Some(i) = &s.installed {
+                            ui.label(RichText::new(i.status()).color(MUTED));
                         }
-                        return;
-                    }
-                    Some(Outcome::Failed(e)) => {
-                        ui.label(RichText::new(e).color(DANGER));
-                    }
-                    Some(Outcome::Cancelled) => {
-                        ui.label(RichText::new(text::CANCELLED).color(MUTED));
-                    }
-                    None => {}
-                }
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    let label = match s.outcome {
-                        Some(Outcome::Failed(_)) => text::TRY_AGAIN,
-                        _ => text::INSTALL,
-                    };
-                    if ui.button(RichText::new(label).strong()).clicked() {
-                        install = Some(v);
-                    }
-                    if ui.button(text::CANCEL).clicked() {
-                        close = true;
-                    }
-                });
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(t(Tr::LicenceNote)).color(MUTED).small());
+                        ui.add_space(10.0);
+                        if let Some(p) = &s.progress {
+                            progress(ui, p);
+                            ui.add_space(6.0);
+                            if ui.button(t(Tr::Cancel)).clicked() {
+                                cancel = true;
+                            }
+                            return;
+                        }
+                        match &s.outcome {
+                            Some(Outcome::Ready { started }) => {
+                                ui.label(RichText::new(t(Tr::Ready)).color(ACCENT).strong());
+                                ui.label(if *started {
+                                    t(Tr::ReadyStarted)
+                                } else {
+                                    t(Tr::ReadyHow)
+                                });
+                                ui.add_space(6.0);
+                                if ui.button(t(Tr::Close)).clicked() {
+                                    close = true;
+                                }
+                                return;
+                            }
+                            Some(Outcome::Failed(e)) => {
+                                ui.label(RichText::new(e).color(DANGER));
+                            }
+                            Some(Outcome::Cancelled) => {
+                                ui.label(RichText::new(t(Tr::Cancelled)).color(MUTED));
+                            }
+                            None => {}
+                        }
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let label = match s.outcome {
+                                Some(Outcome::Failed(_)) => t(Tr::TryAgain),
+                                _ => t(Tr::Install),
+                            };
+                            if ui.button(RichText::new(label).strong()).clicked() {
+                                install = Some(v);
+                            }
+                            if ui.button(t(Tr::Cancel)).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
             });
         if s.running() {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -296,7 +303,7 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &AsrSetup) -> 
     let mut action = None;
     let status = match &s.installed {
         Some(i) => i.status(),
-        None => text::NOT_INSTALLED_STATUS.to_owned(),
+        None => t(Tr::NotInstalledStatus).to_owned(),
     };
     ui.label(status);
     if let Some(p) = &s.progress {
@@ -321,7 +328,7 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &AsrSetup) -> 
             );
             let size = asr_setup::component(&v).download_size();
             ui.label(
-                RichText::new(format!("{}: {}", text::ROW_TOTAL, text::size(size)))
+                RichText::new(format!("{}: {}", t(Tr::RowTotal), text::size(size)))
                     .color(MUTED)
                     .small(),
             );
@@ -329,27 +336,27 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &AsrSetup) -> 
         None => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(text::CHECKING_HARDWARE);
+                ui.label(t(Tr::CheckingHardware));
             });
             ui.ctx().request_repaint_after(Duration::from_millis(200));
         }
     }
     ui.horizontal(|ui| {
         if s.running() {
-            if ui.button(text::CANCEL).clicked() {
+            if ui.button(t(Tr::Cancel)).clicked() {
                 action = Some(Action::Cancel);
             }
             return;
         }
         let label = if s.installed.is_some() {
-            text::REINSTALL
+            t(Tr::Reinstall)
         } else {
-            text::INSTALL
+            t(Tr::Install)
         };
         if ui.button(label).clicked() {
             action = Some(Action::OpenDialog);
         }
-        if s.installed.is_some() && ui.button(text::REMOVE).clicked() {
+        if s.installed.is_some() && ui.button(t(Tr::Remove)).clicked() {
             action = Some(Action::Remove);
         }
     });
@@ -359,11 +366,11 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &AsrSetup) -> 
 
 fn engine_name(key: &str, recommended: Engine) -> String {
     match Engine::parse(key) {
-        Some(Engine::Nvidia) => text::ENGINE_NVIDIA.to_owned(),
-        Some(Engine::Cpu) => text::ENGINE_CPU.to_owned(),
+        Some(Engine::Nvidia) => t(Tr::EngineNvidia).to_owned(),
+        Some(Engine::Cpu) => t(Tr::EngineCpu).to_owned(),
         None => text::engine_auto_is(match recommended {
-            Engine::Nvidia => text::ENGINE_NVIDIA,
-            Engine::Cpu => text::ENGINE_CPU,
+            Engine::Nvidia => t(Tr::EngineNvidia),
+            Engine::Cpu => t(Tr::EngineCpu),
         }),
     }
 }
@@ -388,7 +395,7 @@ fn choices(ui: &mut egui::Ui, salt: &str, engine: &mut String, model: &mut Strin
         .num_columns(2)
         .spacing([16.0, 6.0])
         .show(ui, |ui| {
-            ui.label(text::ROW_ENGINE);
+            ui.label(t(Tr::RowEngine));
             if ENGINE_AVAILABLE {
                 egui::ComboBox::from_id_salt((salt, "engine"))
                     .width(300.0)
@@ -405,12 +412,12 @@ fn choices(ui: &mut egui::Ui, salt: &str, engine: &mut String, model: &mut Strin
                         }
                     });
             } else {
-                ui.label(text::ENGINE_OWN);
+                ui.label(t(Tr::EngineOwn));
             }
             ui.end_row();
-            ui.label(text::ROW_MODEL);
+            ui.label(t(Tr::RowModel));
             let default = asr_setup::resolve(engine, "", gpu).model;
-            let auto = format!("{} ({})", text::MODEL_AUTO, model_name(default.id));
+            let auto = format!("{} ({})", t(Tr::ModelAuto), model_name(default.id));
             let selected = if asr_setup::model(model).is_some() {
                 model_name(model)
             } else {
@@ -442,7 +449,7 @@ fn choices(ui: &mut egui::Ui, salt: &str, engine: &mut String, model: &mut Strin
 fn hardware_line(ui: &mut egui::Ui, hw: &Hardware) {
     let line = match &hw.gpu {
         Some(g) => text::gpu_line(&g.name, g.vram_mb),
-        None => text::NO_NVIDIA.to_owned(),
+        None => t(Tr::NoNvidia).to_owned(),
     };
     ui.label(RichText::new(line).color(MUTED));
 }
@@ -460,7 +467,7 @@ fn plan(ui: &mut egui::Ui, v: &Variant) {
                 ui.label(text::size(f.size));
                 ui.end_row();
             }
-            ui.label(RichText::new(text::ROW_TOTAL).strong());
+            ui.label(RichText::new(t(Tr::RowTotal)).strong());
             ui.label(RichText::new(text::size(c.download_size())).strong());
             ui.end_row();
         });
@@ -476,7 +483,7 @@ fn plan(ui: &mut egui::Ui, v: &Variant) {
     ui.label(
         RichText::new(format!(
             "{}: {}",
-            text::ROW_PLACE,
+            t(Tr::RowPlace),
             components::dir(&c.id).display()
         ))
         .color(MUTED)
@@ -489,21 +496,21 @@ fn warnings(ui: &mut egui::Ui, engine_pref: &str, v: &Variant, hw: &Hardware) {
         ui.label(RichText::new(t).color(SUB_SECONDARY));
     };
     if !ENGINE_AVAILABLE {
-        warn(text::NO_ENGINE_HERE);
+        warn(t(Tr::NoEngineHere));
         return;
     }
     match v.engine {
         Engine::Cpu => {
             if Engine::parse(engine_pref).is_none() && asr_setup::old_driver(hw.gpu.as_ref()) {
-                warn(text::OLD_DRIVER);
+                warn(t(Tr::OldDriver));
             }
-            warn(text::CPU_SLOW);
+            warn(t(Tr::CpuSlow));
         }
-        Engine::Nvidia if hw.gpu.is_none() => warn(text::NVIDIA_FORCED_WITHOUT_GPU),
+        Engine::Nvidia if hw.gpu.is_none() => warn(t(Tr::NvidiaForcedWithoutGpu)),
         Engine::Nvidia => {}
     }
     if asr_setup::vc_runtime_missing() {
-        warn(text::VC_RUNTIME_MISSING);
+        warn(t(Tr::VcRuntimeMissing));
     }
 }
 

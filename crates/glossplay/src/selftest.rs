@@ -40,6 +40,10 @@ pub struct Plan {
     pub settings_voice: bool,
     /// Keep the Subtitles menu open for the screenshot.
     pub subs_menu: bool,
+    /// No file: the start screen, for the screenshot.
+    pub empty: bool,
+    /// Show the saved words in the sidebar.
+    pub words_tab: bool,
 }
 
 /// The pause in the middle of a voice-over run: the clip must stop with the video.
@@ -129,8 +133,9 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
         return;
     };
     ctx.request_repaint();
-    if st.plan.settings {
+    if st.plan.settings && !st.plan.empty {
         // The section is below the fold of the settings window; it has to be in the screenshot.
+        // Without a file the window stays at its top, which shows the language choice.
         app.asr_setup.scroll_to = true;
     }
     if st.plan.settings_voice {
@@ -159,6 +164,35 @@ fn finish(st: &mut State, ctx: &egui::Context) {
 
 fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
     match &mut st.phase {
+        Phase::Loading if st.plan.empty => {
+            if !st.word_opened {
+                // Dialogs are drawn before this runs, so they must be open a frame ahead.
+                st.word_opened = true;
+                if st.plan.settings {
+                    app.settings_draft = Some(app.cfg.clone());
+                }
+                if st.plan.setup_dialog {
+                    app.open_asr_setup(false);
+                }
+                if st.plan.tts_dialog {
+                    app.open_tts_setup(false);
+                }
+            }
+            if st.launched.elapsed().as_secs_f64() >= st.plan.seconds {
+                println!("ui_lang={}", crate::i18n::lang().code());
+                st.phase = Phase::Capture;
+
+                if st.plan.screenshot.is_some() {
+                    let layer = egui::LayerId::new(egui::Order::Debug, egui::Id::unique("capture"));
+                    ctx.layer_painter(layer).add(video::capture_callback(
+                        ctx.content_rect(),
+                        st.capture.clone(),
+                    ));
+                } else {
+                    finish(st, ctx);
+                }
+            }
+        }
         Phase::Loading => {
             let ready = app.session.as_ref().is_some_and(|s| s.tracks_discovered);
             if ready {
@@ -166,6 +200,10 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                     app.player.seek((at * 1000.0) as Ms);
                 }
                 app.sidebar_open = st.plan.sidebar;
+                if st.plan.words_tab {
+                    app.sidebar_tab = crate::app::SidebarTab::Words;
+                }
+
                 if st.plan.setup_dialog {
                     app.open_asr_setup(false);
                 }
@@ -633,7 +671,9 @@ fn report(st: &mut State, app: &App) {
     let int = |name| mpv.get_i64(name).unwrap_or(0);
     let (width, height) = (int("width"), int("height"));
     let advanced = app.snap.pos - st.start_pos;
+    println!("ui_lang={}", crate::i18n::lang().code());
     println!("duration_ms={}", app.snap.duration);
+
     println!("video_size={width}x{height}");
     println!(
         "hwdec_current={}",

@@ -6,6 +6,7 @@
 //! `<id>.new` and swapped in at the end. Downloads go to `components/.downloads` as `.part`
 //! files that survive a cancel or a crash and are resumed next time.
 
+use crate::i18n::{Tr, t};
 use crate::paths;
 use crate::setup_text as text;
 use gp_ai::download::{self, DownloadError};
@@ -191,7 +192,7 @@ pub enum InstallError {
 impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InstallError::Cancelled => f.write_str(text::CANCELLED),
+            InstallError::Cancelled => f.write_str(t(Tr::Cancelled)),
             InstallError::Failed(e) => f.write_str(e),
         }
     }
@@ -289,7 +290,7 @@ fn installed_in(root: &Path, id: &str) -> Option<Installed> {
 /// Changes the component-specific part of the state, such as "first run done".
 pub fn update_meta(id: &str, change: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
     let dir = dir(id);
-    let mut state = read_state(&dir).ok_or_else(|| text::NOT_INSTALLED.to_owned())?;
+    let mut state = read_state(&dir).ok_or_else(|| t(Tr::NotInstalled).to_owned())?;
     change(&mut state.meta);
     write_state(&dir, &state).map_err(|e| e.to_string())
 }
@@ -478,7 +479,7 @@ fn install_in(
     report: &mut dyn FnMut(&Progress),
 ) -> Result<Installed, InstallError> {
     let target = root.join(&c.id);
-    let _busy = BusyGuard::take(&target).ok_or_else(|| failed(text::ALREADY_INSTALLING))?;
+    let _busy = BusyGuard::take(&target).ok_or_else(|| failed(t(Tr::AlreadyInstalling)))?;
     let staging = root.join(format!("{}.new", c.id));
     let downloads = root.join(DOWNLOADS);
     std::fs::create_dir_all(&downloads).map_err(|e| failed(text::cannot_write(&downloads, &e)))?;
@@ -738,7 +739,7 @@ fn assemble(
         let path = fetched.next().expect("one fetched file per file not kept");
         match &f.unpack {
             Unpack::Plain { path: rel } => {
-                let rel = safe_relative(rel).ok_or_else(|| failed(text::UNSAFE_PATH))?;
+                let rel = safe_relative(rel).ok_or_else(|| failed(t(Tr::UnsafePath)))?;
                 link_or_copy(path, &staging.join(&rel))?;
                 files.push(InstalledFile {
                     path: rel,
@@ -862,7 +863,7 @@ fn unzip(
     let into = if into.is_empty() {
         String::new()
     } else {
-        safe_relative(into).ok_or_else(|| failed(text::UNSAFE_PATH))?
+        safe_relative(into).ok_or_else(|| failed(t(Tr::UnsafePath)))?
     };
     let mut out_files = Vec::new();
     let mut matched = vec![false; patterns.len()];
@@ -871,12 +872,12 @@ fn unzip(
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| bad(&e))?;
         let name = entry.name().map_err(|e| bad(&e))?.into_owned();
-        let rel = select_entry(&name, from, patterns).map_err(|()| failed(text::UNSAFE_PATH))?;
+        let rel = select_entry(&name, from, patterns).map_err(|()| failed(t(Tr::UnsafePath)))?;
         let Some(rel) = rel.filter(|_| !entry.is_dir()) else {
             continue;
         };
         if entry.is_symlink() {
-            return Err(failed(text::UNSAFE_PATH));
+            return Err(failed(t(Tr::UnsafePath)));
         }
         for (m, p) in matched.iter_mut().zip(patterns) {
             *m |= glob_match(p, &rel);
@@ -1176,7 +1177,7 @@ mod tests {
         };
         let no = AtomicBool::new(false);
         let e = fx.install(&component(vec![spec]), &no).unwrap_err();
-        assert_eq!(e, InstallError::Failed(text::UNSAFE_PATH.into()));
+        assert_eq!(e, InstallError::Failed(t(Tr::UnsafePath).into()));
         assert!(!fx.root.join("test").exists());
         assert!(!fx.root.join("evil.dll").exists());
         assert!(!fx.root.parent().unwrap().join("evil.dll").exists());

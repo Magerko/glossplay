@@ -4,6 +4,7 @@ mod app;
 mod asr_setup;
 mod components;
 mod dub;
+mod i18n;
 mod jobs;
 mod paths;
 mod player;
@@ -19,6 +20,7 @@ mod ui;
 mod video;
 mod ytdlp;
 
+use crate::i18n::{Tr, t};
 use eframe::egui;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
@@ -43,6 +45,12 @@ Usage: glossplay [FILE or URL] [options]
                                     translation shown under it to FILE.tr.srt
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
+      --empty                       (with --selftest) no file: the start screen; with
+                                    --settings the top of the settings window
+      --words-tab                   show the saved words in the sidebar
+      --ui-lang auto|en|ru|uk       interface language (a self-test is in English unless
+
+                                    told otherwise)
       --setup-dialog --settings     open the speech recognition setup or the settings
       --setup-install               install speech recognition from the setup dialog (as
                                     chosen in config.toml) and transcribe the file after it
@@ -85,6 +93,7 @@ fn main() {
     let (mut translate_file, mut to_lang) = (None, None);
     let (mut install_asr, mut asr_variant, mut asr_model) = (false, None, None);
     let (mut install_tts, mut tts_variant) = (false, None);
+    let mut ui_lang: Option<String> = None;
     while let Some(arg) = args.next() {
         let mut value = || args.next().unwrap_or_default();
         match arg.as_str() {
@@ -95,6 +104,9 @@ fn main() {
             "--at" => plan.at = value().parse().ok(),
             "--subs" => plan.subs = value().split(',').map(str::to_owned).collect(),
             "--screenshot" => plan.screenshot = Some(value().into()),
+            "--empty" => plan.empty = true,
+            "--words-tab" => plan.words_tab = true,
+            "--ui-lang" => ui_lang = Some(value()),
             "--controls" => plan.show_controls = true,
             "--sidebar" => plan.sidebar = true,
             "--paused" => plan.paused = true,
@@ -154,6 +166,11 @@ fn main() {
         std::process::exit(translate_file_twice(&file, to_lang.as_deref()));
     }
 
+    if is_selftest {
+        // Checks compare texts, so a self-test speaks English unless a language is asked for.
+        let wanted = ui_lang.as_deref().unwrap_or("en");
+        i18n::set_lang(i18n::resolve(wanted, i18n::system_lang()));
+    }
     let launch = app::Launch {
         media,
         selftest: is_selftest.then_some(plan),
@@ -212,11 +229,11 @@ impl eframe::App for StartupError {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
-                ui.heading("Glossplay could not start");
+                ui.heading(t(Tr::StartupFailed));
                 ui.add_space(12.0);
                 ui.label(&self.message);
                 ui.add_space(12.0);
-                ui.label("Put the mpv library (libmpv) next to the program, or set player.mpv_path in config.toml:");
+                ui.label(t(Tr::StartupMpvHint));
                 ui.monospace(paths::config_path().to_string_lossy());
             });
         });

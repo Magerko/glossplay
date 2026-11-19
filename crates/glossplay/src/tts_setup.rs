@@ -2,6 +2,7 @@
 //! model, and how the server is started.
 
 use crate::components::{self, Component, FileSpec, Unpack};
+use crate::i18n::{Tr, t};
 use crate::setup_text as text;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -98,15 +99,15 @@ impl Engine {
 
     pub fn build_name(self) -> &'static str {
         match self {
-            Engine::Vulkan => text::TTS_BUILD_VULKAN,
-            Engine::Nvidia => text::TTS_BUILD_NVIDIA,
+            Engine::Vulkan => t(Tr::TtsBuildVulkan),
+            Engine::Nvidia => t(Tr::TtsBuildNvidia),
         }
     }
 
     pub fn choice_name(self) -> &'static str {
         match self {
-            Engine::Vulkan => text::TTS_ENGINE_VULKAN,
-            Engine::Nvidia => text::TTS_ENGINE_NVIDIA,
+            Engine::Vulkan => t(Tr::TtsEngineVulkan),
+            Engine::Nvidia => t(Tr::TtsEngineNvidia),
         }
     }
 }
@@ -136,10 +137,10 @@ pub fn component(engine: Engine) -> Component {
     let mut files = Vec::new();
     if ENGINE_AVAILABLE {
         match engine {
-            Engine::Vulkan => files.push(archive_spec(&VULKAN, text::TTS_LABEL_VULKAN)),
+            Engine::Vulkan => files.push(archive_spec(&VULKAN, t(Tr::TtsLabelVulkan))),
             Engine::Nvidia => {
-                files.push(archive_spec(&CUDA, text::TTS_LABEL_NVIDIA));
-                files.push(archive_spec(&CUDART, text::TTS_LABEL_CUDA_LIBS));
+                files.push(archive_spec(&CUDA, t(Tr::TtsLabelNvidia)));
+                files.push(archive_spec(&CUDART, t(Tr::TtsLabelCudaLibs)));
             }
         }
     }
@@ -150,7 +151,7 @@ pub fn component(engine: Engine) -> Component {
         unpack: Unpack::Plain {
             path: MODEL_PATH.into(),
         },
-        label: text::TTS_LABEL_MODEL.into(),
+        label: t(Tr::TtsLabelModel).into(),
     });
     let engine_key = if ENGINE_AVAILABLE {
         json!(engine.key())
@@ -159,14 +160,14 @@ pub fn component(engine: Engine) -> Component {
     };
     Component {
         id: ID.into(),
-        name: text::TTS_COMPONENT_NAME.into(),
+        name: t(Tr::TtsComponentName).into(),
         version: format!("{RELEASE}-{}+{MODEL_FILE}", engine.key()),
         files,
         note: [
-            text::TTS_LICENCE_NC,
-            text::TTS_LICENCE_BOSON,
-            text::TTS_NO_IMPERSONATION,
-            text::TTS_LICENCE_ENGINE,
+            t(Tr::TtsLicenceNc),
+            t(Tr::TtsLicenceBoson),
+            t(Tr::TtsNoImpersonation),
+            t(Tr::TtsLicenceEngine),
         ]
         .join(" "),
         meta: json!({ "engine": engine_key, "release": RELEASE, "warmed_up": false }),
@@ -188,7 +189,7 @@ pub struct TtsInstall {
 
 impl TtsInstall {
     pub fn status(&self) -> String {
-        let build = self.engine.map_or(text::ENGINE_OWN, Engine::build_name);
+        let build = self.engine.map_or(t(Tr::EngineOwn), Engine::build_name);
         text::tts_installed_status(build, self.size)
     }
 }
@@ -317,10 +318,10 @@ pub fn cli_install(engine: &str) -> i32 {
         text::tts_cli_plan(e.build_name(), c.download_size(), &components::dir(ID))
     );
     for line in [
-        text::TTS_LICENCE_NC,
-        text::TTS_LICENCE_BOSON,
-        text::TTS_NO_IMPERSONATION,
-        text::TTS_LICENCE_ENGINE,
+        t(Tr::TtsLicenceNc),
+        t(Tr::TtsLicenceBoson),
+        t(Tr::TtsNoImpersonation),
+        t(Tr::TtsLicenceEngine),
     ] {
         println!("licence: {line}");
     }
@@ -350,7 +351,7 @@ pub fn cli_install(engine: &str) -> i32 {
         None => {
             match result {
                 Err(e) => eprintln!("{e}"),
-                Ok(_) => eprintln!("{}", text::NOT_INSTALLED),
+                Ok(_) => eprintln!("{}", t(Tr::NotInstalled)),
             }
             1
         }

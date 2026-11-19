@@ -2,6 +2,7 @@
 //! keeps the clips on disk; a player speaks them through a second mpv without video, in step
 //! with the film. What plays when is decided by `gp_core::dub_plan`.
 
+use crate::i18n::{Tr, t};
 use crate::setup_text as text;
 use crate::tts_setup::{self, TtsInstall};
 use eframe::egui;
@@ -157,7 +158,7 @@ impl Dub {
         }
         let voice = Mpv::new(&cfg.mpv_path, &options)
             .map(Arc::new)
-            .map_err(|e| format!("{}: {e}", text::DUB_NO_AUDIO_OUT))?;
+            .map_err(|e| format!("{}: {e}", t(Tr::DubNoAudioOut)))?;
         let _ = std::fs::create_dir_all(&cfg.cache_dir);
         let _ = std::fs::create_dir_all(&cfg.work_dir);
         if let Some(d) = &cfg.save_dir {
@@ -265,9 +266,9 @@ impl Dub {
             return s.status.clone();
         }
         if s.holding {
-            return text::DUB_PREPARING.to_owned();
+            return t(Tr::DubPreparing).to_owned();
         }
-        text::DUB_ON.to_owned()
+        t(Tr::DubOn).to_owned()
     }
 
     pub fn take_alert(&self) -> Option<String> {
@@ -570,15 +571,15 @@ impl Worker {
             Source::Installed(i) => i,
         };
         let (Some(program), Some(kind)) = (&install.server, install.engine) else {
-            return Err(Failure::Engine(text::TTS_NO_ENGINE_HERE.into()));
+            return Err(Failure::Engine(t(Tr::TtsNoEngineHere).into()));
         };
         loop {
             let note = if install.warmed_up {
                 String::new()
             } else {
-                format!(" —{}", text::DUB_FIRST_START)
+                format!(" — {}", t(Tr::DubFirstStart))
             };
-            self.set_status(&format!("{}{note}", text::DUB_STARTING));
+            self.set_status(&format!("{}{note}", t(Tr::DubStarting)));
             let url = {
                 let mut slot = self.server.lock().unwrap_or_else(|e| e.into_inner());
                 // Checked under the lock: dropping the voice-over empties the slot after
@@ -619,7 +620,7 @@ impl Worker {
             }
             drop(self.server.lock().unwrap_or_else(|e| e.into_inner()).take());
             if *restarts >= MAX_RESTARTS {
-                return Err(Failure::Engine(text::DUB_ENGINE_GONE.into()));
+                return Err(Failure::Engine(t(Tr::DubEngineGone).into()));
             }
             *restarts += 1;
         }

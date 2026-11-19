@@ -2,6 +2,7 @@
 //! and the Silero voice detector, chosen to suit the graphics card of this computer.
 
 use crate::components::{self, Component, FileSpec, Unpack};
+use crate::i18n::{Tr, t};
 use crate::setup_text as text;
 use serde_json::json;
 use std::path::PathBuf;
@@ -54,8 +55,8 @@ impl Engine {
 
     pub fn build_name(self) -> &'static str {
         match self {
-            Engine::Nvidia => text::BUILD_NVIDIA,
-            Engine::Cpu => text::BUILD_CPU,
+            Engine::Nvidia => t(Tr::BuildNvidia),
+            Engine::Cpu => t(Tr::BuildCpu),
         }
     }
 }
@@ -358,8 +359,8 @@ pub fn component(v: &Variant) -> Component {
     let mut files = Vec::new();
     if ENGINE_AVAILABLE {
         let (build, label) = match v.engine {
-            Engine::Nvidia => (&CUDA_BUILD, text::ENGINE_LABEL_NVIDIA),
-            Engine::Cpu => (&CPU_BUILD, text::ENGINE_LABEL_CPU),
+            Engine::Nvidia => (&CUDA_BUILD, t(Tr::EngineLabelNvidia)),
+            Engine::Cpu => (&CPU_BUILD, t(Tr::EngineLabelCpu)),
         };
         files.push(FileSpec {
             url: format!("{RELEASE_URL}/{}", build.file),
@@ -391,7 +392,7 @@ pub fn component(v: &Variant) -> Component {
         unpack: Unpack::Plain {
             path: format!("models/{VAD_FILE}"),
         },
-        label: text::VAD_LABEL.into(),
+        label: t(Tr::VadLabel).into(),
     });
     let engine = if ENGINE_AVAILABLE {
         json!(v.engine.key())
@@ -400,10 +401,10 @@ pub fn component(v: &Variant) -> Component {
     };
     Component {
         id: ID.into(),
-        name: text::COMPONENT_NAME.into(),
+        name: t(Tr::ComponentName).into(),
         version: format!("{RELEASE}-{}+{}", v.engine.key(), v.model.id),
         files,
-        note: text::LICENCE_NOTE.into(),
+        note: t(Tr::LicenceNote).into(),
         meta: json!({
             "engine": engine,
             "model": v.model.id,
@@ -479,9 +480,9 @@ pub fn resolve_paths(
         Some(s) if !own_server => s,
         _ => gp_media::tools::locate("whisper-server", &cfg.server_path).map_err(|_| {
             if own_server || installed.is_some() {
-                text::NO_SERVER.to_owned()
+                t(Tr::NoServer).to_owned()
             } else {
-                text::NOT_SET_UP.to_owned()
+                t(Tr::NotSetUp).to_owned()
             }
         })?,
     };
@@ -491,9 +492,9 @@ pub fn resolve_paths(
     };
     if !model.is_file() {
         return Err(if cfg.model_path.is_empty() {
-            text::NOT_SET_UP.to_owned()
+            t(Tr::NotSetUp).to_owned()
         } else {
-            text::NO_MODEL.to_owned()
+            t(Tr::NoModel).to_owned()
         });
     }
     Ok((server, model))
@@ -538,7 +539,7 @@ pub fn cli_install(engine: &str, model_id: &str) -> i32 {
             if ENGINE_AVAILABLE {
                 v.engine.build_name()
             } else {
-                text::ENGINE_OWN
+                t(Tr::EngineOwn)
             },
             v.model.id,
             c.download_size(),
@@ -546,7 +547,7 @@ pub fn cli_install(engine: &str, model_id: &str) -> i32 {
         )
     );
     if !ENGINE_AVAILABLE {
-        println!("{}", text::NO_ENGINE_HERE);
+        println!("{}", t(Tr::NoEngineHere));
     }
     if let Some(m) = std::env::var_os(components::ENV_MIRROR).filter(|m| !m.is_empty()) {
         println!("mirror={}", PathBuf::from(m).display());
@@ -586,7 +587,7 @@ pub fn cli_install(engine: &str, model_id: &str) -> i32 {
         None => {
             match result {
                 Err(e) => eprintln!("{e}"),
-                Ok(_) => eprintln!("{}", text::NOT_INSTALLED),
+                Ok(_) => eprintln!("{}", t(Tr::NotInstalled)),
             }
             1
         }
@@ -846,7 +847,7 @@ mod tests {
         cfg.server_path = dir.join("missing.exe").to_string_lossy().into_owned();
         assert_eq!(
             resolve_paths(&cfg, Some(&inst)),
-            Err(text::NO_SERVER.to_owned())
+            Err(t(Tr::NoServer).to_owned())
         );
     }
 }
