@@ -255,12 +255,7 @@ impl SubTrack {
             };
             match results.and_then(|r| r.get(n)) {
                 Some(text) => {
-                    let lens: Vec<usize> = key
-                        .cues
-                        .iter()
-                        .map(|c| sentences::cue_len(&c.text))
-                        .collect();
-                    let parts = sentences::layout(text, &lens);
+                    let parts = sentences::layout(text, &self.track.cues[range.clone()]);
                     for (i, part) in range.zip(parts) {
                         self.translation[i] = Tr::Done(part);
                     }

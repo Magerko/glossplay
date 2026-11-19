@@ -16,9 +16,13 @@ pub const MAX_CHARS: usize = 350;
 /// Cues that overlap by more than this are on screen together (two speakers, a sign), not
 /// one after another, so they are never joined.
 const OVERLAP: Ms = 250;
-/// A short two-cue sentence cut anywhere but at punctuation reads worse than the whole
-/// translation shown under both cues.
-const SHORT: usize = 60;
+/// A two-cue sentence shorter than this, spoken in one breath, may show its whole translation
+/// under both cues when there is no natural place to cut it. Anything longer shown twice
+/// reads as a mistake.
+const SHORT_SOURCE: usize = 40;
+const SHORT_PAUSE: Ms = 700;
+/// How far from its proportional place a cut may wander, as a share of the translation.
+const SLACK: f64 = 0.15;
 
 const CLOSERS: &[char] = &[
     '"', '\'', '”', '’', '»', ')', ']', '」', '』', '）', '】', '〕', '〉', '》',
@@ -57,7 +61,20 @@ fn breaks(cur: &Cue, next: &Cue, count: usize, chars: usize) -> bool {
             }
         || next.start + OVERLAP < cur.end
         || new_speaker(&next.text)
+        || exclamation(&next.text)
         || (ends_sentence(&cur.text) && !continues(&cur.text, &next.text))
+}
+
+/// "Ugh!", "Really?", "Oh, John!": a short cue that is a sentence of its own even when the
+/// cue before it was cut off mid-sentence.
+fn exclamation(text: &str) -> bool {
+    let flat = flatten(text);
+    strip_closers(&flat).ends_with(['!', '?', '！', '？', '‼', '⁉'])
+        && flat.split_whitespace().count() <= 2
+        && flat
+            .chars()
+            .find(|c| c.is_alphabetic())
+            .is_some_and(char::is_uppercase)
 }
 
 /// Whether nothing that comes after this cue can join its sentence.
@@ -203,12 +220,286 @@ fn units(text: &str) -> (Vec<String>, &'static str) {
     (out, "")
 }
 
-/// Cuts the translation of a sentence into one part per source cue, in proportion to the
-/// cues' lengths, at word boundaries, preferring a boundary after punctuation. Parts joined
-/// with a space (nothing for CJK) give back the translation. With fewer words than cues the
-/// extra parts are empty.
-pub fn distribute(translation: &str, source_lens: &[usize]) -> Vec<String> {
-    let n = source_lens.len();
+/// Punctuation at the end of a word or a cue.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Mark {
+    None,
+    Dash,
+    Soft,
+    Stop,
+}
+
+fn mark(text: &str) -> Mark {
+    let end = strip_closers(text);
+    if end.ends_with(TERMINALS) {
+        Mark::Stop
+    } else if end.ends_with(SOFT) {
+        Mark::Soft
+    } else if end.ends_with(DASHES) || end.ends_with('-') {
+        Mark::Dash
+    } else {
+        Mark::None
+    }
+}
+
+fn is_dash(unit: &str) -> bool {
+    unit.starts_with(DASHES) || unit == "-" || unit == "--"
+}
+
+/// The cues of a sentence, or their translation, as units with the places to cut between them.
+struct Side {
+    units: Vec<String>,
+    /// pos[b]: where a cut before unit b falls, in characters, in the middle of the separator.
+    pos: Vec<f64>,
+    /// The unit each sentence starts with; the first is always 0.
+    starts: Vec<usize>,
+    /// Capitalised words inside a sentence. Names keep their capital in any language I
+    /// translate to with spaces, so they say which cue a piece of translation was spoken in.
+    names: Vec<usize>,
+}
+
+impl Side {
+    fn new(units: Vec<String>, seps: &[usize]) -> Side {
+        let w = units.len();
+        let mut pos = vec![0.0; w + 1];
+        let mut at = 0.0;
+        for (j, u) in units.iter().enumerate() {
+            at += u.chars().count() as f64;
+            let sep = if j + 1 < w { seps[j] as f64 } else { 0.0 };
+            pos[j + 1] = at + sep / 2.0;
+            at += sep;
+        }
+        let starts = sentence_starts(&units);
+        let names = names(&units, &starts);
+        Side {
+            units,
+            pos,
+            starts,
+            names,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.units.len()
+    }
+
+    fn total(&self) -> f64 {
+        self.pos[self.len()].max(1.0)
+    }
+
+    fn sentence_of(&self, unit: usize) -> usize {
+        self.starts.partition_point(|&s| s <= unit) - 1
+    }
+
+    fn sentence_end(&self, s: usize) -> usize {
+        self.starts.get(s + 1).copied().unwrap_or(self.len())
+    }
+}
+
+/// A full stop followed by a capital (or a script without capitals) starts a sentence;
+/// "Ugh! said the Lory" and "Угг! - сказал" go on.
+fn sentence_starts(units: &[String]) -> Vec<usize> {
+    let mut out = vec![0];
+    for j in 1..units.len() {
+        if mark(&units[j - 1]) == Mark::Stop
+            && units[j..]
+                .iter()
+                .flat_map(|u| u.chars())
+                .find(|c| c.is_alphanumeric())
+                .is_some_and(|c| !c.is_lowercase())
+        {
+            out.push(j);
+        }
+    }
+    out
+}
+
+fn names(units: &[String], starts: &[usize]) -> Vec<usize> {
+    (1..units.len())
+        .filter(|&j| {
+            let (u, prev) = (&units[j], &units[j - 1]);
+            // "I", "I'll" are not names; a capital after a colon, a quote or a dash opens
+            // quoted speech, which translations punctuate their own way.
+            starts.binary_search(&j).is_err()
+                && u.starts_with(char::is_uppercase)
+                && u.chars().take_while(|c| c.is_alphabetic()).count() >= 2
+                && !is_dash(prev)
+                && !prev.ends_with([
+                    ':', ';', '"', '\'', '«', '»', '“', '”', '—', '–', '-', '…', '.', '!', '?',
+                ])
+        })
+        .collect()
+}
+
+/// Whether a capitalised word of the translation can be the same name as one of the source:
+/// "Alice" and "Алисе", not "Normans" and "Вильгельма". Only for Latin and Cyrillic, the
+/// scripts with capitals that I can tell apart this way.
+fn same_initial(src: &str, tr: &str) -> bool {
+    let first = |w: &str| {
+        w.chars()
+            .next()
+            .map(|c| c.to_lowercase().next().unwrap_or(c))
+    };
+    let (Some(s), Some(t)) = (first(src), first(tr)) else {
+        return false;
+    };
+    if t.is_ascii() {
+        return s == t;
+    }
+    let sounds = match t {
+        'а' => "a",
+        'б' => "b",
+        'в' => "vw",
+        'г' | 'ґ' => "gh",
+        'д' => "d",
+        'е' | 'ё' | 'э' | 'є' => "eaiyj",
+        'ж' => "zjg",
+        'з' => "zs",
+        'и' | 'і' | 'ї' => "iey",
+        'й' => "yj",
+        'к' => "kcq",
+        'л' => "l",
+        'м' => "m",
+        'н' => "n",
+        'о' => "o",
+        'п' => "p",
+        'р' => "r",
+        'с' => "sc",
+        'т' => "t",
+        'у' => "uw",
+        'ф' => "fp",
+        'х' => "hkc",
+        'ц' => "ctz",
+        'ч' | 'ш' | 'щ' => "cs",
+        'ю' => "juy",
+        'я' => "jy",
+        _ => "",
+    };
+    sounds.contains(s)
+}
+
+struct Source {
+    side: Side,
+    /// The unit after the last one of each cue.
+    cue_end: Vec<usize>,
+    cue_of: Vec<usize>,
+    marks: Vec<Mark>,
+}
+
+impl Source {
+    fn new(sources: &[&str]) -> Source {
+        let (mut all, mut seps, mut cue_end, mut cue_of) = (vec![], vec![], vec![], vec![]);
+        for (k, text) in sources.iter().enumerate() {
+            let (us, sep) = units(&flatten(text));
+            for u in us {
+                all.push(u);
+                seps.push(sep.len());
+                cue_of.push(k);
+            }
+            cue_end.push(all.len());
+        }
+        Source {
+            side: Side::new(all, &seps),
+            cue_end,
+            cue_of,
+            marks: sources.iter().map(|t| mark(&flatten(t))).collect(),
+        }
+    }
+}
+
+/// Where to cut the translation (unit indices, with 0 and its length at the ends). Each cut
+/// k has a window it must fall in and a place it is drawn to:
+/// - by sentence (both sides have as many sentences): a cue boundary that ends a sentence
+///   is cut exactly where the translation of that sentence ends, and one inside a sentence
+///   is cut inside its translation, at the same share of it;
+/// - otherwise anywhere, at the cue's share of the whole.
+///
+/// By name, every name of the translation stays with the cue its source name is in.
+fn cuts(tr: &Side, src: &Source, by_sentence: bool, by_name: bool) -> Option<Vec<usize>> {
+    let (w, n) = (tr.len(), src.cue_end.len());
+    let sw = src.side.len();
+    let mut spans = Vec::with_capacity(n - 1);
+    for &e in &src.cue_end[..n - 1] {
+        let span = if !by_sentence {
+            (1, w - 1, tr.total() * src.side.pos[e] / src.side.total())
+        } else {
+            if e == 0 || e >= sw {
+                return None;
+            }
+            let s = src.side.sentence_of(e);
+            if src.side.starts[s] == e {
+                let b = tr.starts[s];
+                (b, b, tr.pos[b])
+            } else {
+                let (lo, hi) = (tr.starts[s], tr.sentence_end(s));
+                let (slo, shi) = (src.side.starts[s], src.side.sentence_end(s));
+                let r = (src.side.pos[e] - src.side.pos[slo])
+                    / (src.side.pos[shi] - src.side.pos[slo]).max(1.0);
+                (lo + 1, hi - 1, tr.pos[lo] + r * (tr.pos[hi] - tr.pos[lo]))
+            }
+        };
+        spans.push(span);
+    }
+    let anchors: Vec<(usize, usize)> = if by_name {
+        src.side
+            .names
+            .iter()
+            .zip(&tr.names)
+            .map(|(&s, &t)| (src.cue_of[s], t))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let cost = |k: usize, b: usize| -> f64 {
+        let (lo, hi, target) = spans[k];
+        if b < lo.max(1) || b > hi || anchors.iter().any(|&(c, t)| (c <= k) != (t < b)) {
+            return f64::INFINITY;
+        }
+        let off = (tr.pos[b] - target) / tr.total() / SLACK;
+        off * off - boundary_bonus(&tr.units[b - 1], &tr.units[b], src.marks[k])
+    };
+
+    // best[k][b]: cheapest way to place cuts 0..=k with cut k before unit b.
+    let cuts = n - 1;
+    let mut best = vec![vec![f64::INFINITY; w]; cuts];
+    let mut from = vec![vec![0usize; w]; cuts];
+    for (b, slot) in best[0].iter_mut().enumerate().skip(1) {
+        *slot = cost(0, b);
+    }
+    for k in 1..cuts {
+        for b in (k + 1)..w {
+            let c = cost(k, b);
+            if c.is_infinite() {
+                continue;
+            }
+            for p in k..b {
+                let total = best[k - 1][p] + c;
+                if total < best[k][b] {
+                    best[k][b] = total;
+                    from[k][b] = p;
+                }
+            }
+        }
+    }
+    let mut b = (cuts..w).min_by(|&x, &y| best[cuts - 1][x].total_cmp(&best[cuts - 1][y]))?;
+    if best[cuts - 1][b].is_infinite() {
+        return None;
+    }
+    let mut bounds = vec![0usize; n + 1];
+    bounds[n] = w;
+    for k in (0..cuts).rev() {
+        bounds[k + 1] = b;
+        b = from[k][b];
+    }
+    Some(bounds)
+}
+
+/// Cuts the translation of a sentence group into one part per source cue, at word
+/// boundaries, preferring a boundary after punctuation like the one the cue ends with.
+/// Parts joined with a space (nothing for CJK) give back the translation. With fewer words
+/// than cues the extra parts are empty.
+pub fn distribute(translation: &str, sources: &[&str]) -> Vec<String> {
+    let n = sources.len();
     let (units, sep) = units(translation);
     let w = units.len();
     if n == 0 {
@@ -228,91 +519,67 @@ pub fn distribute(translation: &str, source_lens: &[usize]) -> Vec<String> {
         return out;
     }
 
-    // pos[b]: where a cut before unit b falls, in characters, in the middle of the separator.
-    let half = sep.len() as f64 / 2.0;
-    let mut pos = vec![0.0f64; w + 1];
-    for (j, u) in units.iter().enumerate() {
-        pos[j + 1] = pos[j] + (u.chars().count() + sep.len()) as f64;
-    }
-    let total = (pos[w] - 2.0 * half).max(1.0);
-    pos.iter_mut().for_each(|p| *p -= half);
-    let src_total: usize = source_lens.iter().sum();
-    let share = |k: usize| -> f64 {
-        if src_total == 0 {
-            k as f64 / n as f64
-        } else {
-            source_lens[..k].iter().sum::<usize>() as f64 / src_total as f64
-        }
-    };
-    let cost = |k: usize, b: usize| -> f64 {
-        let off = (pos[b] - total * share(k + 1)) / total / 0.15;
-        off * off - boundary_bonus(&units[b - 1], &units[b])
-    };
-
-    // best[k][b]: cheapest way to place cuts 0..=k with cut k before unit b.
-    let cuts = n - 1;
-    let mut best = vec![vec![f64::INFINITY; w]; cuts];
-    let mut from = vec![vec![0usize; w]; cuts];
-    for (b, slot) in best[0].iter_mut().enumerate().skip(1) {
-        *slot = cost(0, b);
-    }
-    for k in 1..cuts {
-        for b in (k + 1)..w {
-            for p in k..b {
-                let c = best[k - 1][p] + cost(k, b);
-                if c < best[k][b] {
-                    best[k][b] = c;
-                    from[k][b] = p;
-                }
-            }
-        }
-    }
-    let mut bounds = vec![0usize; n + 1];
-    bounds[n] = w;
-    let mut b = (cuts..w)
-        .min_by(|&x, &y| best[cuts - 1][x].total_cmp(&best[cuts - 1][y]))
-        .unwrap_or(w - 1);
-    for k in (0..cuts).rev() {
-        bounds[k + 1] = b;
-        b = from[k][b];
-    }
+    let tr = Side::new(units, &vec![sep.len(); w]);
+    let src = Source::new(sources);
+    let by_sentence = tr.starts.len() > 1 && tr.starts.len() == src.side.starts.len();
+    let by_name = !tr.names.is_empty()
+        && tr.names.len() == src.side.names.len()
+        && src
+            .side
+            .names
+            .iter()
+            .zip(&tr.names)
+            .all(|(&s, &t)| same_initial(&src.side.units[s], &tr.units[t]));
+    let bounds = [
+        (by_sentence, by_name),
+        (by_sentence, false),
+        (false, by_name),
+        (false, false),
+    ]
+    .into_iter()
+    .find_map(|(s, nm)| cuts(&tr, &src, s, nm))
+    .unwrap_or_else(|| (0..=n).map(|k| k * w / n).collect());
     (0..n)
-        .map(|k| units[bounds[k]..bounds[k + 1]].join(sep))
+        .map(|k| tr.units[bounds[k]..bounds[k + 1]].join(sep))
         .collect()
 }
 
-fn boundary_bonus(before: &str, after: &str) -> f64 {
-    let end = strip_closers(before);
-    let mut bonus = 0.0;
-    if end.ends_with(TERMINALS) {
-        bonus += 1.5;
-    } else if end.ends_with(SOFT) {
-        bonus += 1.0;
-    } else if end.ends_with(DASHES) || end.ends_with("--") {
-        bonus += 0.8;
-    } else if before.chars().count() <= 2 && before.chars().all(char::is_alphabetic) {
+/// How good a cut between two translation units is, given how the source cue ends.
+fn boundary_bonus(before: &str, after: &str, source: Mark) -> f64 {
+    let here = mark(before);
+    let mut bonus = match (here, source) {
+        (Mark::Stop, Mark::Stop) => 2.0,
+        // "Umbria, | Ugh!": an exclamation inside the translation is not where a cue that
+        // ends with a comma ends.
+        (Mark::Stop, Mark::Soft) => 0.8,
+        (Mark::Stop, _) => 1.5,
+        (Mark::Soft, Mark::Soft) => 1.5,
+        (Mark::Soft, _) => 1.0,
+        (Mark::Dash, _) => 0.8,
         // "не |", "to |", "a |": a part should not end on a word that leans on the next one.
-        bonus -= 0.4;
-    }
-    if after.starts_with(DASHES) && !end.ends_with(DASHES) {
+        (Mark::None, _)
+            if before.chars().count() <= 2 && before.chars().all(char::is_alphabetic) =>
+        {
+            -0.4
+        }
+        (Mark::None, _) => 0.0,
+    };
+    if is_dash(after) && here != Mark::Dash {
         bonus += 0.3;
     }
     bonus
 }
 
 fn ends_at_punctuation(part: &str, next: &str) -> bool {
-    let end = strip_closers(part);
-    end.ends_with(TERMINALS)
-        || end.ends_with(SOFT)
-        || end.ends_with(DASHES)
-        || next.starts_with(DASHES)
+    mark(part) != Mark::None || next.split_whitespace().next().is_some_and(is_dash)
 }
 
-/// What is shown under each cue of a sentence. Usually the cut translation; the whole
-/// translation under every cue when cutting it would leave a cue without text, or when a
-/// short two-cue sentence has no natural place to cut.
-pub fn layout(translation: &str, source_lens: &[usize]) -> Vec<String> {
-    let parts = distribute(translation, source_lens);
+/// What is shown under each cue of a sentence group. Usually the cut translation; the whole
+/// translation under every cue when there are fewer words than cues, or when a short
+/// two-cue sentence said in one breath has no natural place to cut.
+pub fn layout(translation: &str, cues: &[Cue]) -> Vec<String> {
+    let sources: Vec<&str> = cues.iter().map(|c| c.text.as_str()).collect();
+    let parts = distribute(translation, &sources);
     if parts.len() < 2 {
         return parts;
     }
@@ -323,7 +590,8 @@ pub fn layout(translation: &str, source_lens: &[usize]) -> Vec<String> {
     if parts.iter().any(String::is_empty) {
         return whole();
     }
-    let short = parts.iter().map(|p| p.chars().count()).sum::<usize>() <= SHORT;
+    let short = sources.iter().map(|t| cue_len(t)).sum::<usize>() < SHORT_SOURCE
+        && cues[1].start - cues[0].end <= SHORT_PAUSE;
     if parts.len() == 2 && short && !ends_at_punctuation(&parts[0], &parts[1]) {
         return whole();
     }
@@ -494,8 +762,11 @@ mod tests {
         }
     }
 
+    /// Sources of the given lengths without punctuation, so only the lengths decide.
     fn parts(t: &str, lens: &[usize]) -> Vec<String> {
-        let p = distribute(t, lens);
+        let sources: Vec<String> = lens.iter().map(|&n| "x".repeat(n)).collect();
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let p = distribute(t, &sources);
         assert_eq!(p.len(), lens.len());
         p
     }
@@ -520,7 +791,7 @@ mod tests {
     #[test]
     fn distribution_prefers_a_cut_after_punctuation() {
         let t = "Я сказала ему, что он этого не делал, — сказала она.";
-        let p = parts(t, &[15, 16, 9]);
+        let p = distribute(t, &["I told him that", "he didn't do it,", "she said."]);
         assert_eq!(
             p,
             ["Я сказала ему,", "что он этого не делал,", "— сказала она."]
@@ -557,16 +828,201 @@ mod tests {
         assert!(p.iter().all(|s| !s.contains("iP") || s.contains("iPhone")));
     }
 
+    /// Cues with the given texts, `gap` apart.
+    fn spoken(texts: &[&str], gap: Ms) -> Vec<Cue> {
+        let mut at = 0;
+        texts
+            .iter()
+            .map(|t| {
+                let c = cue(at, at + 1_500, t);
+                at += 1_500 + gap;
+                c
+            })
+            .collect()
+    }
+
     #[test]
     fn layout_cuts_long_sentences_and_keeps_short_ones_whole() {
-        let lens = [15, 16, 9];
+        let cues = spoken(&["I told him that", "he didn't do it,", "she said."], 100);
         let t = "Я сказала ему, что он этого не делал, — сказала она.";
-        assert_eq!(layout(t, &lens), distribute(t, &lens));
+        let texts: Vec<&str> = cues.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(layout(t, &cues), distribute(t, &texts));
         // Nowhere natural to cut a short two-cue sentence: both cues show all of it.
-        assert_eq!(layout("Куда ты идёшь?", &[13, 6]), ["Куда ты идёшь?"; 2]);
-        assert_eq!(layout("Думаю, ты прав.", &[7, 12]), ["Думаю,", "ты прав."]);
+        let cues = spoken(&["Where are you", "going?"], 100);
+        assert_eq!(layout("Куда ты идёшь?", &cues), ["Куда ты идёшь?"; 2]);
+        let cues = spoken(&["I think", "you're right."], 100);
+        assert_eq!(layout("Думаю, ты прав.", &cues), ["Думаю,", "ты прав."]);
         // Too few words for the cues: nobody is left without text.
-        assert_eq!(layout("Ну да", &[3, 3, 3]), ["Ну да"; 3]);
-        assert_eq!(layout("Привет", &[5]), ["Привет"]);
+        let cues = spoken(&["Oh", "yes", "sure"], 100);
+        assert_eq!(layout("Ну да", &cues), ["Ну да"; 3]);
+        assert_eq!(layout("Привет", &spoken(&["Hello"], 0)), ["Привет"]);
+    }
+
+    #[test]
+    fn a_sentence_is_shown_twice_only_when_short_and_said_at_once() {
+        let t = "А потом он пошёл домой.";
+        let joined = spoken(&["And then he", "went home."], 500);
+        assert_eq!(layout(t, &joined), [t; 2]);
+        let paused = spoken(&["And then he", "went home."], 900);
+        let p = layout(t, &paused);
+        assert_ne!(p[0], p[1]);
+        assert_eq!(p.join(" "), t);
+        let long = spoken(&["And then he turned around", "and went back home."], 0);
+        assert_ne!(layout(t, &long)[0], layout(t, &long)[1]);
+    }
+
+    /// Checks what every layout must give: each cue gets something, and the parts are the
+    /// translation, nothing repeated, nothing lost.
+    fn cut(cues: &[Cue], t: &str) -> Vec<String> {
+        let p = layout(t, cues);
+        assert!(p.iter().all(|s| !s.is_empty()), "{p:?}");
+        assert_eq!(p.join(" "), t);
+        p
+    }
+
+    // The cases below are from speech recognition of "Alice in Wonderland", chapter 3, with
+    // Google's translation, as the tester saw them.
+
+    #[test]
+    fn a_long_sentence_ending_in_a_short_cue_is_cut() {
+        let cues = [
+            cue(
+                97_350,
+                104_400,
+                "And this Alice would not allow without knowing how old it",
+            ),
+            cue(104_400, 105_150, "was."),
+        ];
+        let p = cut(
+            &cues,
+            "И этого Алиса не позволила бы, не зная, сколько ей лет.",
+        );
+        assert_eq!(p[1], "ей лет.");
+
+        let cues = [
+            cue(
+                133_220,
+                139_060,
+                "They all sat down at once, in a large ring, with the mouse",
+            ),
+            cue(139_060, 140_560, "in the middle."),
+        ];
+        let p = cut(
+            &cues,
+            "Все сели сразу, большим кольцом, с мышкой посередине.",
+        );
+        assert_eq!(p[1], "посередине.");
+    }
+
+    #[test]
+    fn an_exclamation_stays_with_the_cue_it_is_said_in() {
+        let cues = [
+            cue(192_880, 196_630, "the earls of Mercia and North Umbria,"),
+            cue(
+                197_720,
+                203_580,
+                "Ugg! said the lorry with a shiver. I beg your pardon, said",
+            ),
+            cue(203_580, 207_360, "the mouse, crowning, but very politely."),
+            cue(
+                208_280,
+                215_590,
+                "Did you speak? Not I, said the lorry hastily. I thought you",
+            ),
+        ];
+        assert_eq!(group(&cues), [0..3, 3..4]);
+        let t = "графы Мерсии и Северной Умбрии, Угг! - сказал грузовик с дрожью. - Прошу \
+                 прощения, - коронованно сказала мышка, но очень вежливо.";
+        assert_eq!(
+            cut(&cues[..3], t),
+            [
+                "графы Мерсии и Северной Умбрии,",
+                "Угг! - сказал грузовик с дрожью. - Прошу прощения,",
+                "- коронованно сказала мышка, но очень вежливо.",
+            ]
+        );
+
+        // As separate cues the exclamation is a sentence of its own.
+        let cues = vec![
+            cue(0, 3_000, "the earls of Mercia and Northumbria,"),
+            cue(3_100, 3_600, "Ugh!"),
+            cue(3_700, 5_000, "said the Lory with a shiver."),
+            cue(5_100, 6_000, "and then"),
+            cue(6_100, 7_000, "Really, John?"),
+        ];
+        assert_eq!(group(&cues), [0..1, 1..2, 2..3, 3..4, 4..5]);
+    }
+
+    #[test]
+    fn a_name_stays_with_the_cue_it_is_said_in() {
+        let cues = [
+            cue(
+                62_520,
+                68_810,
+                "They had a consultation about this, and after a few minutes",
+            ),
+            cue(68_810, 72_010, "it seemed quite natural to Alice"),
+            cue(
+                72_010,
+                77_860,
+                "to find herself talking familiarly with them as if she had",
+            ),
+            cue(77_860, 80_330, "known them all her life."),
+        ];
+        assert_eq!(group(&cues), one(0..4));
+        let t = "Они посовещались по этому поводу, и через несколько минут Алисе показалось \
+                 вполне естественным обнаружить, что она разговаривает с ними так \
+                 фамильярно, как если бы она знала их всю свою жизнь.";
+        let p = cut(&cues, t);
+        assert_eq!(
+            p[..2],
+            [
+                "Они посовещались по этому поводу, и через несколько минут",
+                "Алисе показалось вполне естественным обнаружить,",
+            ]
+        );
+
+        // One capital on each side, but not the same name: no anchor.
+        let cues = [
+            cue(
+                291_470,
+                297_070,
+                "William's conduct was at first moderate, but the insolence",
+            ),
+            cue(297_070, 298_330, "of his Normans,"),
+        ];
+        let p = cut(
+            &cues,
+            "Поведение Вильгельма поначалу было умеренным, но наглость его норманнов",
+        );
+        assert!(p[0].starts_with("Поведение Вильгельма поначалу"), "{p:?}");
+        assert!(!p[1].contains("Вильгельма"), "{p:?}");
+    }
+
+    #[test]
+    fn sentences_of_a_group_go_to_their_own_cues() {
+        let cues = [
+            cue(
+                117_530,
+                122_260,
+                "At last the mouse, who seemed to be a person of authority",
+            ),
+            cue(122_230, 124_320, "among them, called out,"),
+            cue(
+                124_320,
+                131_260,
+                "Sit down, all of you, and listen to me. I'll soon make you",
+            ),
+            cue(131_260, 132_640, "dry enough."),
+        ];
+        assert_eq!(group(&cues), one(0..4));
+        let t = "Наконец мышь, которая, по-видимому, пользовалась среди них авторитетом, \
+                 крикнула: «Садитесь все и слушайте меня». Скоро я тебя высушу достаточно.";
+        let p = cut(&cues, t);
+        assert!(p[2].starts_with("«Садитесь"), "{p:?}");
+        assert!(
+            p[3].ends_with("достаточно.") && !p[3].contains("Скоро я"),
+            "{p:?}"
+        );
     }
 }
