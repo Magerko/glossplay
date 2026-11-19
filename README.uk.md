@@ -25,7 +25,7 @@
   та транскрипт із пошуком поруч із відео.
 - **Відкриває майже все.** За відтворення відповідає [mpv](https://mpv.io), тому працює все,
   що читає FFmpeg: MKV, MP4, WebM, AVI, MOV, TS; H.264, HEVC, AV1, VP9 та решта, з апаратним
-  декодуванням. Вставте посилання на відео з інтернету — і воно відтворюється: Glossplay сам завантажує yt-dlp і оновлює його.
+  декодуванням. Вставте посилання на відео з інтернету — і воно відтворюється: Glossplay сам завантажує yt-dlp і оновлює його. Під час першого запуску програвач завантажує yt-dlp (близько 23 МБ) у свою теку даних.
 
 ![Транскрипт, створений розпізнаванням мовлення, з перекладом](docs/screenshots/transcript.png)
 
@@ -86,13 +86,19 @@ brew install mpv ffmpeg
 | OpenAI-сумісний | залежно від сервера | OpenAI або локальна модель через Ollama / LM Studio (`http://localhost:11434/v1`). Пояснює слова в контексті. |
 | Claude | ключ Anthropic API | Перекладає з урахуванням сусідніх реплік. Пояснює слова в контексті. |
 
+Приватність: під час машинного перекладу текст субтитрів надсилається обраному сервісу. Локальна модель
+(Ollama / LM Studio) нічого не надсилає в інтернет, а розпізнавання мовлення завжди відбувається локально.
+
 Ключ зберігається в `config.toml` у профілі користувача. Змінні середовища `GLOSSPLAY_DEEPL_API_KEY`, `GLOSSPLAY_OPENAI_API_KEY` і
 `GLOSSPLAY_ANTHROPIC_API_KEY` (кожна лише для свого провайдера) мають пріоритет над ним.
 
 **Розпізнавання мовлення.** Glossplay керує [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
 
-1. Завантажте збірку whisper.cpp, у якій є `whisper-server` (для NVIDIA у Windows —
-   `whisper-bin-win-cuda-12.4.0-x64.zip` із релізів whisper.cpp).
+1. Завантажте збірку whisper.cpp, у якій є `whisper-server`. У найсвіжішого релізу часто немає
+   файлів, тому відкрийте [сторінку всіх релізів](https://github.com/ggml-org/whisper.cpp/releases)
+   і візьміть останній реліз, у якого є файли (Assets); його тег виглядає як `b5454`.
+   Для відеокарти NVIDIA у Windows — `whisper-bin-win-cuda-12.4.0-x64.zip`, для інших відеокарт
+   і для процесора — `whisper-bin-x64.zip`. Без відеокарти розпізнавання йде приблизно зі швидкістю відео.
 2. Завантажте модель, наприклад
    [`ggml-large-v3-turbo.bin`](https://huggingface.co/ggerganov/whisper.cpp/tree/main).
    Покладіть у ту саму теку [`ggml-silero-v5.1.2.bin`](https://huggingface.co/ggml-org/whisper-vad/tree/main) —

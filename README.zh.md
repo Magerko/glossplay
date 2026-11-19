@@ -20,7 +20,7 @@
 - **练习工具。** 每句台词后自动暂停、重复当前台词、逐句跳转，视频旁边还有可搜索的文字稿。
 - **几乎什么都能播。** 播放由 [mpv](https://mpv.io) 负责，FFmpeg 能打开的格式都支持：
   MKV、MP4、WebM、AVI、MOV、TS；H.264、HEVC、AV1、VP9 等，并支持硬件解码。
-  粘贴在线视频的链接即可播放：Glossplay 会自动下载 yt-dlp 并保持其更新。
+  粘贴在线视频的链接即可播放：Glossplay 会自动下载 yt-dlp 并保持其更新。首次启动时，播放器会把 yt-dlp（约 23 MB）下载到自己的数据文件夹。
 
 ![由语音识别生成并附带翻译的文字稿](docs/screenshots/transcript.png)
 
@@ -80,12 +80,17 @@ brew install mpv ffmpeg
 | OpenAI 兼容接口 | 视服务而定 | OpenAI，或通过 Ollama / LM Studio 运行的本地模型（`http://localhost:11434/v1`）。可结合上下文解释单词。 |
 | Claude | Anthropic API 密钥 | 翻译时会参考前后台词。可结合上下文解释单词。 |
 
+隐私：使用机器翻译时，字幕文本会发送给你选择的翻译服务；本地模型（Ollama / LM Studio）不会向互联网发送任何内容，语音识别则始终在本地进行。
+
 密钥保存在用户目录下的 `config.toml` 中。环境变量 `GLOSSPLAY_DEEPL_API_KEY`、`GLOSSPLAY_OPENAI_API_KEY`、`GLOSSPLAY_ANTHROPIC_API_KEY`（各自仅对相应的服务商生效）的优先级更高。
 
 **语音识别。** Glossplay 调用 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)：
 
-1. 下载包含 `whisper-server` 的 whisper.cpp 构建（Windows 上的 NVIDIA 显卡请使用 whisper.cpp
-   发布页中的 `whisper-bin-win-cuda-12.4.0-x64.zip`）。
+1. 下载包含 `whisper-server` 的 whisper.cpp 构建。最新的发布版本常常没有文件，
+   请打开[所有发布版本的列表](https://github.com/ggml-org/whisper.cpp/releases)，
+   选择最新的、带有文件（Assets）的版本，它的标签形如 `b5454`。
+   Windows 上的 NVIDIA 显卡请下载 `whisper-bin-win-cuda-12.4.0-x64.zip`；其他显卡或仅用处理器时，
+   下载 `whisper-bin-x64.zip`。没有显卡时，识别速度大约与视频播放速度相当。
 2. 下载模型，例如
    [`ggml-large-v3-turbo.bin`](https://huggingface.co/ggerganov/whisper.cpp/tree/main)。
    把 [`ggml-silero-v5.1.2.bin`](https://huggingface.co/ggml-org/whisper-vad/tree/main)

@@ -25,7 +25,7 @@ and keeps the words you want to remember.
   searchable transcript next to the video.
 - **Plays nearly everything.** Playback is done by [mpv](https://mpv.io), so anything FFmpeg
   can open works: MKV, MP4, WebM, AVI, MOV, TS; H.264, HEVC, AV1, VP9 and the rest, with
-  hardware decoding. Paste a link to an online video and it plays: Glossplay downloads yt-dlp by itself and keeps it up to date.
+  hardware decoding. Paste a link to an online video and it plays: Glossplay downloads yt-dlp by itself and keeps it up to date. On the first launch it fetches yt-dlp (about 23 MB) into its own data folder.
 
 ![Transcript made by speech recognition, with translations](docs/screenshots/transcript.png)
 
@@ -85,13 +85,19 @@ subtitles: translation works out of the box through Google Translate.
 | OpenAI-compatible | depends | OpenAI, or a local model through Ollama / LM Studio (`http://localhost:11434/v1`). Explains words in context. |
 | Claude | Anthropic API key | Translates with the surrounding dialogue in mind. Explains words in context. |
 
+Privacy: with machine translation the subtitle text is sent to the service you chose. A local
+model (Ollama / LM Studio) sends nothing to the internet, and speech recognition is always local.
+
 The key is stored in `config.toml` in your user profile. The environment variable
 `GLOSSPLAY_DEEPL_API_KEY`, `GLOSSPLAY_OPENAI_API_KEY` or `GLOSSPLAY_ANTHROPIC_API_KEY` (for the matching provider only) overrides it.
 
 **Speech recognition.** Glossplay drives [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
 
-1. Download a build of whisper.cpp that contains `whisper-server` (for NVIDIA on Windows:
-   `whisper-bin-win-cuda-12.4.0-x64.zip` from the whisper.cpp releases).
+1. Download a build of whisper.cpp that contains `whisper-server`. The newest release often has
+   no files, so open the [list of all releases](https://github.com/ggml-org/whisper.cpp/releases)
+   and take the latest one that has files (Assets); its tag looks like `b5454`. For an NVIDIA
+   card on Windows get `whisper-bin-win-cuda-12.4.0-x64.zip`; for other video cards or the
+   CPU, `whisper-bin-x64.zip`. Without a video card, recognition runs at about the speed of the video.
 2. Download a model, for example
    [`ggml-large-v3-turbo.bin`](https://huggingface.co/ggerganov/whisper.cpp/tree/main).
    Put [`ggml-silero-v5.1.2.bin`](https://huggingface.co/ggml-org/whisper-vad/tree/main) in the
