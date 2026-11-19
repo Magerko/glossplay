@@ -59,6 +59,7 @@ impl eframe::App for App {
             .show(ui, |ui| self.stage(ui));
         self.word_popup(&ctx);
         self.settings_window(&ctx);
+        self.asr_setup_dialog(&ctx);
         self.toast_ui(&ctx);
         crate::selftest::step(self, &ctx);
     }
@@ -310,6 +311,12 @@ impl App {
         ui.add_space(8.0);
         if ui.link("Settings").clicked() {
             self.settings_draft = Some(self.cfg.clone());
+        }
+        if self.asr_setup.installed.is_none() {
+            ui.add_space(4.0);
+            if ui.link(crate::setup_text::SET_UP_LINK).clicked() {
+                self.open_asr_setup(false);
+            }
         }
     }
 
@@ -811,7 +818,7 @@ impl App {
             if asr_running {
                 self.stop_asr()
             } else {
-                self.start_asr()
+                self.request_asr()
             }
         }
         if add_file {
@@ -1202,6 +1209,7 @@ impl App {
             return;
         };
         let (mut open, mut save, mut cancel) = (true, false, false);
+        let (asr_setup, mut asr_action) = (&self.asr_setup, None);
         egui::Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
@@ -1318,6 +1326,9 @@ impl App {
                                 }
                             });
                         section(ui, "Speech recognition");
+                        asr_action =
+                            crate::setup_ui::settings_section(ui, &mut draft, asr_setup);
+                        ui.label(RichText::new(crate::setup_text::ADVANCED).color(MUTED));
                         egui::Grid::new("asr")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
@@ -1391,6 +1402,10 @@ impl App {
                     }
                 });
             });
+        self.asr_setup.scroll_to = false;
+        if let Some(action) = asr_action {
+            self.asr_settings_action(action, &draft);
+        }
         if save {
             self.apply_settings(draft);
         } else if open && !cancel {

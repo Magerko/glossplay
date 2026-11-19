@@ -1,11 +1,15 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod asr_setup;
+mod components;
 mod jobs;
 mod paths;
 mod player;
 mod selftest;
 mod session;
+mod setup_text;
+mod setup_ui;
 mod shell;
 mod theme;
 mod ui;
@@ -36,6 +40,14 @@ Usage: glossplay [FILE or URL] [options]
                                     translation shown under it to FILE.tr.srt
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
+      --setup-dialog --settings     open the speech recognition setup or the settings
+      --setup-install               install speech recognition from the setup dialog (as
+                                    chosen in config.toml) and transcribe the file after it
+  --install-asr                     download and install speech recognition, then exit
+      --asr-variant auto|nvidia|cpu   engine build (default auto: NVIDIA if present)
+      --asr-model NAME              large-v3-turbo, large-v3-turbo-q5_0, small or base
+                                    (default: the one that suits the engine)
+  --asr-status                      show what is installed and what this computer would get
   --shell-register                  add Glossplay to Explorer's \"Open with\" and context menu
                                     (current user only; it does not become the default program)
   --shell-unregister                remove those entries
@@ -61,6 +73,7 @@ fn main() {
     let mut is_selftest = false;
     let mut size = [1280.0, 720.0];
     let (mut translate_file, mut to_lang) = (None, None);
+    let (mut install_asr, mut asr_variant, mut asr_model) = (false, None, None);
     while let Some(arg) = args.next() {
         let mut value = || args.next().unwrap_or_default();
         match arg.as_str() {
@@ -91,6 +104,13 @@ fn main() {
                     }
                 };
             }
+            "--setup-dialog" => plan.setup_dialog = true,
+            "--settings" => plan.settings = true,
+            "--setup-install" => plan.setup_install = true,
+            "--install-asr" => install_asr = true,
+            "--asr-variant" => asr_variant = Some(value()),
+            "--asr-model" => asr_model = Some(value()),
+            "--asr-status" => std::process::exit(asr_setup::cli_status()),
             "--translate-file" => translate_file = Some(value()),
             "--to" => to_lang = Some(value()),
             "--size" => {
@@ -101,6 +121,12 @@ fn main() {
             }
             _ => media = Some(arg),
         }
+    }
+    if install_asr {
+        std::process::exit(asr_setup::cli_install(
+            asr_variant.as_deref().unwrap_or("auto"),
+            asr_model.as_deref().unwrap_or(""),
+        ));
     }
     if let Some(file) = translate_file {
         std::process::exit(translate_file_twice(&file, to_lang.as_deref()));

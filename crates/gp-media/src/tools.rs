@@ -161,6 +161,16 @@ impl WhisperProcess {
         model: &Path,
         vad_model: Option<&Path>,
     ) -> Result<WhisperProcess, MediaError> {
+        Self::spawn_with_threads(server, model, vad_model, None)
+    }
+
+    /// `threads` replaces whisper-server's own default of at most four CPU threads.
+    pub fn spawn_with_threads(
+        server: &Path,
+        model: &Path,
+        vad_model: Option<&Path>,
+        threads: Option<usize>,
+    ) -> Result<WhisperProcess, MediaError> {
         let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
         let mut cmd = quiet(Command::new(server));
         cmd.arg("-m").arg(model).args([
@@ -173,6 +183,9 @@ impl WhisperProcess {
         ]);
         if let Some(vad) = vad_model {
             cmd.arg("--vad").arg("-vm").arg(vad);
+        }
+        if let Some(t) = threads {
+            cmd.arg("-t").arg(t.to_string());
         }
         // The CUDA and ggml DLLs sit next to the server binary.
         if let Some(dir) = server.parent() {

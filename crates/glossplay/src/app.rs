@@ -94,6 +94,7 @@ pub struct App {
     pub hwdec_current: String,
     pub audio_tracks: Vec<TrackInfo>,
     pub selftest: Option<selftest::State>,
+    pub asr_setup: crate::setup_ui::AsrSetup,
 }
 
 impl App {
@@ -180,6 +181,7 @@ impl App {
             hwdec_current: String::new(),
             audio_tracks: Vec::new(),
             selftest: launch.selftest.map(selftest::State::new),
+            asr_setup: crate::setup_ui::AsrSetup::new(),
             cfg,
         };
         if let Some(e) = config_error {
@@ -437,17 +439,7 @@ impl App {
     }
 
     pub fn asr_configured(&self) -> Result<(PathBuf, PathBuf), String> {
-        let server = tools::locate("whisper-server", &self.cfg.asr.server_path).map_err(|_| {
-            "Set the path to whisper-server in Settings → Speech recognition".to_owned()
-        })?;
-        let model = PathBuf::from(&self.cfg.asr.model_path);
-        if !model.is_file() {
-            return Err(
-                "Set the path to a Whisper model (ggml-*.bin) in Settings → Speech recognition"
-                    .into(),
-            );
-        }
-        Ok((server, model))
+        crate::asr_setup::resolve_paths(&self.cfg.asr, crate::asr_setup::installed().as_ref())
     }
 
     pub fn start_asr(&mut self) {
@@ -526,6 +518,14 @@ impl App {
             .iter()
             .find(|t| t.selected)
             .and_then(|t| t.ff_index);
+        let installed =
+            crate::asr_setup::installed().filter(|i| i.server.as_ref() == Some(&server));
+        let engine = installed.as_ref().and_then(|i| i.engine);
+        let threads = (engine == Some(crate::asr_setup::Engine::Cpu))
+            .then(|| crate::asr_setup::cpu_threads(crate::asr_setup::physical_cores()));
+        let first_run_note = installed
+            .filter(|i| i.engine == Some(crate::asr_setup::Engine::Nvidia) && !i.warmed_up)
+            .map(|_| crate::setup_text::FIRST_RUN);
         s.asr_running = true;
         s.asr = Some(self.jobs.start_asr(AsrParams {
             generation: s.generation,
@@ -538,6 +538,8 @@ impl App {
             server,
             model,
             vad_model,
+            threads,
+            first_run_note,
             done,
             heard,
         }));
@@ -691,6 +693,7 @@ impl App {
                     }
                     Err(e) => self.toast(format!("Anki: {e}")),
                 },
+                Msg::Component { id, event } => self.on_component_event(&id, event),
                 _ => {}
             }
         }

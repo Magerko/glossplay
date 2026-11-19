@@ -133,6 +133,10 @@ pub struct Asr {
     pub server_path: String,
     pub model_path: String,
     pub chunk_sec: u32,
+    /// What the install button sets up: "auto", "nvidia" or "cpu".
+    pub install_engine: String,
+    /// Whisper model for the install button; empty picks the one that suits the engine.
+    pub install_model: String,
 }
 
 impl Default for Asr {
@@ -143,6 +147,8 @@ impl Default for Asr {
             server_path: String::new(),
             model_path: String::new(),
             chunk_sec: 30,
+            install_engine: "auto".into(),
+            install_model: String::new(),
         }
     }
 }

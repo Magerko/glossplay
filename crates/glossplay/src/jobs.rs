@@ -57,6 +57,10 @@ pub enum Msg {
         vocab_id: i64,
         result: Result<i64, String>,
     },
+    Component {
+        id: String,
+        event: crate::components::Event,
+    },
 }
 
 pub struct TranslateJob {
@@ -148,6 +152,10 @@ pub struct AsrParams {
     pub server: PathBuf,
     pub model: PathBuf,
     pub vad_model: Option<PathBuf>,
+    /// CPU threads for whisper-server; `None` keeps its default.
+    pub threads: Option<usize>,
+    /// Added to the progress text until the first window is done.
+    pub first_run_note: Option<&'static str>,
     /// Windows already transcribed in an earlier run.
     pub done: Vec<bool>,
     pub heard: asr_plan::Transcript,
@@ -234,6 +242,19 @@ impl Jobs {
         std::thread::spawn(move || {
             let _ = tx.send(work());
             ctx.request_repaint();
+        });
+    }
+
+    /// Like `spawn`, for work that reports progress on the way through `send`.
+    pub fn spawn_reporting(&self, work: impl FnOnce(&dyn Fn(Msg)) -> Msg + Send + 'static) {
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let send = |msg: Msg| {
+                let _ = tx.send(msg);
+                ctx.request_repaint();
+            };
+            let last = work(&send);
+            send(last);
         });
     }
 
@@ -442,8 +463,13 @@ impl Asr<'_> {
             }
             if slot.as_mut().is_none_or(|w| w.has_exited()) {
                 (self.status)("Starting speech recognition…".into(), true);
-                let process = WhisperProcess::spawn(&p.server, &p.model, p.vad_model.as_deref())
-                    .map_err(|e| format!("cannot start whisper-server: {e}"))?;
+                let process = WhisperProcess::spawn_with_threads(
+                    &p.server,
+                    &p.model,
+                    p.vad_model.as_deref(),
+                    p.threads,
+                )
+                .map_err(|e| format!("cannot start whisper-server: {e}"))?;
                 *slot = Some(process);
             }
             slot.as_ref().unwrap().url.clone()
@@ -530,7 +556,11 @@ fn run_asr(
         }
         let finished = p.done.iter().filter(|d| **d).count();
         (asr.status)(
-            format!("Transcribing {}%", finished * 100 / total.max(1)),
+            format!(
+                "Transcribing {}%{}",
+                finished * 100 / total.max(1),
+                p.first_run_note.unwrap_or("")
+            ),
             true,
         );
         let (start, len) = asr_plan::audio_range(k);
@@ -573,6 +603,9 @@ fn run_asr(
             language = out.language;
             asr_plan::words(start, &out.segments)
         };
+        if p.first_run_note.take().is_some() {
+            crate::asr_setup::mark_warmed_up();
+        }
         p.done[k] = true;
         p.heard.insert(k, words);
         let _ = tx.send(Msg::AsrCues {

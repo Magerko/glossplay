@@ -28,6 +28,9 @@ pub struct Plan {
     pub anki: bool,
     pub strict: bool,
     pub export_srt: Option<PathBuf>,
+    pub setup_dialog: bool,
+    pub settings: bool,
+    pub setup_install: bool,
 }
 
 enum Phase {
@@ -93,6 +96,10 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
         return;
     };
     ctx.request_repaint();
+    if st.plan.settings {
+        // The section is below the fold of the settings window; it has to be in the screenshot.
+        app.asr_setup.scroll_to = true;
+    }
     advance(&mut st, app, ctx);
     app.selftest = Some(st);
 }
@@ -123,6 +130,26 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                     app.player.seek((at * 1000.0) as Ms);
                 }
                 app.sidebar_open = st.plan.sidebar;
+                if st.plan.setup_dialog {
+                    app.open_asr_setup(false);
+                }
+                if st.plan.settings {
+                    app.settings_draft = Some(app.cfg.clone());
+                }
+                if st.plan.setup_install {
+                    // The Install button of the dialog opened from the Subtitles menu: when the
+                    // install is done, recognition of this video starts by itself.
+                    app.snap = app.player.snapshot();
+                    app.open_asr_setup(true);
+                    let hw = crate::asr_setup::hardware_now();
+                    let cfg = &app.cfg.asr;
+                    let v = crate::asr_setup::resolve(
+                        &cfg.install_engine,
+                        &cfg.install_model,
+                        hw.gpu.as_ref(),
+                    );
+                    app.install_asr(v);
+                }
                 if st.plan.asr {
                     app.snap = app.player.snapshot();
                     app.start_asr();
@@ -452,7 +479,18 @@ fn report(st: &mut State, app: &App) {
                 .push("no secondary subtitle line was shown".into());
         }
     }
-    if st.plan.asr {
+    if st.plan.setup_install {
+        let installed = app.asr_setup.installed.as_ref();
+        println!(
+            "asr_installed={}",
+            installed.map_or("no".to_owned(), |i| i.status())
+        );
+        if installed.is_none() {
+            st.failures
+                .push("speech recognition did not get installed".into());
+        }
+    }
+    if st.plan.asr || st.plan.setup_install {
         let ms = |d: Option<Duration>| d.map_or("-".to_owned(), |d| d.as_millis().to_string());
         let cues = s
             .tracks
