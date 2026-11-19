@@ -123,13 +123,17 @@ fn secs(ms: Ms) -> String {
     format!("{:.3}", ms.max(0) as f64 / 1000.0)
 }
 
-/// Every whisper-server started and not yet dropped, so the program can stop them on its way
-/// out even when the code that owns them never gets to run its destructors.
-static LIVE: Mutex<Vec<Weak<Mutex<Child>>>> = Mutex::new(Vec::new());
+/// Every helper server started and not yet dropped, with the name it was started under, so
+/// the program can stop them on its way out even when the code that owns them never gets to
+/// run its destructors.
+static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
+type Live = (&'static str, Weak<Mutex<Child>>);
 /// The program to run as `<exe> --watchdog <parent pid> <child pid>`; none until set.
 static WATCHDOG: OnceLock<PathBuf> = OnceLock::new();
 
-/// Starts a watchdog next to every whisper-server from now on (Windows only): a second copy
+pub const WHISPER: &str = "whisper-server";
+
+/// Starts a watchdog next to every helper server from now on (Windows only): a second copy
 /// of `exe`, run with `--watchdog`, that kills the server once this process is gone. The job
 /// object does the same, but cannot be relied on when this process already sits in a job
 /// of someone else's.
@@ -137,58 +141,65 @@ pub fn enable_watchdog(exe: PathBuf) {
     let _ = WATCHDOG.set(exe);
 }
 
-/// Kills every whisper-server still running.
+/// Kills every helper server still running.
 pub fn stop_all() {
-    let live = std::mem::take(&mut *LIVE.lock().unwrap_or_else(|e| e.into_inner()));
-    for child in live.iter().filter_map(Weak::upgrade) {
+    stop_where(|_| true);
+}
+
+/// Kills the running servers started under `name`, such as `WHISPER`.
+pub fn stop_named(name: &str) {
+    stop_where(|n| n == name);
+}
+
+fn stop_where(matches: impl Fn(&str) -> bool) {
+    let stopping: Vec<Arc<Mutex<Child>>> = {
+        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let (hit, keep) = std::mem::take(&mut *live)
+            .into_iter()
+            .partition(|(n, _)| matches(n));
+        *live = keep;
+        hit.into_iter().filter_map(|(_, w)| w.upgrade()).collect()
+    };
+    for child in stopping {
         let mut child = child.lock().unwrap_or_else(|e| e.into_inner());
         let _ = child.kill();
         let _ = child.wait();
     }
 }
 
-/// A running whisper-server; the process is killed when this is dropped.
-pub struct WhisperProcess {
-    child: Arc<Mutex<Child>>,
-    pub url: String,
+/// A port on 127.0.0.1 that nothing listens on right now.
+pub fn free_port() -> Result<u16, MediaError> {
+    Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
-impl WhisperProcess {
-    /// `vad_model` enables the built-in voice activity detector, which stops Whisper from
-    /// inventing text over silence and music.
-    pub fn spawn(
-        server: &Path,
-        model: &Path,
-        vad_model: Option<&Path>,
-    ) -> Result<WhisperProcess, MediaError> {
-        Self::spawn_with_threads(server, model, vad_model, None)
-    }
+/// How to start a helper server that answers HTTP on 127.0.0.1.
+pub struct ServerCommand<'a> {
+    pub name: &'static str,
+    pub program: &'a Path,
+    pub args: Vec<std::ffi::OsString>,
+    pub envs: Vec<(&'static str, std::ffi::OsString)>,
+    pub port: u16,
+}
 
-    /// `threads` replaces whisper-server's own default of at most four CPU threads.
-    pub fn spawn_with_threads(
-        server: &Path,
-        model: &Path,
-        vad_model: Option<&Path>,
-        threads: Option<usize>,
-    ) -> Result<WhisperProcess, MediaError> {
-        let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-        let mut cmd = quiet(Command::new(server));
-        cmd.arg("-m").arg(model).args([
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-            "-l",
-            "auto",
-        ]);
-        if let Some(vad) = vad_model {
-            cmd.arg("--vad").arg("-vm").arg(vad);
-        }
-        if let Some(t) = threads {
-            cmd.arg("-t").arg(t.to_string());
+/// A running helper server (whisper-server, the voice engine): no console window, killed
+/// with this process however it ends, and killed when this is dropped.
+pub struct ServerProcess {
+    child: Arc<Mutex<Child>>,
+    pub url: String,
+    pub name: &'static str,
+}
+
+pub type WhisperProcess = ServerProcess;
+
+impl ServerProcess {
+    pub fn start(c: ServerCommand) -> Result<ServerProcess, MediaError> {
+        let mut cmd = quiet(Command::new(c.program));
+        cmd.args(&c.args);
+        for (k, v) in &c.envs {
+            cmd.env(k, v);
         }
         // The CUDA and ggml DLLs sit next to the server binary.
-        if let Some(dir) = server.parent() {
+        if let Some(dir) = c.program.parent() {
             cmd.current_dir(dir);
         }
         let child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
@@ -208,11 +219,48 @@ impl WhisperProcess {
         // exits, and the short-lived ASR thread would take down a server meant to be reused.
         let child = Arc::new(Mutex::new(child));
         let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-        live.retain(|w| w.strong_count() > 0);
-        live.push(Arc::downgrade(&child));
-        Ok(WhisperProcess {
+        live.retain(|(_, w)| w.strong_count() > 0);
+        live.push((c.name, Arc::downgrade(&child)));
+        Ok(ServerProcess {
             child,
-            url: format!("http://127.0.0.1:{port}"),
+            url: format!("http://127.0.0.1:{}", c.port),
+            name: c.name,
+        })
+    }
+
+    /// `vad_model` enables the built-in voice activity detector, which stops Whisper from
+    /// inventing text over silence and music. `threads` replaces whisper-server's own
+    /// default of at most four CPU threads.
+    pub fn spawn_with_threads(
+        server: &Path,
+        model: &Path,
+        vad_model: Option<&Path>,
+        threads: Option<usize>,
+    ) -> Result<ServerProcess, MediaError> {
+        let port = free_port()?;
+        let mut args: Vec<std::ffi::OsString> = vec!["-m".into(), model.into()];
+        for a in [
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+            "-l",
+            "auto",
+        ] {
+            args.push(a.into());
+        }
+        if let Some(vad) = vad_model {
+            args.extend(["--vad".into(), "-vm".into(), vad.into()]);
+        }
+        if let Some(t) = threads {
+            args.extend(["-t".into(), t.to_string().into()]);
+        }
+        Self::start(ServerCommand {
+            name: WHISPER,
+            program: server,
+            args,
+            envs: Vec::new(),
+            port,
         })
     }
 
@@ -220,9 +268,13 @@ impl WhisperProcess {
         let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
         !matches!(child.try_wait(), Ok(None))
     }
+
+    pub fn pid(&self) -> u32 {
+        self.child.lock().unwrap_or_else(|e| e.into_inner()).id()
+    }
 }
 
-impl Drop for WhisperProcess {
+impl Drop for ServerProcess {
     fn drop(&mut self) {
         let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
         let _ = child.kill();
