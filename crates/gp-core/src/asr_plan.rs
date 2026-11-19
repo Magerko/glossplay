@@ -14,13 +14,15 @@ pub const POST_ROLL: Ms = 8_000;
 
 /// Cached transcripts are keyed by this as well as by the engine, so cues saved by a build
 /// that cut windows another way are never mixed with words.
-pub const CACHE_FORMAT: &str = "words1";
+pub const CACHE_FORMAT: &str = "words2";
 
 /// A longer silence between two words always starts a new cue.
 const MAX_GAP: Ms = 1_500;
 /// A cue longer than this is cut in two at its best place.
 const LONG_CHARS: usize = 100;
 const LONG_MS: Ms = 10_000;
+/// A segment this much longer than its words spans a silence the detector cut out.
+const STRETCHED: Ms = 1_000;
 
 pub fn window_count(duration: Ms) -> usize {
     (duration.max(0) as usize).div_ceil(WINDOW as usize)
@@ -92,12 +94,12 @@ impl Word {
 /// The words of one window's answer, in media time. Whisper cuts segments and even words
 /// into pieces ("pol" / "itely."), so pieces are glued back into whole words first.
 pub fn words(audio_start: Ms, segments: &[Segment]) -> Vec<Word> {
+    let heard: Vec<Option<(Ms, Ms)>> = segments.iter().map(heard).collect();
     let mut out: Vec<Word> = Vec::new();
-    for seg in segments {
-        let pieces = if seg.pieces.iter().any(|p| !p.text.trim().is_empty()) {
-            fit(seg)
-        } else {
-            spread(seg)
+    for (i, seg) in segments.iter().enumerate() {
+        let pieces = match heard[i] {
+            Some(span) => fit(seg, span, place(seg, &heard, i)),
+            None => spread(seg),
         };
         let mut open = true;
         for p in pieces {
@@ -133,18 +135,65 @@ pub fn words(audio_start: Ms, segments: &[Segment]) -> Vec<Word> {
     out
 }
 
+/// The time the words of a segment take on the timeline Whisper heard, if it reported them.
+fn heard(seg: &Segment) -> Option<(Ms, Ms)> {
+    if !seg.pieces.iter().any(|p| !p.text.trim().is_empty()) {
+        return None;
+    }
+    let from = seg.pieces.iter().map(|p| p.start).min()?;
+    let to = seg.pieces.iter().map(|p| p.end).max()?;
+    Some((from, to))
+}
+
+/// Where the words of a segment go inside its time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Place {
+    Spread,
+    AtStart,
+    AtEnd,
+}
+
+/// whisper.cpp glues the speech it detected together with 0.2 s between the pieces and maps
+/// that bit back onto the whole silence, so a segment much longer than its words has a silence
+/// cut out of it, and spreading the words over the segment puts them where nobody speaks
+/// (Sintel: "Just quest." stretched over 19.8-38 s of music, said at 37.3-38 s). Word times
+/// are too rough to find the cut inside a segment, so the words stay together at one end.
+/// There is no cut before the first piece of speech or after the last, which settles the
+/// first and the last segment; between them the cut is on the side with the longer pause.
+fn place(seg: &Segment, heard: &[Option<(Ms, Ms)>], i: usize) -> Place {
+    let Some((from, to)) = heard[i] else {
+        return Place::Spread;
+    };
+    // Normal speech loses its short pauses too, but never as much time as it has words.
+    if (seg.end - seg.start) - (to - from) <= STRETCHED.max(to - from) {
+        return Place::Spread;
+    }
+    if i == 0 {
+        return Place::AtStart;
+    }
+    if i + 1 == heard.len() {
+        return Place::AtEnd;
+    }
+    let before = heard[i - 1].map_or(0, |(_, end)| from - end);
+    let after = heard[i + 1].map_or(0, |(start, _)| start - to);
+    // On a tie I keep the words early: late ones could cross into the next window's time
+    // and be dropped there although it never heard them.
+    if before > after {
+        Place::AtEnd
+    } else {
+        Place::AtStart
+    }
+}
+
 /// The pieces of a segment moved into its time. With voice activity detection on,
 /// whisper-server puts segments back on the audio's timeline but leaves word times on the
 /// timeline with the silences cut out, seconds earlier by the end of a window.
-fn fit(seg: &Segment) -> Vec<Piece> {
-    let from = seg.pieces.iter().map(|p| p.start).min().unwrap_or(0);
-    let to = seg.pieces.iter().map(|p| p.end).max().unwrap_or(from);
-    let map = |t: Ms| {
-        if to > from {
-            seg.start + (t - from) * (seg.end - seg.start) / (to - from)
-        } else {
-            seg.start + t - from
-        }
+fn fit(seg: &Segment, (from, to): (Ms, Ms), place: Place) -> Vec<Piece> {
+    let map = |t: Ms| match place {
+        Place::AtStart => seg.start + t - from,
+        Place::AtEnd => seg.end - (to - t),
+        Place::Spread if to > from => seg.start + (t - from) * (seg.end - seg.start) / (to - from),
+        Place::Spread => seg.start + t - from,
     };
     seg.pieces
         .iter()
@@ -622,6 +671,152 @@ mod tests {
             got.ends_with("hastily. I thought you did, said the mouse."),
             "{got}"
         );
+    }
+
+    /// An answer as whisper-server gives it: segments on the audio's timeline, word pieces on
+    /// the timeline with the detected silences cut out.
+    type Said<'a> = &'a [(Ms, Ms, &'a str)];
+
+    fn answer(segs: &[(Ms, Ms, Said)]) -> Vec<Segment> {
+        segs.iter()
+            .map(|(start, end, pieces)| Segment {
+                start: *start,
+                end: *end,
+                text: pieces.iter().map(|p| p.2).collect(),
+                pieces: pieces.iter().map(|&(s, e, t)| piece(s, e, t)).collect(),
+            })
+            .collect()
+    }
+
+    fn spans(w: &[Word]) -> Vec<(&str, Ms, Ms)> {
+        w.iter()
+            .map(|w| (w.text.as_str(), w.start, w.end))
+            .collect()
+    }
+
+    #[test]
+    fn segments_over_cut_out_music_keep_their_words_together() {
+        // The Sintel trailer, window 0 (audio 0-38 s); the detector found speech at
+        // 12.16-14.43, 18.75-19.81 and 37.28-37.98 s. The first segment runs on over the music
+        // after it, the last one starts in the music before it.
+        let w0 = words(
+            0,
+            &answer(&[
+                (
+                    12_160,
+                    17_450,
+                    &[
+                        (30, 1_000, " What"),
+                        (1_000, 2_250, " brings"),
+                        (2_250, 2_370, "?"),
+                    ],
+                ),
+                (
+                    17_450,
+                    19_810,
+                    &[(2_470, 3_150, " Searching"), (3_150, 3_580, " someone.")],
+                ),
+                (
+                    19_810,
+                    37_970,
+                    &[
+                        (3_610, 3_950, " Just"),
+                        (3_950, 4_420, " quest"),
+                        (4_420, 4_420, "."),
+                    ],
+                ),
+            ]),
+        );
+        assert_eq!(
+            spans(&w0),
+            [
+                ("What", 12_160, 13_130),
+                ("brings?", 13_130, 14_380),
+                ("Searching", 18_700, 19_380),
+                ("someone.", 19_380, 19_810),
+                ("Just", 37_160, 37_500),
+                ("quest.", 37_500, 37_970),
+            ]
+        );
+
+        // Window 1 (audio 27-68 s) heard that line whole, so window 0's guess at the very end
+        // of its audio gives way to it and nothing is shown over the music. Its own first
+        // segment also runs on over a pause, and its squeezed "hunter" stays with the rest.
+        let w1 = words(
+            27_000,
+            &answer(&[
+                (
+                    10_080,
+                    14_960,
+                    &[
+                        (0, 570, " dangerous"),
+                        (570, 900, " quest"),
+                        (1_760, 1_780, " lone"),
+                        (1_890, 1_900, " hunter"),
+                        (1_900, 1_900, "."),
+                    ],
+                ),
+                (
+                    14_960,
+                    16_730,
+                    &[(1_900, 3_000, " I've"), (3_000, 3_680, " remember.")],
+                ),
+            ]),
+        );
+        let mut t = Transcript::default();
+        t.insert(0, w0.clone());
+        t.insert(1, w1);
+        let cues = t.cues();
+        assert_eq!(
+            texts(&cues),
+            [
+                "What brings?",
+                "Searching someone.",
+                "dangerous quest lone hunter.",
+                "I've remember."
+            ]
+        );
+        assert_eq!((cues[2].start, cues[2].end), (37_080, 38_980));
+
+        // Until window 1 is done, window 0 shows nothing over the music either.
+        let mut alone = Transcript::default();
+        alone.insert(0, w0);
+        assert_eq!(texts(&alone.cues()), ["What brings?", "Searching someone."]);
+    }
+
+    #[test]
+    fn a_stretched_segment_in_the_middle_hangs_on_the_side_of_its_pause() {
+        let segs = |before: Ms, after: Ms| {
+            answer(&[
+                (1_000, 2_000, &[(0, 1_000, " One.")]),
+                (
+                    2_000,
+                    20_000,
+                    &[
+                        (1_000 + before, 1_500 + before, " Two"),
+                        (1_500 + before, 2_000 + before, " three."),
+                    ],
+                ),
+                (
+                    20_000,
+                    21_000,
+                    &[(2_000 + before + after, 3_000 + before + after, " Four.")],
+                ),
+            ])
+        };
+        let mid = |w: Vec<Word>| (w[1].start, w[2].end);
+        assert_eq!(mid(words(0, &segs(300, 0))), (19_000, 20_000));
+        assert_eq!(mid(words(0, &segs(0, 300))), (2_000, 3_000));
+        // Nothing to go by: early, where no window border can take the words away.
+        assert_eq!(mid(words(0, &segs(0, 0))), (2_000, 3_000));
+        let lone = answer(&[(
+            2_000,
+            20_000,
+            &[(500, 900, " Just"), (900, 1_300, " quest.")],
+        )]);
+        let cues = build(&words(0, &lone));
+        assert_eq!(texts(&cues), ["Just quest."]);
+        assert_eq!((cues[0].start, cues[0].end), (2_000, 2_800));
     }
 
     #[test]
