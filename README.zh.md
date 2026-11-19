@@ -12,7 +12,7 @@
 - **双语字幕。** 上面是原文，下面是译文。如果文件里有你的母语字幕轨，就直接使用；如果没有，
   播放器会在播放时提前翻译原文，台词说出来的时候译文已经准备好了。
 - **语音生成字幕。** 完全没有字幕？Whisper 会在你的电脑上本地识别语音。在较新的 NVIDIA 显卡上，
-  一小时的视频大约一分钟就能处理完，而且总是优先处理你正在看的位置。
+  一小时的视频大约两分钟就能处理完，而且总是优先处理你正在看的位置。
 - **点击单词。** 播放会暂停并显示翻译；如果你使用大语言模型做翻译，还会解释这个词
   *在这句话里* 的意思。日语和中文会被正确地分词。
 - **自己的生词本。** 单词会连同所在句子和视频中的时间点一起保存。一键发送到 Anki，
@@ -20,7 +20,7 @@
 - **练习工具。** 每句台词后自动暂停、重复当前台词、逐句跳转，视频旁边还有可搜索的文字稿。
 - **几乎什么都能播。** 播放由 [mpv](https://mpv.io) 负责，FFmpeg 能打开的格式都支持：
   MKV、MP4、WebM、AVI、MOV、TS；H.264、HEVC、AV1、VP9 等，并支持硬件解码。
-  在线视频通过 yt-dlp 播放。
+  粘贴在线视频的链接即可播放：LinguaPlay 会自动下载 yt-dlp 并保持其更新。
 
 ![由语音识别生成并附带翻译的文字稿](docs/screenshots/transcript.png)
 
@@ -52,8 +52,6 @@
 2. 安装 FFmpeg（用于读取字幕轨和音频）：
    `winget install Gyan.FFmpeg`
 3. 运行 `linguaplay.exe`，把视频拖进窗口。
-
-可选：安装 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 以播放在线视频（`winget install yt-dlp`）。
 
 ### Linux 和 macOS
 
@@ -121,7 +119,7 @@ brew install mpv ffmpeg
 
 ## 从源码构建
 
-需要 [Rust](https://rustup.rs) 1.88 或更高版本，以及一个 C 编译器。
+需要 [Rust](https://rustup.rs) 1.95 或更高版本，以及一个 C 编译器。
 
 ```sh
 git clone https://github.com/Magerko/linguaplay
@@ -157,8 +155,7 @@ linguaplay --selftest video.mkv --subs en,zh --at 30
 | `linguaplay` | 应用本体：基于 [egui](https://github.com/emilk/egui) 的界面，与 mpv 共用同一个 OpenGL 上下文。 |
 
 mpv 在显卡上把每一帧渲染到纹理，egui 再把字幕画在上面，所以每个单词都是真正的界面元素，
-可以悬停和点击，而且没有任何一帧需要经过 CPU 复制。网络和磁盘操作都在后台线程中进行，
-界面线程从不等待。
+可以悬停和点击，而且没有任何一帧需要经过 CPU 复制。网络请求、ffmpeg 和语音识别都在后台线程中运行，因此播放不会因它们工作而卡住。
 
 ## 致谢与许可
 

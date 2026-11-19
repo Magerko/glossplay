@@ -14,7 +14,7 @@ and keeps the words you want to remember.
   your language, LinguaPlay uses it; if not, it translates the original as you watch, a little
   ahead of playback so the translation is already there when the line is spoken.
 - **Subtitles from speech.** No subtitles at all? Whisper transcribes the audio locally. On a
-  recent NVIDIA card an hour of video takes about a minute, and the part you are watching is
+  recent NVIDIA card an hour of video takes a couple of minutes, and the part you are watching is
   always done first.
 - **Click a word.** Playback pauses and you get the translation, plus an explanation of the
   word *in this sentence* if you use an LLM for translation. Japanese and Chinese are split
@@ -25,7 +25,7 @@ and keeps the words you want to remember.
   searchable transcript next to the video.
 - **Plays nearly everything.** Playback is done by [mpv](https://mpv.io), so anything FFmpeg
   can open works: MKV, MP4, WebM, AVI, MOV, TS; H.264, HEVC, AV1, VP9 and the rest, with
-  hardware decoding. Online video works through yt-dlp.
+  hardware decoding. Paste a link to an online video and it plays: LinguaPlay downloads yt-dlp by itself and keeps it up to date.
 
 ![Transcript made by speech recognition, with translations](docs/screenshots/transcript.png)
 
@@ -57,8 +57,6 @@ Known limits of this version:
 2. Install FFmpeg — it is used to read subtitle tracks and audio:
    `winget install Gyan.FFmpeg`
 3. Run `linguaplay.exe`, drop a video on the window.
-
-Optional: [yt-dlp](https://github.com/yt-dlp/yt-dlp) for online video (`winget install yt-dlp`).
 
 ### Linux and macOS
 
@@ -127,7 +125,7 @@ automatically. You can also drop a subtitle file on the window.
 
 ## Build from source
 
-You need [Rust](https://rustup.rs) 1.88 or newer and a C compiler.
+You need [Rust](https://rustup.rs) 1.95 or newer and a C compiler.
 
 ```sh
 git clone https://github.com/Magerko/linguaplay
@@ -165,7 +163,7 @@ Rust throughout, in five crates:
 
 mpv renders each frame into a texture on the GPU and egui draws the subtitles on top, so every
 word is a real interface element you can hover and click, and no frame is copied through the
-CPU. Network and disk work happens on background threads; the interface thread never waits.
+CPU. Network requests, ffmpeg and speech recognition run on background threads, so playback never stalls while they work.
 
 ## Credits and licence
 
