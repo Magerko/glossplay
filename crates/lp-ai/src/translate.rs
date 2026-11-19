@@ -22,13 +22,55 @@ pub trait Translator: Send + Sync {
     }
 }
 
-pub const ENV_API_KEY: &str = "LINGUAPLAY_API_KEY";
+/// The environment variable that may override the configured key of `provider`.
+pub fn env_key_name(provider: &str) -> Option<&'static str> {
+    match provider {
+        "deepl" => Some("LINGUAPLAY_DEEPL_API_KEY"),
+        "openai" => Some("LINGUAPLAY_OPENAI_API_KEY"),
+        "anthropic" => Some("LINGUAPLAY_ANTHROPIC_API_KEY"),
+        _ => None,
+    }
+}
+
+fn is_openai_host(base_url: &str) -> bool {
+    let Some(rest) = base_url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Anything before the last '@' is userinfo, not the host.
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    let host = host_port.split(':').next().unwrap_or("");
+    host.eq_ignore_ascii_case("api.openai.com")
+}
+
+/// Picks the API key. An environment key is meant for the vendor's own service, so a custom
+/// OpenAI-compatible server only ever gets the key written in the config for it.
+pub fn resolve_key(
+    provider: &str,
+    base_url: &str,
+    config_key: &str,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> String {
+    let env_allowed = provider != "openai" || base_url.is_empty() || is_openai_host(base_url);
+    if env_allowed
+        && let Some(k) = env_key_name(provider)
+            .and_then(env)
+            .filter(|k| !k.is_empty())
+    {
+        return k;
+    }
+    config_key.to_owned()
+}
 
 pub fn build_translator(cfg: &TranslationConfig) -> Result<Box<dyn Translator>, AiError> {
-    let key = std::env::var(ENV_API_KEY)
-        .ok()
-        .filter(|k| !k.is_empty())
-        .unwrap_or(cfg.api_key.clone());
+    build_translator_with_env(cfg, &|name| std::env::var(name).ok())
+}
+
+fn build_translator_with_env(
+    cfg: &TranslationConfig,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<Box<dyn Translator>, AiError> {
+    let key = resolve_key(&cfg.provider, &cfg.base_url, &cfg.api_key, env);
     let need_key = |provider: &str| {
         if key.is_empty() {
             Err(AiError::MissingKey {
@@ -629,15 +671,69 @@ mod tests {
 
         let mut no_key = cfg("anthropic", "");
         no_key.api_key = String::new();
-        if std::env::var(ENV_API_KEY).is_err() {
-            assert!(matches!(
-                build_translator(&no_key),
-                Err(AiError::MissingKey { .. })
-            ));
-        }
+        assert!(matches!(
+            build_translator_with_env(&no_key, &|_| None),
+            Err(AiError::MissingKey { .. })
+        ));
         assert!(matches!(
             t.explain("w", "s", "ru"),
             Err(AiError::Unsupported)
         ));
+    }
+
+    fn env_with(name: &str, value: &str) -> impl Fn(&str) -> Option<String> {
+        let (name, value) = (name.to_owned(), value.to_owned());
+        move |n| (n == name).then(|| value.clone())
+    }
+
+    #[test]
+    fn env_key_is_per_provider() {
+        let env = env_with("LINGUAPLAY_ANTHROPIC_API_KEY", "anthropic-secret");
+        assert_eq!(
+            resolve_key("anthropic", "", "cfg", &env),
+            "anthropic-secret"
+        );
+        assert_eq!(resolve_key("openai", "", "cfg", &env), "cfg");
+        assert_eq!(resolve_key("deepl", "", "cfg", &env), "cfg");
+        assert_eq!(resolve_key("google", "", "", &env), "");
+    }
+
+    #[test]
+    fn env_key_for_openai_only_goes_to_openai() {
+        let env = env_with("LINGUAPLAY_OPENAI_API_KEY", "env-key");
+        let key = |url: &str| resolve_key("openai", url, "cfg", &env);
+        assert_eq!(key(""), "env-key");
+        assert_eq!(key("https://api.openai.com/v1"), "env-key");
+        assert_eq!(key("https://API.OpenAI.com:443/v1"), "env-key");
+        assert_eq!(key("http://localhost:11434/v1"), "cfg");
+        assert_eq!(key("http://api.openai.com/v1"), "cfg");
+        assert_eq!(key("https://api.openai.com.example/v1"), "cfg");
+        assert_eq!(key("https://api.openai.com.evil.example/v1"), "cfg");
+    }
+
+    #[test]
+    fn foreign_env_key_is_not_sent_to_custom_openai_server() {
+        let reply = json!({ "choices": [{ "message": { "content": "[\"A\"]" } }] }).to_string();
+        let srv = TestServer::start(vec![(200, reply)]);
+        let mut c = cfg("openai", &srv.url);
+        c.api_key = String::new();
+        let env = env_with("LINGUAPLAY_ANTHROPIC_API_KEY", "anthropic-secret");
+        let t = build_translator_with_env(&c, &env).unwrap();
+        let input = lines(&["a"]);
+        t.translate(&req(&input)).unwrap();
+        let got = srv.received.lock().unwrap();
+        assert!(!got[0].headers.contains("anthropic-secret"));
+    }
+
+    #[test]
+    fn anthropic_uses_its_env_key() {
+        let reply = json!({ "content": [{ "type": "text", "text": "[\"A\"]" }] }).to_string();
+        let srv = TestServer::start(vec![(200, reply)]);
+        let env = env_with("LINGUAPLAY_ANTHROPIC_API_KEY", "anthropic-secret");
+        let t = build_translator_with_env(&cfg("anthropic", &srv.url), &env).unwrap();
+        let input = lines(&["a"]);
+        t.translate(&req(&input)).unwrap();
+        let got = srv.received.lock().unwrap();
+        assert!(got[0].headers.contains("x-api-key: anthropic-secret"));
     }
 }

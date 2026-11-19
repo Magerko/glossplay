@@ -84,8 +84,8 @@ brew install mpv ffmpeg
 | OpenAI-совместимый | по ситуации | OpenAI или локальная модель через Ollama / LM Studio (`http://localhost:11434/v1`). Объясняет слова в контексте. |
 | Claude | ключ Anthropic API | Переводит с учётом соседних реплик. Объясняет слова в контексте. |
 
-Ключ хранится в `config.toml` в профиле пользователя. Переменная окружения `LINGUAPLAY_API_KEY`
-имеет приоритет над ним.
+Ключ хранится в `config.toml` в профиле пользователя. Переменные окружения `LINGUAPLAY_DEEPL_API_KEY`, `LINGUAPLAY_OPENAI_API_KEY` и
+`LINGUAPLAY_ANTHROPIC_API_KEY` (каждая только для своего провайдера) имеют приоритет над ним.
 
 **Распознавание речи.** LinguaPlay управляет [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
 

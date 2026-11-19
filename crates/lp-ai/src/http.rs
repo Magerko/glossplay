@@ -1,5 +1,7 @@
 use crate::AiError;
 use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -11,10 +13,15 @@ fn agent() -> &'static ureq::Agent {
         ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(120)))
             .http_status_as_error(false)
+            // API calls carry keys in custom headers (x-api-key, DeepL-Auth-Key) that ureq would
+            // forward to another host on a redirect; none of these APIs redirect.
+            .max_redirects(0)
             .build()
             .into()
     })
 }
+
+const MAX_DOWNLOAD_REDIRECTS: u32 = 5;
 
 fn finish(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
@@ -72,6 +79,11 @@ fn parse(body: &str) -> Result<Value, AiError> {
 pub fn get_bytes(url: &str) -> Result<Vec<u8>, AiError> {
     let mut resp = agent()
         .get(url)
+        .config()
+        .max_redirects(MAX_DOWNLOAD_REDIRECTS)
+        // An https URL must not be bounced to plain http; an explicit http URL stays allowed.
+        .https_only(url.starts_with("https://"))
+        .build()
         .call()
         .map_err(|e| AiError::Network(e.to_string()))?;
     let status = resp.status().as_u16();
@@ -119,4 +131,39 @@ pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
         status,
         body: String::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testserver::TestServer;
+
+    #[test]
+    fn api_posts_do_not_follow_redirects() {
+        let srv = TestServer::start_with_headers(
+            vec![(302, "{}".into())],
+            "Location: /elsewhere\r\n".into(),
+        );
+        let e = post_json(&srv.url, &[("x-api-key", "secret")], &json!({})).unwrap_err();
+        assert!(matches!(e, AiError::Http { status: 302, .. }), "{e:?}");
+        assert_eq!(srv.count(), 1);
+    }
+
+    #[test]
+    fn downloads_follow_redirects() {
+        let srv = TestServer::start_with_headers(
+            vec![(302, "".into()), (200, "data".into())],
+            "Location: /next\r\n".into(),
+        );
+        assert_eq!(get_bytes(&srv.url).unwrap(), b"data");
+        assert_eq!(srv.count(), 2);
+    }
+
+    #[test]
+    fn downloads_stop_after_five_redirects() {
+        let srv =
+            TestServer::start_with_headers(vec![(302, "".into())], "Location: /again\r\n".into());
+        assert!(matches!(get_bytes(&srv.url), Err(AiError::Network(_))));
+        assert_eq!(srv.count(), 6);
+    }
 }

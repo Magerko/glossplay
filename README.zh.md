@@ -78,7 +78,7 @@ brew install mpv ffmpeg
 | OpenAI 兼容接口 | 视服务而定 | OpenAI，或通过 Ollama / LM Studio 运行的本地模型（`http://localhost:11434/v1`）。可结合上下文解释单词。 |
 | Claude | Anthropic API 密钥 | 翻译时会参考前后台词。可结合上下文解释单词。 |
 
-密钥保存在用户目录下的 `config.toml` 中。环境变量 `LINGUAPLAY_API_KEY` 的优先级更高。
+密钥保存在用户目录下的 `config.toml` 中。环境变量 `LINGUAPLAY_DEEPL_API_KEY`、`LINGUAPLAY_OPENAI_API_KEY`、`LINGUAPLAY_ANTHROPIC_API_KEY`（各自仅对相应的服务商生效）的优先级更高。
 
 **语音识别。** LinguaPlay 调用 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)：
 

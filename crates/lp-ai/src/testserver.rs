@@ -19,16 +19,23 @@ pub struct TestServer {
 impl TestServer {
     /// Replies cycle through `responses`; each is (status, body).
     pub fn start(responses: Vec<(u16, String)>) -> TestServer {
+        Self::start_with_headers(responses, String::new())
+    }
+
+    /// `extra_headers` is raw header text, each line ending in CRLF, added to every reply.
+    pub fn start_with_headers(responses: Vec<(u16, String)>, extra_headers: String) -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let received = Arc::new(Mutex::new(Vec::new()));
         let log = received.clone();
         std::thread::spawn(move || {
-            for (i, stream) in listener.incoming().enumerate() {
+            for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { break };
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut request_line = String::new();
-                reader.read_line(&mut request_line).unwrap();
+                if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
+                    continue;
+                }
                 let mut headers = String::new();
                 let mut content_length = 0;
                 loop {
@@ -44,6 +51,7 @@ impl TestServer {
                 }
                 let mut body = vec![0; content_length];
                 reader.read_exact(&mut body).unwrap();
+                let i = log.lock().unwrap().len();
                 log.lock().unwrap().push(Received {
                     path: request_line.split(' ').nth(1).unwrap_or("").to_owned(),
                     headers,
@@ -52,10 +60,10 @@ impl TestServer {
                 let (status, reply) = &responses[i % responses.len()];
                 write!(
                     stream,
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
                     reply.len()
                 )
-                .unwrap();
+                .ok();
             }
         });
         TestServer { url, received }

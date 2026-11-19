@@ -84,7 +84,7 @@ subtitles: translation works out of the box through Google Translate.
 | Claude | Anthropic API key | Translates with the surrounding dialogue in mind. Explains words in context. |
 
 The key is stored in `config.toml` in your user profile. The environment variable
-`LINGUAPLAY_API_KEY` overrides it.
+`LINGUAPLAY_DEEPL_API_KEY`, `LINGUAPLAY_OPENAI_API_KEY` or `LINGUAPLAY_ANTHROPIC_API_KEY` (for the matching provider only) overrides it.
 
 **Speech recognition.** LinguaPlay drives [whisper.cpp](https://github.com/ggml-org/whisper.cpp):
 

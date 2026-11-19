@@ -4,7 +4,7 @@
 use crate::paths;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -113,16 +113,24 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
         return Err("The downloaded yt-dlp does not match its checksum; not installing it".into());
     }
     // Download next to the target and rename, so a broken download never replaces a working copy.
-    let partial = binary.with_extension("part");
-    std::fs::write(&partial, bytes).map_err(|e| e.to_string())?;
+    // The pid keeps two running players from writing the same file.
+    let partial = binary.with_extension(format!("{}.part", std::process::id()));
+    install(&partial, &binary, &bytes).inspect_err(|_| {
+        let _ = std::fs::remove_file(&partial);
+    })?;
+    save(&latest);
+    Ok(Outcome::Updated { version: latest })
+}
+
+fn install(partial: &Path, binary: &Path, bytes: &[u8]) -> Result<(), String> {
+    std::fs::write(partial, bytes).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755));
+        std::fs::set_permissions(partial, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&partial, &binary).map_err(|e| e.to_string())?;
-    save(&latest);
-    Ok(Outcome::Updated { version: latest })
+    std::fs::rename(partial, binary).map_err(|e| e.to_string())
 }
 
 /// The API is rate-limited per IP, but the plain `releases/latest` page redirects to the tag.
