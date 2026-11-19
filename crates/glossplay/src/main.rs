@@ -84,11 +84,7 @@ fn main() {
             "--shell-unregister" => std::process::exit(shell::cli(false)),
             "--update-ytdlp" => {
                 return match ytdlp::ensure(false) {
-                    Ok(outcome) => println!(
-                        "{outcome:?}
-version={}",
-                        outcome.version()
-                    ),
+                    Ok(outcome) => println!("{outcome}\nversion={}", outcome.version()),
                     Err(e) => {
                         eprintln!("{e}");
                         std::process::exit(1);

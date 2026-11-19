@@ -26,6 +26,16 @@ pub enum Outcome {
     },
 }
 
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::Fresh { version } => write!(f, "yt-dlp {version} (checked recently)"),
+            Outcome::UpToDate { version } => write!(f, "yt-dlp {version} is up to date"),
+            Outcome::Updated { version } => write!(f, "yt-dlp {version} installed"),
+        }
+    }
+}
+
 impl Outcome {
     pub fn version(&self) -> &str {
         match self {
@@ -70,6 +80,109 @@ pub fn ensure(force: bool) -> Result<Outcome, String> {
     result
 }
 
+/// What I recorded about the installed file when I put it there.
+#[derive(Debug, Clone, PartialEq)]
+struct Recorded {
+    sha256: String,
+    size: u64,
+    /// When the hash was last compared with the file on disk.
+    verified_at: u64,
+}
+
+#[derive(Debug, PartialEq)]
+enum Check {
+    Trust,
+    /// An older state file without a hash: I accept the file once and record it.
+    Adopt,
+    VerifyHash,
+    Broken,
+}
+
+/// Size is cheap, so it is compared on every launch; the full hash only once a day.
+fn decide(recorded: Option<&Recorded>, actual_size: u64, now: u64) -> Check {
+    let Some(r) = recorded else {
+        return Check::Adopt;
+    };
+    if r.size != actual_size {
+        return Check::Broken;
+    }
+    if now.saturating_sub(r.verified_at) >= CHECK_EVERY.as_secs() {
+        Check::VerifyHash
+    } else {
+        Check::Trust
+    }
+}
+
+fn file_sha256(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(to_hex(&hasher.finalize()))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn read_recorded(state: &Value) -> Option<Recorded> {
+    Some(Recorded {
+        sha256: state["sha256"].as_str()?.to_owned(),
+        size: state["size"].as_u64()?,
+        verified_at: state["verified_at"].as_u64().unwrap_or(0),
+    })
+}
+
+fn write_state(version: &str, checked_at: u64, recorded: Option<&Recorded>) {
+    let mut state = json!({ "version": version, "checked_at": checked_at });
+    if let Some(r) = recorded {
+        state["sha256"] = json!(r.sha256);
+        state["size"] = json!(r.size);
+        state["verified_at"] = json!(r.verified_at);
+    }
+    let _ = std::fs::write(state_path(), state.to_string());
+}
+
+/// Compares the installed file with what I recorded. Returns false when it is damaged, and
+/// then yt-dlp has to be treated as missing.
+fn installed_is_intact(binary: &Path, state: &Value, version: &str) -> bool {
+    let recorded = read_recorded(state);
+    let Ok(size) = std::fs::metadata(binary).map(|m| m.len()) else {
+        return false;
+    };
+    let checked_at = state["checked_at"].as_u64().unwrap_or(0);
+    let stamp = |sha256: String| Recorded {
+        sha256,
+        size,
+        verified_at: now(),
+    };
+    match decide(recorded.as_ref(), size, now()) {
+        Check::Trust => true,
+        Check::Broken => false,
+        Check::Adopt => match file_sha256(binary) {
+            Ok(hash) => {
+                write_state(version, checked_at, Some(&stamp(hash)));
+                true
+            }
+            Err(_) => false,
+        },
+        Check::VerifyHash => match (file_sha256(binary), recorded) {
+            (Ok(hash), Some(r)) if hash == r.sha256 => {
+                write_state(version, checked_at, Some(&stamp(hash)));
+                true
+            }
+            _ => false,
+        },
+    }
+}
+
 fn ensure_inner(force: bool) -> Result<Outcome, String> {
     let binary = binary_path();
     let state: Value = std::fs::read_to_string(state_path())
@@ -78,7 +191,9 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
         .unwrap_or_default();
     let installed = state["version"].as_str().unwrap_or("").to_owned();
     let checked_at = state["checked_at"].as_u64().unwrap_or(0);
-    let have = binary.is_file() && !installed.is_empty();
+    let have = binary.is_file()
+        && !installed.is_empty()
+        && installed_is_intact(&binary, &state, &installed);
     if have && !force && now().saturating_sub(checked_at) < CHECK_EVERY.as_secs() {
         return Ok(Outcome::Fresh { version: installed });
     }
@@ -89,14 +204,13 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
         Err(_) if have => return Ok(Outcome::Fresh { version: installed }),
         Err(e) => return Err(format!("Could not reach GitHub to download yt-dlp: {e}")),
     };
-    let save = |version: &str| {
-        let _ = std::fs::write(
-            state_path(),
-            json!({ "version": version, "checked_at": now() }).to_string(),
-        );
-    };
     if have && latest == installed {
-        save(&latest);
+        // `installed_is_intact` may just have refreshed the record, so I read it back.
+        let recorded = std::fs::read_to_string(state_path())
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| read_recorded(&v));
+        write_state(&latest, now(), recorded.as_ref());
         return Ok(Outcome::UpToDate { version: latest });
     }
 
@@ -118,7 +232,12 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
     install(&partial, &binary, &bytes).inspect_err(|_| {
         let _ = std::fs::remove_file(&partial);
     })?;
-    save(&latest);
+    let recorded = Recorded {
+        sha256: to_hex(&Sha256::digest(&bytes)),
+        size: bytes.len() as u64,
+        verified_at: now(),
+    };
+    write_state(&latest, now(), Some(&recorded));
     Ok(Outcome::Updated { version: latest })
 }
 
@@ -159,11 +278,7 @@ fn find_hash<'a>(sums: &'a str, file: &str) -> Option<&'a str> {
 }
 
 fn hash_matches(bytes: &[u8], expected_hex: &str) -> bool {
-    let hex: String = Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    hex.eq_ignore_ascii_case(expected_hex)
+    to_hex(&Sha256::digest(bytes)).eq_ignore_ascii_case(expected_hex)
 }
 
 /// True while `ensure` is running, so the UI does not start a second download.
@@ -193,6 +308,29 @@ mod tests {
         assert_eq!(find_hash(SUMS, "yt-dlp_x86.exe"), Some("aaa111"));
         assert_eq!(find_hash(SUMS, "yt-dlp_macos"), None);
         assert_eq!(find_hash("bbb222  my-yt-dlp.exe\n", "yt-dlp.exe"), None);
+    }
+
+    #[test]
+    fn integrity_decision() {
+        const DAY: u64 = 24 * 60 * 60;
+        let r = Recorded {
+            sha256: "abc".into(),
+            size: 100,
+            verified_at: 1_000,
+        };
+        assert_eq!(decide(Some(&r), 100, 1_000 + 60), Check::Trust);
+        assert_eq!(decide(Some(&r), 100, 1_000 + DAY), Check::VerifyHash);
+        assert_eq!(decide(Some(&r), 99, 1_000 + 60), Check::Broken);
+        assert_eq!(decide(Some(&r), 1, 1_000 + 3 * DAY), Check::Broken);
+        assert_eq!(decide(None, 100, 5), Check::Adopt);
+    }
+
+    #[test]
+    fn recorded_fields_come_from_state() {
+        let state = json!({ "version": "v", "sha256": "ff", "size": 7 });
+        let r = read_recorded(&state).unwrap();
+        assert_eq!((r.sha256.as_str(), r.size, r.verified_at), ("ff", 7, 0));
+        assert!(read_recorded(&json!({ "version": "v" })).is_none());
     }
 
     #[test]
