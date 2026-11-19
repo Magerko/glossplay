@@ -3,8 +3,9 @@
 
 use crate::MediaError;
 use libloading::Library;
+use std::ffi::OsStr;
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -115,10 +116,28 @@ unsafe impl Send for Mpv {}
 unsafe impl Sync for Mpv {}
 
 fn library_candidates(configured: &str) -> Vec<String> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_owned));
+    candidates_for(
+        configured,
+        exe_dir.as_deref(),
+        std::env::var_os("PATH").as_deref(),
+        cfg!(windows),
+    )
+}
+
+/// The environment is passed in so the search order can be tested.
+fn candidates_for(
+    configured: &str,
+    exe_dir: Option<&Path>,
+    path_var: Option<&OsStr>,
+    windows: bool,
+) -> Vec<String> {
     if !configured.is_empty() {
         return vec![configured.to_owned()];
     }
-    let names: &[&str] = if cfg!(windows) {
+    let names: &[&str] = if windows {
         &["libmpv-2.dll", "mpv-2.dll", "mpv-1.dll"]
     } else if cfg!(target_os = "macos") {
         &[
@@ -130,12 +149,26 @@ fn library_candidates(configured: &str) -> Vec<String> {
     } else {
         &["libmpv.so.2", "libmpv.so.1", "libmpv.so"]
     };
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(Path::to_owned));
     let mut out = Vec::new();
+    if windows {
+        // A bare DLL name makes Windows look in the current directory, where a planted
+        // library would be loaded, so I only try full paths.
+        let path_dirs = path_var.map(std::env::split_paths).into_iter().flatten();
+        let dirs: Vec<PathBuf> = exe_dir
+            .map(Path::to_owned)
+            .into_iter()
+            .chain(path_dirs)
+            .filter(|d| d.is_absolute())
+            .collect();
+        for name in names {
+            for dir in &dirs {
+                out.push(dir.join(name).to_string_lossy().into_owned());
+            }
+        }
+        return out;
+    }
     for name in names {
-        if let Some(dir) = &exe_dir {
+        if let Some(dir) = exe_dir {
             out.push(dir.join(name).to_string_lossy().into_owned());
         }
         out.push((*name).to_owned());
@@ -431,5 +464,45 @@ impl RenderContext {
 impl Drop for RenderContext {
     fn drop(&mut self) {
         self.destroy();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_tries_only_full_paths_exe_dir_first() {
+        let tools = std::env::temp_dir().join("tools");
+        let bin = std::env::temp_dir().join("bin");
+        let app = std::env::temp_dir().join("app");
+        let path =
+            std::env::join_paths([tools.as_path(), Path::new("relative"), bin.as_path()]).unwrap();
+        let got = candidates_for("", Some(&app), Some(&path), true);
+        assert_eq!(
+            got[0],
+            app.join("libmpv-2.dll").to_string_lossy(),
+            "the exe directory comes first"
+        );
+        assert!(got.iter().all(|c| Path::new(c).is_absolute()), "{got:?}");
+        assert!(got.iter().all(|c| !c.contains("relative")));
+        assert!(got.iter().any(|c| Path::new(c).starts_with(&tools)));
+        assert!(got.iter().any(|c| Path::new(c).starts_with(&bin)));
+    }
+
+    #[test]
+    fn configured_path_wins_everywhere() {
+        for windows in [true, false] {
+            assert_eq!(
+                candidates_for("custom/mpv.dll", None, None, windows),
+                vec!["custom/mpv.dll"]
+            );
+        }
+    }
+
+    #[test]
+    fn unix_keeps_bare_names_for_the_system_loader() {
+        let got = candidates_for("", Some(Path::new("/opt/lp")), None, false);
+        assert!(got.iter().any(|c| !c.contains(['/', '\x5c'])), "{got:?}");
     }
 }

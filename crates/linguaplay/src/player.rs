@@ -93,7 +93,8 @@ impl Player {
         } else {
             cfg.ytdl_path.clone()
         };
-        let ytdl_opt = format!("ytdl_hook-ytdl_path={ytdl}");
+        // A comma separates entries in a script-opts list; the %len% form takes the value verbatim.
+        let ytdl_opt = format!("ytdl_hook-ytdl_path=%{}%{ytdl}", ytdl.len());
         options.push(("ytdl", "yes"));
         options.push(("script-opts", &ytdl_opt));
         Ok(Player {

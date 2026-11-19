@@ -93,12 +93,12 @@ impl AnkiClient {
             "deckName": n.deck,
             "modelName": NOTE_TYPE,
             "fields": {
-                "Word": n.word,
-                "Translation": n.translation,
-                "Sentence": n.sentence,
-                "SentenceTranslation": n.sentence_translation,
-                "Note": n.note,
-                "Source": n.source,
+                "Word": html_field(n.word),
+                "Translation": html_field(n.translation),
+                "Sentence": html_field(n.sentence),
+                "SentenceTranslation": html_field(n.sentence_translation),
+                "Note": html_field(n.note),
+                "Source": html_field(n.source),
             },
             "options": { "allowDuplicate": false, "duplicateScope": "deck" },
             "tags": ["linguaplay"],
@@ -113,6 +113,25 @@ impl AnkiClient {
         v.as_i64()
             .ok_or_else(|| AiError::BadResponse(format!("addNote returned {v}")))
     }
+}
+
+/// Anki renders fields as HTML, and subtitle text, video titles and model output are all
+/// untrusted, so I escape them and keep line breaks visible.
+fn html_field(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            '\r' => {}
+            '\n' => out.push_str("<br>"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn media_entry(path: Option<&Path>, field: &str) -> Option<Value> {
@@ -174,6 +193,23 @@ mod tests {
         assert_eq!(n["options"]["allowDuplicate"], false);
         let second: Value = serde_json::from_str(&got[1].body).unwrap();
         assert!(second["params"]["note"].get("picture").is_none());
+    }
+
+    #[test]
+    fn add_note_escapes_html_in_every_text_field() {
+        let srv = TestServer::start(vec![(200, r#"{"result":7,"error":null}"#.into())]);
+        let anki = AnkiClient::new(&srv.url);
+        let mut n = note(None, None);
+        n.word = "<img src=x onerror=alert(1)>";
+        n.sentence = "Tom & \"Jerry\"\nit's";
+        n.source = "<script>x</script>";
+        anki.add_note(&n).unwrap();
+        let got = srv.received.lock().unwrap();
+        let body: Value = serde_json::from_str(&got[0].body).unwrap();
+        let f = &body["params"]["note"]["fields"];
+        assert_eq!(f["Word"], "&lt;img src=x onerror=alert(1)&gt;");
+        assert_eq!(f["Sentence"], "Tom &amp; &quot;Jerry&quot;<br>it&#39;s");
+        assert_eq!(f["Source"], "&lt;script&gt;x&lt;/script&gt;");
     }
 
     #[test]
