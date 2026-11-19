@@ -1,0 +1,11 @@
+/target
+/.cargo/config.toml
+/.idea
+/dist
+.env
+config.toml
+*.db
+*.db-wal
+*.db-shm
+# Working notes of the development process; not part of the project.
+/docs/pipeline
