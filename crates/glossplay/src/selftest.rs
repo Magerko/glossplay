@@ -736,6 +736,7 @@ fn report(st: &mut State, app: &App) {
     }
     report_vocab(st, app);
     println!("toast={}", app.last_toast);
+    println!("translate_jobs={}", app.translate_jobs);
     let Some(s) = &app.session else { return };
     for (i, t) in s.tracks.iter().enumerate() {
         println!(

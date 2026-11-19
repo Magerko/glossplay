@@ -30,6 +30,7 @@ pub enum Msg {
         epoch: u64,
         sentences: Vec<SentenceKey>,
         result: Result<Vec<String>, String>,
+        for_panel: bool,
     },
     AsrCues {
         generation: u64,
@@ -74,6 +75,8 @@ pub struct TranslateJob {
     pub src: Option<String>,
     pub dst: String,
     pub translator: Arc<dyn Translator>,
+    /// Asked for the transcript in the sidebar rather than for the lines under the video.
+    pub for_panel: bool,
 }
 
 pub struct TranslateOutcome {
@@ -211,6 +214,7 @@ impl Jobs {
                     epoch: job.epoch,
                     sentences: job.sentences,
                     result,
+                    for_panel: job.for_panel,
                 });
                 worker_ctx.request_repaint();
             }

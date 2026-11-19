@@ -76,6 +76,12 @@ pub struct App {
     pub sidebar_tab: SidebarTab,
     pub search: String,
     pub scrolled_to: Option<usize>,
+    /// Cues of the transcript drawn in the sidebar in the last frame; empty when it is hidden.
+    pub panel_cues: Vec<usize>,
+    /// A translation asked for the sidebar has not come back yet.
+    panel_busy: bool,
+    /// Translation jobs sent, for the self-test report.
+    pub translate_jobs: usize,
     pub settings_draft: Option<Config>,
     pub url_input: String,
     /// A link opened before yt-dlp finished downloading; played as soon as it is there.
@@ -183,6 +189,9 @@ impl App {
             sidebar_tab: SidebarTab::Transcript,
             search: String::new(),
             scrolled_to: None,
+            panel_cues: Vec::new(),
+            panel_busy: false,
+            translate_jobs: 0,
             settings_draft: None,
             url_input: String::new(),
             status: None,
@@ -578,6 +587,13 @@ impl App {
     fn handle_messages(&mut self) {
         while let Ok(msg) = self.jobs.rx.try_recv() {
             let current = self.session.as_ref().map(|s| s.generation);
+            // Also for a file closed meanwhile, or the sidebar would never ask again.
+            if let Msg::Translated {
+                for_panel: true, ..
+            } = msg
+            {
+                self.panel_busy = false;
+            }
             match msg {
                 Msg::TrackLoaded {
                     generation,
@@ -624,6 +640,7 @@ impl App {
                     epoch,
                     sentences,
                     result,
+                    ..
                 } if Some(generation) == current => {
                     let s = self.session.as_mut().unwrap();
                     let t = &mut s.tracks[track];
@@ -722,7 +739,8 @@ impl App {
         }
     }
 
-    /// Asks for translations a little ahead of the playhead, so they are ready on time.
+    /// Asks for translations a little ahead of the playhead, so they are ready on time, and
+    /// when nothing there has to go now, for the lines shown in the sidebar.
     fn request_translations(&mut self) {
         let Some(s) = &mut self.session else { return };
         if s.secondary != Secondary::Translate {
@@ -752,35 +770,17 @@ impl App {
         };
         let generation = s.generation;
         let t = &mut s.tracks[index];
-        let pos = self.snap.pos;
-        let Some(from) = t
-            .track
-            .index_at_or_before(pos)
-            .or_else(|| t.track.index_after(pos))
-        else {
-            return;
-        };
-        // The window ahead of the playhead, widened to whole sentences.
         let lookahead = self.cfg.translation.lookahead.max(1);
-        let first = t.group_of(from);
-        let (mut wanted, mut wanted_cues, mut covered) = (Vec::new(), 0, 0);
-        for g in first..t.groups.len() {
-            if covered >= lookahead {
-                break;
-            }
-            covered += t.groups[g].len();
-            if t.ready_to_translate(g, pos) {
-                wanted.push(g);
-                wanted_cues += t.groups[g].len();
-            }
-        }
-        // Waiting until half of the window is missing turns many one-line requests into a few batches.
-        let urgent = wanted
-            .first()
-            .is_some_and(|&g| t.track.cues[t.groups[g].start].start <= pos + 5_000);
-        if wanted.is_empty() || (!urgent && wanted_cues < lookahead / 2) {
-            return;
-        }
+        let (wanted, for_panel) = match ahead_of_playhead(t, self.snap.pos, lookahead) {
+            Some(wanted) => (wanted, false),
+            // One job for the sidebar at a time: the translator works through jobs in order,
+            // and the lines under the video must not wait behind a queue of them.
+            None if !self.panel_busy => match in_view(t, &self.panel_cues, lookahead) {
+                Some(wanted) => (wanted, true),
+                None => return,
+            },
+            None => return,
+        };
         let context = (wanted[0].saturating_sub(CONTEXT_SENTENCES)..wanted[0])
             .map(|g| t.sentence_text(g))
             .collect();
@@ -800,7 +800,10 @@ impl App {
             src,
             dst: self.cfg.general.native_lang.clone(),
             translator,
+            for_panel,
         });
+        self.translate_jobs += 1;
+        self.panel_busy |= for_panel;
     }
 
     pub fn open_word(&mut self, word: String, cue: usize, token: usize, anchor: egui::Pos2) {
@@ -1113,8 +1116,106 @@ impl App {
     }
 }
 
+/// Sentence groups to translate now in the window ahead of the playhead, widened to whole
+/// sentences; `None` when nothing there has to go yet.
+fn ahead_of_playhead(t: &SubTrack, pos: Ms, lookahead: usize) -> Option<Vec<usize>> {
+    let from = t
+        .track
+        .index_at_or_before(pos)
+        .or_else(|| t.track.index_after(pos))?;
+    let first = t.group_of(from);
+    let (mut wanted, mut wanted_cues, mut covered) = (Vec::new(), 0, 0);
+    for g in first..t.groups.len() {
+        if covered >= lookahead {
+            break;
+        }
+        covered += t.groups[g].len();
+        if t.ready_to_translate(g, pos) {
+            wanted.push(g);
+            wanted_cues += t.groups[g].len();
+        }
+    }
+    // Waiting until half of the window is missing turns many one-line requests into a few batches.
+    let urgent = wanted
+        .first()
+        .is_some_and(|&g| t.track.cues[t.groups[g].start].start <= pos + 5_000);
+    (!wanted.is_empty() && (urgent || wanted_cues >= lookahead / 2)).then_some(wanted)
+}
+
+/// Sentence groups of the cues shown in the sidebar that still lack a translation, at most
+/// about `limit` cues of them.
+fn in_view(t: &SubTrack, cues: &[usize], limit: usize) -> Option<Vec<usize>> {
+    let (mut wanted, mut count) = (Vec::new(), 0);
+    let mut last = None;
+    // The list is from the last frame; speech recognition may have changed the track since.
+    for &i in cues.iter().filter(|&&i| i < t.track.cues.len()) {
+        let g = t.group_of(i);
+        if last == Some(g) {
+            continue;
+        }
+        last = Some(g);
+        if t.needs_translation(g) && !t.may_grow(g) {
+            wanted.push(g);
+            count += t.groups[g].len();
+            if count >= limit {
+                break;
+            }
+        }
+    }
+    (!wanted.is_empty()).then_some(wanted)
+}
+
 fn make_translator(cfg: &Config) -> Result<Arc<dyn Translator>, String> {
     build_translator(&cfg.translation)
         .map(Arc::from)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gp_core::Cue;
+
+    /// One sentence every 3 s.
+    fn track(n: usize) -> SubTrack {
+        let mut t = SubTrack::new("en".into(), Some("en".into()), Origin::Asr, Load::Loading);
+        t.set_cues(
+            (0..n)
+                .map(|i| Cue {
+                    start: i as Ms * 3_000,
+                    end: i as Ms * 3_000 + 2_000,
+                    text: format!("Line {i}."),
+                })
+                .collect(),
+        );
+        t
+    }
+
+    #[test]
+    fn the_sidebar_asks_for_what_it_shows_after_the_playhead_window() {
+        let mut t = track(60);
+        let ahead = ahead_of_playhead(&t, 90_000, 10).unwrap();
+        assert_eq!(ahead, (30..40).collect::<Vec<_>>());
+        t.request_translations(&ahead);
+        assert_eq!(ahead_of_playhead(&t, 90_000, 10), None);
+
+        // Rows above the playhead, the way a sidebar scrolled back shows them.
+        let shown: Vec<usize> = (5..20).collect();
+        let wanted = in_view(&t, &shown, 10).unwrap();
+        assert_eq!(
+            wanted,
+            (5..15).collect::<Vec<_>>(),
+            "no more than the limit"
+        );
+        t.request_translations(&wanted);
+        assert_eq!(
+            in_view(&t, &shown, 10).unwrap(),
+            (15..20).collect::<Vec<_>>()
+        );
+        t.request_translations(&(15..20).collect::<Vec<_>>());
+        assert_eq!(in_view(&t, &shown, 10), None, "nothing asked twice");
+        // The list is a frame old and the track may have shrunk meanwhile.
+        assert_eq!(in_view(&t, &[58, 59, 60, 61], 10), Some(vec![58, 59]));
+        assert_eq!(in_view(&t, &[], 10), None, "the sidebar is closed");
+    }
 }

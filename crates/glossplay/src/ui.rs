@@ -46,6 +46,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.tick(&ctx);
         self.handle_input(&ctx);
+        self.panel_cues.clear();
         if self.sidebar_open {
             // In a small window the panel takes at most 40%, or the video would shrink to a strip.
             let max = (ctx.content_rect().width() * 0.4).clamp(220.0, 620.0);
@@ -998,7 +999,9 @@ impl App {
         }
         let native = self.cfg.general.native_lang.clone();
         let mut seek_to = None;
+        let mut shown = 0..0;
         area.show_rows(ui, row_height, rows.len(), |ui, range| {
+            shown = range.clone();
             for &i in &rows[range] {
                 let cue = &t.track.cues[i];
                 let (rect, resp) =
@@ -1057,6 +1060,10 @@ impl App {
                 }
             }
         });
+        // A few rows past the edges, so a short scroll finds them translated already.
+        const MARGIN: usize = 5;
+        let around = shown.start.saturating_sub(MARGIN)..(shown.end + MARGIN).min(rows.len());
+        self.panel_cues = rows[around].to_vec();
         if let Some(ms) = seek_to {
             self.player.seek(ms);
         }
