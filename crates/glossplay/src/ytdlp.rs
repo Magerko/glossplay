@@ -92,8 +92,9 @@ struct Recorded {
 #[derive(Debug, PartialEq)]
 enum Check {
     Trust,
-    /// An older state file without a hash: I accept the file once and record it.
-    Adopt,
+    /// No hash on record, so nothing proves the file is whole: it has to be compared with the
+    /// checksums the release published before I record it.
+    VerifyOnline,
     VerifyHash,
     Broken,
 }
@@ -101,7 +102,7 @@ enum Check {
 /// Size is cheap, so it is compared on every launch; the full hash only once a day.
 fn decide(recorded: Option<&Recorded>, actual_size: u64, now: u64) -> Check {
     let Some(r) = recorded else {
-        return Check::Adopt;
+        return Check::VerifyOnline;
     };
     if r.size != actual_size {
         return Check::Broken;
@@ -166,13 +167,20 @@ fn installed_is_intact(binary: &Path, state: &Value, version: &str) -> bool {
     match decide(recorded.as_ref(), size, now()) {
         Check::Trust => true,
         Check::Broken => false,
-        Check::Adopt => match file_sha256(binary) {
-            Ok(hash) => {
-                write_state(version, checked_at, Some(&stamp(hash)));
-                true
+        Check::VerifyOnline => {
+            let Ok(hash) = file_sha256(binary) else {
+                return false;
+            };
+            match published_hash(version) {
+                Ok(expected) if hash.eq_ignore_ascii_case(&expected) => {
+                    write_state(version, checked_at, Some(&stamp(hash)));
+                    true
+                }
+                Ok(_) => false,
+                // Offline: I keep the file but record nothing, so the next launch tries again.
+                Err(_) => true,
             }
-            Err(_) => false,
-        },
+        }
         Check::VerifyHash => match (file_sha256(binary), recorded) {
             (Ok(hash), Some(r)) if hash == r.sha256 => {
                 write_state(version, checked_at, Some(&stamp(hash)));
@@ -218,12 +226,8 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
     let bytes = gp_ai::fetch(&format!("{base}/{}", asset_name()))
         .map_err(|e| format!("Could not download yt-dlp: {e}"))?;
     // This catches a damaged or truncated download; it is no defence against a compromised GitHub.
-    let sums = gp_ai::fetch(&format!("{base}/SHA2-256SUMS"))
-        .map_err(|e| format!("Could not download the yt-dlp checksums: {e}"))?;
-    let sums = String::from_utf8_lossy(&sums);
-    let expected = find_hash(&sums, asset_name())
-        .ok_or_else(|| format!("The checksum list has no entry for {}", asset_name()))?;
-    if !hash_matches(&bytes, expected) {
+    let expected = published_hash(&latest)?;
+    if !hash_matches(&bytes, &expected) {
         return Err("The downloaded yt-dlp does not match its checksum; not installing it".into());
     }
     // Download next to the target and rename, so a broken download never replaces a working copy.
@@ -239,6 +243,16 @@ fn ensure_inner(force: bool) -> Result<Outcome, String> {
     };
     write_state(&latest, now(), Some(&recorded));
     Ok(Outcome::Updated { version: latest })
+}
+
+/// The SHA-256 the release `version` published for this platform's binary.
+fn published_hash(version: &str) -> Result<String, String> {
+    let sums = gp_ai::fetch(&format!("{RELEASES}/download/{version}/SHA2-256SUMS"))
+        .map_err(|e| format!("Could not download the yt-dlp checksums: {e}"))?;
+    let sums = String::from_utf8_lossy(&sums);
+    find_hash(&sums, asset_name())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("The checksum list has no entry for {}", asset_name()))
 }
 
 fn install(partial: &Path, binary: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -322,7 +336,7 @@ mod tests {
         assert_eq!(decide(Some(&r), 100, 1_000 + DAY), Check::VerifyHash);
         assert_eq!(decide(Some(&r), 99, 1_000 + 60), Check::Broken);
         assert_eq!(decide(Some(&r), 1, 1_000 + 3 * DAY), Check::Broken);
-        assert_eq!(decide(None, 100, 5), Check::Adopt);
+        assert_eq!(decide(None, 100, 5), Check::VerifyOnline);
     }
 
     #[test]
