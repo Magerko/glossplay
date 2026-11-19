@@ -6,12 +6,16 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 const BODY_SNIPPET: usize = 300;
+// Without a connect timeout a dead or filtered host blocks for the OS limit (about 21 s on
+// Windows) or, failing that, for the whole 120 s global budget.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
         ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(120)))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
             .http_status_as_error(false)
             // API calls carry keys in custom headers (x-api-key, DeepL-Auth-Key) that ureq would
             // forward to another host on a redirect; none of these APIs redirect.
@@ -107,6 +111,7 @@ pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
     let agent = AGENT.get_or_init(|| {
         ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(30)))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
             .http_status_as_error(false)
             .max_redirects(0)
             .build()
@@ -137,6 +142,13 @@ pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
 mod tests {
     use super::*;
     use crate::testserver::TestServer;
+
+    #[test]
+    fn clients_have_a_connect_timeout_shorter_than_the_global_one() {
+        let t = agent().config().timeouts();
+        assert_eq!(t.connect, Some(CONNECT_TIMEOUT));
+        assert!(t.global.unwrap() > CONNECT_TIMEOUT);
+    }
 
     #[test]
     fn api_posts_do_not_follow_redirects() {

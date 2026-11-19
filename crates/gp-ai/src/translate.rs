@@ -662,7 +662,7 @@ mod tests {
         let e = t.translate(&req(&input)).unwrap_err();
         assert!(matches!(e, AiError::Http { status: 401, .. }) && !e.is_transient());
 
-        let dead = cfg("google", "http://127.0.0.1:1");
+        let dead = cfg("google", "http://127.0.0.1:0");
         let e = build_translator(&dead)
             .unwrap()
             .translate(&req(&input))

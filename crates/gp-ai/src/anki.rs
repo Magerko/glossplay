@@ -245,8 +245,9 @@ mod tests {
 
     #[test]
     fn anki_not_running_is_a_network_error() {
+        // Port 0 is refused at once everywhere; a closed port costs ~2 s of SYN retries on Windows.
         assert!(matches!(
-            AnkiClient::new("http://127.0.0.1:1").version(),
+            AnkiClient::new("http://127.0.0.1:0").version(),
             Err(AiError::Network(_))
         ));
     }
