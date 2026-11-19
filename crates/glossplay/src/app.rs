@@ -614,15 +614,19 @@ impl App {
                     generation,
                     text,
                     running,
+                    alert,
                 } if Some(generation) == current => {
                     let s = self.session.as_mut().unwrap();
-                    s.asr_status = text;
+                    s.asr_status = text.clone();
                     s.asr_running = running;
                     if !running {
                         // Finished or failed: no more cues will come to continue a sentence.
                         for t in s.tracks.iter_mut().filter(|t| t.origin == Origin::Asr) {
                             t.growing = None;
                         }
+                    }
+                    if alert {
+                        self.toast(text);
                     }
                 }
                 Msg::WordTranslated { request, result } => {

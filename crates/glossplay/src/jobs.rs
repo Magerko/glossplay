@@ -41,6 +41,8 @@ pub enum Msg {
         generation: u64,
         text: String,
         running: bool,
+        /// Recognition has stopped for good on an error the user should see.
+        alert: bool,
     },
     WordTranslated {
         request: u64,
@@ -383,71 +385,121 @@ impl Jobs {
         );
         std::thread::spawn(move || {
             let generation = params.generation;
-            let status = |text: String, running: bool| {
+            let send = |text: String, running: bool, alert: bool| {
                 let _ = tx.send(Msg::AsrStatus {
                     generation,
                     text,
                     running,
+                    alert,
                 });
                 ctx.request_repaint();
             };
-            if let Err(e) = run_asr(
-                params, &playhead, &cancel, &closing, &store, &whisper, &tx, &ctx, &status,
-            ) {
-                status(e, false);
+            let status = |text: String, running: bool| send(text, running, false);
+            let asr = Asr {
+                cancel: &cancel,
+                closing: &closing,
+                whisper: &whisper,
+                status: &status,
+            };
+            if let Err(e) = run_asr(params, &asr, &playhead, &store, &tx, &ctx) {
+                send(format!("Speech recognition stopped: {e}"), false, true);
             }
         });
         handle
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Crashes of whisper-server survived in one transcription before it gives up.
+const MAX_RESTARTS: usize = 2;
+
+/// What a transcription shares with the rest of the program.
+struct Asr<'a> {
+    cancel: &'a AtomicBool,
+    closing: &'a AtomicBool,
+    whisper: &'a Mutex<Option<WhisperProcess>>,
+    status: &'a dyn Fn(String, bool),
+}
+
+impl Asr<'_> {
+    /// Asked to stop: another file was opened or the player is closing.
+    fn stopped(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed) || self.closing.load(Ordering::SeqCst)
+    }
+
+    /// Starts whisper-server unless it is running, and waits until it answers. `None` when
+    /// asked to stop meanwhile.
+    fn server(&self, p: &AsrParams) -> Result<Option<WhisperServer>, String> {
+        let model_name = p
+            .model
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let url = {
+            let mut slot = self.whisper.lock().unwrap_or_else(|e| e.into_inner());
+            // Checked under the lock: `shutdown` sets the flag before it empties the slot.
+            if self.closing.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+            if slot.as_mut().is_none_or(|w| w.has_exited()) {
+                (self.status)("Starting speech recognition…".into(), true);
+                let process = WhisperProcess::spawn(&p.server, &p.model, p.vad_model.as_deref())
+                    .map_err(|e| format!("cannot start whisper-server: {e}"))?;
+                *slot = Some(process);
+            }
+            slot.as_ref().unwrap().url.clone()
+        };
+        let engine = WhisperServer::new(&url, &model_name);
+        let started = Instant::now();
+        while !engine.is_ready() {
+            if self.stopped() {
+                return Ok(None);
+            }
+            if self.died() {
+                return Err("whisper-server quit while loading; check the model path".into());
+            }
+            if started.elapsed() > Duration::from_secs(120) {
+                return Err("whisper-server did not become ready; check the model path".into());
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        Ok(Some(engine))
+    }
+
+    /// Whether the server process is gone. A connection error can come a moment before the
+    /// process is reported dead, so I give it a second.
+    fn died(&self) -> bool {
+        let gone = || {
+            let mut slot = self.whisper.lock().unwrap_or_else(|e| e.into_inner());
+            slot.as_mut().is_none_or(|w| w.has_exited())
+        };
+        let since = Instant::now();
+        loop {
+            if gone() {
+                return true;
+            }
+            if since.elapsed() > Duration::from_secs(1) {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
 fn run_asr(
     mut p: AsrParams,
+    asr: &Asr,
     playhead: &AtomicI64,
-    cancel: &AtomicBool,
-    closing: &AtomicBool,
     store: &Mutex<Store>,
-    whisper: &Mutex<Option<WhisperProcess>>,
     tx: &Sender<Msg>,
     ctx: &egui::Context,
-    status: &dyn Fn(String, bool),
 ) -> Result<(), String> {
-    let stopped = || cancel.load(Ordering::Relaxed) || closing.load(Ordering::SeqCst);
     if p.done.iter().all(|d| *d) {
-        status("Transcript ready".into(), false);
+        (asr.status)("Transcript ready".into(), false);
         return Ok(());
     }
-    let model_name = p
-        .model
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let url = {
-        let mut slot = whisper.lock().unwrap_or_else(|e| e.into_inner());
-        // Checked under the lock: `shutdown` sets the flag before it empties the slot.
-        if closing.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        if slot.as_mut().is_none_or(|w| w.has_exited()) {
-            status("Starting speech recognition…".into(), true);
-            let process = WhisperProcess::spawn(&p.server, &p.model, p.vad_model.as_deref())
-                .map_err(|e| format!("Cannot start whisper-server: {e}"))?;
-            *slot = Some(process);
-        }
-        slot.as_ref().unwrap().url.clone()
+    let Some(mut engine) = asr.server(&p)? else {
+        return Ok(());
     };
-    let engine = WhisperServer::new(&url, &model_name);
-    let started = Instant::now();
-    while !engine.is_ready() {
-        if stopped() {
-            return Ok(());
-        }
-        if started.elapsed() > Duration::from_secs(120) {
-            return Err("whisper-server did not become ready; check the model path".into());
-        }
-        std::thread::sleep(Duration::from_millis(150));
-    }
 
     let total = p.done.len();
     let lang_key = p.lang.clone().unwrap_or_default();
@@ -467,19 +519,23 @@ fn run_asr(
             );
     };
     let mut saved = Instant::now();
-    while let Some(k) = asr_plan::next_window(&p.done, playhead.load(Ordering::Relaxed)) {
-        if stopped() {
+    let (mut restarts, mut retry) = (0, None);
+    while let Some(k) = retry
+        .take()
+        .or_else(|| asr_plan::next_window(&p.done, playhead.load(Ordering::Relaxed)))
+    {
+        if asr.stopped() {
             save(&p);
             return Ok(());
         }
         let finished = p.done.iter().filter(|d| **d).count();
-        status(
+        (asr.status)(
             format!("Transcribing {}%", finished * 100 / total.max(1)),
             true,
         );
         let (start, len) = asr_plan::audio_range(k);
         let pcm = tools::extract_pcm(&p.ffmpeg, &p.media, p.audio_index, start, len)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("could not read the audio: {e}"))?;
         let mut language = None;
         let words = if pcm.is_empty() {
             Vec::new()
@@ -487,11 +543,32 @@ fn run_asr(
             let out = match engine.transcribe(&pcm, p.lang.as_deref()) {
                 Ok(out) => out,
                 // The server was killed under me on purpose; that is not an error to show.
-                Err(_) if stopped() => {
+                Err(_) if asr.stopped() => {
                     save(&p);
                     return Ok(());
                 }
-                Err(e) => return Err(e.to_string()),
+                Err(e) => {
+                    save(&p);
+                    if !asr.died() {
+                        return Err(match e {
+                            AiError::Network(_) => "whisper-server stopped answering".into(),
+                            other => format!("whisper-server failed: {other}"),
+                        });
+                    }
+                    if restarts == MAX_RESTARTS {
+                        return Err(format!(
+                            "whisper-server quit unexpectedly {} times",
+                            restarts + 1
+                        ));
+                    }
+                    restarts += 1;
+                    let Some(fresh) = asr.server(&p)? else {
+                        return Ok(());
+                    };
+                    engine = fresh;
+                    retry = Some(k);
+                    continue;
+                }
             };
             language = out.language;
             asr_plan::words(start, &out.segments)
@@ -514,7 +591,7 @@ fn run_asr(
         }
     }
     save(&p);
-    status("Transcript ready".into(), false);
+    (asr.status)("Transcript ready".into(), false);
     Ok(())
 }
 
