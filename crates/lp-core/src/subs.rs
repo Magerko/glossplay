@@ -23,14 +23,25 @@ impl SubFormat {
 pub enum SubError {
     UnknownFormat,
     Empty,
+    TooLarge,
     Malformed { line: usize, reason: String },
 }
+
+/// Larger subtitle files are refused outright; real ones are well under a megabyte.
+pub const MAX_SUBTITLE_BYTES: usize = 20 * 1024 * 1024;
+/// A longer cue text is cut: the UI lays out every word of the cue on every frame.
+pub const MAX_CUE_CHARS: usize = 2_000;
 
 impl fmt::Display for SubError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SubError::UnknownFormat => write!(f, "unknown subtitle format"),
             SubError::Empty => write!(f, "subtitle file has no cues"),
+            SubError::TooLarge => write!(
+                f,
+                "subtitle file is larger than {} MB",
+                MAX_SUBTITLE_BYTES >> 20
+            ),
             SubError::Malformed { line, reason } => write!(f, "line {line}: {reason}"),
         }
     }
@@ -39,6 +50,9 @@ impl fmt::Display for SubError {
 impl std::error::Error for SubError {}
 
 pub fn parse_subtitles(bytes: &[u8], hint: Option<SubFormat>) -> Result<Vec<Cue>, SubError> {
+    if bytes.len() > MAX_SUBTITLE_BYTES {
+        return Err(SubError::TooLarge);
+    }
     let text = decode(bytes);
     let format = detect(&text).or(hint).ok_or(SubError::UnknownFormat)?;
     let mut cues = match format {
@@ -46,6 +60,12 @@ pub fn parse_subtitles(bytes: &[u8], hint: Option<SubFormat>) -> Result<Vec<Cue>
         SubFormat::WebVtt => parse_srt_like(&text, true),
         SubFormat::Ass => parse_ass(&text)?,
     };
+    for c in &mut cues {
+        if let Some((cut, _)) = c.text.char_indices().nth(MAX_CUE_CHARS) {
+            c.text.truncate(cut);
+            c.text.push('…');
+        }
+    }
     cues.retain(|c| c.end > c.start && !c.text.is_empty());
     cues.sort_by_key(|c| c.start);
     cues.dedup();
@@ -134,7 +154,9 @@ fn parse_time(s: &str) -> Option<Ms> {
     let mut total: Ms = 0;
     let mut parts = 0;
     for p in clock.split(':') {
-        total = total * 60 + p.trim().parse::<Ms>().ok()?;
+        total = total
+            .checked_mul(60)?
+            .checked_add(p.trim().parse::<Ms>().ok()?)?;
         parts += 1;
     }
     if !(2..=3).contains(&parts) || !frac.bytes().all(|b| b.is_ascii_digit()) {
@@ -144,7 +166,7 @@ fn parse_time(s: &str) -> Option<Ms> {
     for i in 0..3 {
         ms = ms * 10 + frac.as_bytes().get(i).map_or(0, |b| (b - b'0') as Ms);
     }
-    Some(total * 1000 + ms)
+    total.checked_mul(1000)?.checked_add(ms)
 }
 
 fn parse_timing_line(line: &str) -> Option<(Ms, Ms)> {
@@ -269,33 +291,51 @@ fn clean_ass_text(raw: &str) -> Option<String> {
         rest = &rest[open + close + 1..];
     }
     out.push_str(rest);
-    Some(
-        out.replace("\\N", "\n")
-            .replace("\\n", "\n")
-            .replace("\\h", " "),
-    )
+    let out = out
+        .replace("\\N", "\n")
+        .replace("\\n", "\n")
+        .replace("\\h", " ");
+    Some(strip_markup(&out))
 }
 
 fn strip_markup(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.char_indices();
+    // A closer is only looked for up to the end of the line. When a search fails I remember
+    // where the line ends, so a run of unclosed openers costs one scan, not one per opener.
+    let mut line_end = 0;
+    let mut no_closer_until = [0usize; 2];
     while let Some((i, c)) = chars.next() {
-        let closer = match c {
+        let (closer, slot) = match c {
             // A tag starts with a letter, a digit or '/', so "2 < 3 and 5 > 4" stays intact.
-            '<' if s[i + 1..].starts_with(|n: char| n.is_ascii_alphanumeric() || n == '/') => '>',
-            '{' if s[i + 1..].starts_with('\\') => '}',
+            '<' if s[i + 1..].starts_with(|n: char| n.is_ascii_alphanumeric() || n == '/') => {
+                ('>', 0)
+            }
+            '{' if s[i + 1..].starts_with('\\') => ('}', 1),
             _ => {
                 out.push(c);
                 continue;
             }
         };
-        match s[i..].find(closer) {
-            Some(len) if !s[i..i + len].contains('\n') => {
+        if i >= line_end {
+            line_end = s[i..].find('\n').map_or(s.len(), |n| i + n);
+        }
+        let found = if i < no_closer_until[slot] {
+            None
+        } else {
+            let found = s[i..line_end].find(closer);
+            if found.is_none() {
+                no_closer_until[slot] = line_end;
+            }
+            found
+        };
+        match found {
+            Some(len) => {
                 for _ in 0..s[i + 1..=i + len].chars().count() {
                     chars.next();
                 }
             }
-            _ => out.push(c),
+            None => out.push(c),
         }
     }
     out
@@ -315,8 +355,28 @@ fn decode_entities(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// `strip_markup` leaves a tag that is split across lines, and callers later join the lines
+/// with spaces, which would turn it back into a real tag. I drop the opening `<` of any
+/// tag-looking start with no `>` after it on its line.
+fn drop_unclosed_tag_starts(line: &str) -> String {
+    let last_gt = line.rfind('>');
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        let tag_start = c == '<'
+            && chars
+                .peek()
+                .is_some_and(|&(_, n)| n.is_ascii_alphanumeric() || n == '/');
+        if !(tag_start && last_gt.is_none_or(|g| g < i)) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn tidy(s: &str) -> String {
     s.lines()
+        .map(drop_unclosed_tag_starts)
         .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()
@@ -435,6 +495,74 @@ mod tests {
             .into_owned();
         let cues = parse_subtitles(&latin, Some(SubFormat::Srt)).unwrap();
         assert_eq!(cues[0].text, "Café déjà vu, the long english part");
+    }
+
+    fn srt_one(text: &str) -> String {
+        format!("1\n00:00:01,000 --> 00:00:02,000\n{text}\n")
+    }
+
+    #[test]
+    fn unclosed_tags_are_parsed_in_linear_time() {
+        let started = std::time::Instant::now();
+        for opener in ["<a ", "{\\a "] {
+            let src = srt_one(&opener.repeat(200_000));
+            let cues = parse_subtitles(src.as_bytes(), Some(SubFormat::Srt)).unwrap();
+            assert!(!cues.is_empty());
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn oversized_file_is_refused() {
+        let big = vec![b' '; MAX_SUBTITLE_BYTES + 1];
+        assert_eq!(
+            parse_subtitles(&big, Some(SubFormat::Srt)),
+            Err(SubError::TooLarge)
+        );
+        assert!(SubError::TooLarge.to_string().contains("20 MB"));
+    }
+
+    #[test]
+    fn long_cue_is_cut_at_a_char_boundary() {
+        let src = srt_one(&"я".repeat(MAX_CUE_CHARS + 500));
+        let cues = parse_subtitles(src.as_bytes(), Some(SubFormat::Srt)).unwrap();
+        assert_eq!(cues[0].text.chars().count(), MAX_CUE_CHARS + 1);
+        assert!(cues[0].text.ends_with('…'));
+        let exact = srt_one(&"я".repeat(MAX_CUE_CHARS));
+        let cues = parse_subtitles(exact.as_bytes(), Some(SubFormat::Srt)).unwrap();
+        assert!(!cues[0].text.ends_with('…'));
+    }
+
+    #[test]
+    fn huge_time_values_do_not_overflow() {
+        assert_eq!(parse_time("99999999999999999:00:00,000"), None);
+        assert_eq!(parse_time("9223372036854775807:00,000"), None);
+        let src = "1\n99999999999999999:00:00,000 --> 99999999999999999:00:01,000\nx\n";
+        assert_eq!(
+            parse_subtitles(src.as_bytes(), Some(SubFormat::Srt)),
+            Err(SubError::Empty)
+        );
+        assert_eq!(parse_time("01:02:03,004"), Some(3_723_004));
+    }
+
+    #[test]
+    fn ass_strips_angle_tags() {
+        let src = "[Events]\nFormat: Start, End, Text\nDialogue: 0:00:01.00,0:00:02.00,Hello <img src=x onerror=alert(1)> world\n";
+        let cues = parse_subtitles(src.as_bytes(), None).unwrap();
+        assert_eq!(cues[0].text, "Hello world");
+    }
+
+    #[test]
+    fn tag_split_by_newline_does_not_reassemble_after_joining() {
+        let src = srt_one("Hello <i\nmg src=x onerror=alert(1)> world");
+        let cues = parse_subtitles(src.as_bytes(), Some(SubFormat::Srt)).unwrap();
+        let joined = cues[0].text.replace('\n', " ");
+        assert_eq!(strip_markup(&joined), joined, "joined: {joined}");
+        assert!(!joined.contains('<'), "joined: {joined}");
     }
 
     #[test]
