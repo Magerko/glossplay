@@ -3,6 +3,7 @@ pub mod asr;
 pub mod download;
 mod http;
 pub mod translate;
+pub mod tts;
 
 #[cfg(test)]
 mod testserver;

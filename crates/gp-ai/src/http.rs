@@ -67,6 +67,32 @@ pub fn post_bytes(url: &str, content_type: &str, body: &[u8]) -> Result<Value, A
     )?)
 }
 
+/// A JSON request whose answer is a file, such as synthesized speech.
+pub fn post_json_for_bytes(url: &str, body: &Value) -> Result<Vec<u8>, AiError> {
+    let mut resp = agent()
+        .post(url)
+        .send_json(body)
+        .map_err(|e| AiError::Network(e.to_string()))?;
+    let status = resp.status().as_u16();
+    let bytes = resp
+        .body_mut()
+        .with_config()
+        .limit(64 * 1024 * 1024)
+        .read_to_vec()
+        .map_err(|e| AiError::Network(e.to_string()))?;
+    if (200..300).contains(&status) {
+        Ok(bytes)
+    } else {
+        Err(AiError::Http {
+            status,
+            body: String::from_utf8_lossy(&bytes)
+                .chars()
+                .take(BODY_SNIPPET)
+                .collect(),
+        })
+    }
+}
+
 pub fn get(url: &str) -> Result<String, AiError> {
     finish(agent().get(url).call())
 }

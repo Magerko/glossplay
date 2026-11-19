@@ -51,6 +51,13 @@ impl Drop for NetGuard {
     }
 }
 
+pub struct Reply {
+    pub status: u16,
+    pub body: Vec<u8>,
+    /// Raw header lines, each ending in CRLF.
+    pub headers: String,
+}
+
 pub struct TestServer {
     pub url: String,
     pub received: Arc<Mutex<Vec<Received>>>,
@@ -65,6 +72,21 @@ impl TestServer {
 
     /// `extra_headers` is raw header text, each line ending in CRLF, added to every reply.
     pub fn start_with_headers(responses: Vec<(u16, String)>, extra_headers: String) -> TestServer {
+        let headers = format!("Content-Type: application/json\r\n{extra_headers}");
+        Self::start_replies(
+            responses
+                .into_iter()
+                .map(|(status, body)| Reply {
+                    status,
+                    body: body.into_bytes(),
+                    headers: headers.clone(),
+                })
+                .collect(),
+        )
+    }
+
+    /// Replies with arbitrary bytes and headers of their own, cycling like `start`.
+    pub fn start_replies(responses: Vec<Reply>) -> TestServer {
         let net = serial();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -72,16 +94,14 @@ impl TestServer {
         let received = Arc::new(Mutex::new(Vec::new()));
         let log = received.clone();
         let responses = Arc::new(responses);
-        let extra_headers = Arc::new(extra_headers);
         std::thread::spawn(move || {
             // One thread per connection: a client that connects and stays silent must not
             // block the requests that follow it.
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { break };
-                let (log, responses, extra) =
-                    (log.clone(), responses.clone(), extra_headers.clone());
+                let (log, responses) = (log.clone(), responses.clone());
                 std::thread::spawn(move || {
-                    let _ = serve(stream, &log, &responses, &extra);
+                    let _ = serve(stream, &log, &responses);
                 });
             }
         });
@@ -194,8 +214,7 @@ fn serve_ranged(
 fn serve(
     mut stream: TcpStream,
     log: &Mutex<Vec<Received>>,
-    responses: &[(u16, String)],
-    extra_headers: &str,
+    responses: &[Reply],
 ) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -246,7 +265,7 @@ fn serve(
     }
     // Index and push share one lock so numbering follows handled requests even when
     // connections are served concurrently.
-    let (status, reply) = {
+    let reply = {
         let mut log = log.lock().unwrap();
         let i = log.len();
         log.push(Received {
@@ -256,12 +275,16 @@ fn serve(
         });
         &responses[i % responses.len()]
     };
-    let head = format!(
-        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
-        reply.len()
-    );
+    let mut out = format!(
+        "HTTP/1.1 {} X\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        reply.status,
+        reply.headers,
+        reply.body.len()
+    )
+    .into_bytes();
+    out.extend_from_slice(&reply.body);
     // One write: several small ones can stall on Nagle plus delayed ACK for 40 ms each.
-    stream.write_all(head.as_bytes())?;
+    stream.write_all(&out)?;
     stream.flush()?;
     // Closing a socket that still holds unread input makes Windows send RST, which can
     // discard the reply; so I half-close and wait for the client to close its side.
