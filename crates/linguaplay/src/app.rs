@@ -21,6 +21,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+const NO_FFMPEG_TOAST: &str = "ffmpeg was not found — subtitles are shown without word lookup. Install ffmpeg or set its path in Settings.";
+
 pub enum Async {
     Idle,
     Pending,
@@ -80,6 +82,8 @@ pub struct App {
     /// A link opened before yt-dlp finished downloading; played as soon as it is there.
     pending_url: Option<String>,
     pub status: Option<(String, Instant)>,
+    /// The last message shown, kept for the self-test report.
+    pub last_toast: String,
     pub last_activity: Instant,
     pub fullscreen: bool,
     pub hwdec_current: String,
@@ -151,6 +155,7 @@ impl App {
             settings_draft: None,
             url_input: String::new(),
             status: None,
+            last_toast: String::new(),
             last_activity: Instant::now(),
             fullscreen: false,
             hwdec_current: String::new(),
@@ -168,7 +173,9 @@ impl App {
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {
-        self.status = Some((text.into(), Instant::now()));
+        let text = text.into();
+        self.last_toast.clone_from(&text);
+        self.status = Some((text, Instant::now()));
     }
 
     pub fn open(&mut self, media: &str) {
@@ -189,6 +196,14 @@ impl App {
             self.toast("Downloading yt-dlp, the video will start in a moment…");
             return;
         }
+        // `canonicalize` would add a `\?` prefix on Windows that mpv and ffmpeg do not accept.
+        let media = if media.contains("://") {
+            media.to_owned()
+        } else {
+            std::path::absolute(media)
+                .map_or_else(|_| media.to_owned(), |p| p.to_string_lossy().into_owned())
+        };
+        let media = media.as_str();
         self.generation += 1;
         self.tokens.clear();
         self.popup = None;
@@ -339,7 +354,13 @@ impl App {
             (Origin::Embedded { mpv_id, .. }, Load::Bitmap) if primary.is_none() => Some(*mpv_id),
             _ => None,
         });
-        match bitmap {
+        self.mpv_draws(bitmap);
+    }
+
+    /// mpv renders subtitles itself only for tracks I cannot show as text: image tracks and
+    /// tracks that failed to load. `None` turns its renderer off.
+    pub fn mpv_draws(&self, track: Option<i64>) {
+        match track {
             Some(id) => {
                 self.player.mpv.set("sid", &id.to_string());
                 self.player.mpv.set_flag("sub-visibility", true);
@@ -436,7 +457,6 @@ impl App {
             "whisper.cpp:{}",
             model.file_stem().unwrap_or_default().to_string_lossy()
         );
-        let mut done = vec![false; asr_plan::window_count(duration)];
         let cached = self
             .jobs
             .store
@@ -445,17 +465,19 @@ impl App {
             .load_transcript(&s.media_key, &engine_id, lang.as_deref().unwrap_or(""))
             .ok()
             .flatten();
-        let mut cues = Vec::new();
-        if let Some((covered, cached_cues)) = cached {
-            let n = if covered >= duration {
-                done.len()
-            } else {
-                asr_plan::window_of(covered)
-            };
-            done.iter_mut().take(n).for_each(|d| *d = true);
-            cues = cached_cues;
+        let (mut done, mut cues) = (vec![false; asr_plan::window_count(duration)], Vec::new());
+        if let Some(saved) = cached {
+            let (restored, mask_used) =
+                asr_plan::restore_done(duration, saved.covered, &saved.done);
+            done = restored;
+            cues = saved.cues;
+            if !mask_used {
+                // Without a matching mask only the prefix is known to be complete.
+                cues.retain(|c| c.start < saved.covered);
+            }
         }
         s.tracks[index].set_cues(cues.clone());
+
         // Silero VAD keeps Whisper from inventing text over silence; I use it when the model
         // file sits next to the Whisper model.
         let vad_model = model.parent().and_then(|dir| {
@@ -510,7 +532,36 @@ impl App {
                     let s = self.session.as_mut().unwrap();
                     match result {
                         Ok(cues) => s.tracks[track].set_cues(cues),
-                        Err(e) => s.tracks[track].load = Load::Failed(e),
+                        Err(e) => {
+                            let t = &mut s.tracks[track];
+                            t.load = Load::Failed(e.clone());
+                            let mpv_id = match t.origin {
+                                Origin::Embedded { mpv_id, .. } if s.primary == Some(track) => {
+                                    Some(mpv_id)
+                                }
+                                _ => None,
+                            };
+                            let label = t.label.clone();
+                            let embedded = matches!(t.origin, Origin::Embedded { .. });
+                            let no_ffmpeg = self.ffmpeg.is_none();
+                            let text = match (mpv_id, no_ffmpeg) {
+                                (Some(_), true) => Some(NO_FFMPEG_TOAST.to_owned()),
+                                (Some(_), false) => Some(format!(
+                                    "Could not read the subtitles \"{label}\": {e} — they are shown without word lookup."
+                                )),
+                                // Same cause as the message for the main track; one is enough.
+                                (None, true) if embedded => None,
+                                (None, _) => {
+                                    Some(format!("Could not load the subtitles \"{label}\": {e}"))
+                                }
+                            };
+                            if mpv_id.is_some() {
+                                self.mpv_draws(mpv_id);
+                            }
+                            if let Some(text) = text {
+                                self.toast(text);
+                            }
+                        }
                     }
                     self.tokens.retain(|(t, _), _| *t != track);
                 }
@@ -685,7 +736,7 @@ impl App {
         let saved_id = self
             .vocab
             .iter()
-            .find(|v| v.word.word.eq_ignore_ascii_case(&word))
+            .find(|v| v.word.word.to_lowercase() == word.to_lowercase())
             .map(|v| v.id);
         self.popup = Some(WordPopup {
             request: self.next_request,
@@ -735,6 +786,10 @@ impl App {
             cue_end_ms: p.cue.1,
         };
         let id = self.jobs.store.lock().unwrap().save_word(&word).ok()?;
+        // Taken now, while the word's moment is on screen, so a later export has a picture.
+        let _ = self
+            .player
+            .screenshot(&paths::media_dir().join(format!("linguaplay_{id}.jpg")));
         self.reload_vocab();
         if let Some(p) = &mut self.popup {
             p.saved_id = Some(id);
@@ -774,7 +829,8 @@ impl App {
             .is_some_and(|s| s.media == entry.word.media_path);
         let on_screen = same_media && (self.snap.pos - entry.word.pos_ms).abs() < 3_000;
         let image = dir.join(format!("linguaplay_{vocab_id}.jpg"));
-        let image = (on_screen && self.player.screenshot(&image).is_ok()).then_some(image);
+        let image = (image.is_file() || (on_screen && self.player.screenshot(&image).is_ok()))
+            .then_some(image);
         let local = !entry.word.media_path.contains("://");
         let stream = self
             .audio_tracks

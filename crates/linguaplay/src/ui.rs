@@ -578,6 +578,7 @@ impl App {
         let mut pick_secondary = None;
         let mut toggle_asr = false;
         let mut add_file = false;
+        let mut save_srt = None;
         let mut pick_audio = None;
         ui.menu_button(RichText::new("Subtitles").size(13.0), |ui| {
             let Some(s) = &self.session else { return };
@@ -644,6 +645,22 @@ impl App {
             if ui.button("Add a subtitle file…").clicked() {
                 add_file = true;
             }
+            ui.separator();
+            let has_primary = s.primary_track().is_some();
+            let shown = s.secondary != Secondary::Off;
+            if ui
+                .add_enabled(has_primary, egui::Button::new("Save transcript as .srt…"))
+                .clicked()
+            {
+                save_srt = Some(false);
+            }
+            if shown
+                && ui
+                    .add_enabled(has_primary, egui::Button::new("Save translation as .srt…"))
+                    .clicked()
+            {
+                save_srt = Some(true);
+            }
             if self.audio_tracks.len() > 1 {
                 ui.separator();
                 ui.label(RichText::new("Audio").color(MUTED).small());
@@ -675,11 +692,48 @@ impl App {
                 self.open(&path.to_string_lossy());
             }
         }
+        if let Some(translation) = save_srt {
+            self.save_srt(translation);
+        }
         if let Some(id) = pick_audio {
             self.player.mpv.set("aid", &id.to_string());
             for a in &mut self.audio_tracks {
                 a.selected = a.id == id;
             }
+        }
+    }
+
+    fn save_srt(&mut self, translation: bool) {
+        let Some(s) = &self.session else { return };
+        let Some(t) = s.primary_track() else { return };
+        let (cues, lang) = if translation {
+            (s.translation_cues(), self.cfg.general.native_lang.clone())
+        } else {
+            (
+                t.track.cues.clone(),
+                t.track.lang.clone().unwrap_or_default(),
+            )
+        };
+        let title: String = s
+            .title
+            .chars()
+            .map(|c| if "\\/:*?\"<>|".contains(c) { '_' } else { c })
+            .collect();
+        let name = if lang.is_empty() {
+            format!("{title}.srt")
+        } else {
+            format!("{title}.{lang}.srt")
+        };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("SubRip", &["srt"])
+            .set_file_name(name)
+            .save_file()
+        else {
+            return;
+        };
+        match std::fs::write(&path, lp_core::write_srt(&cues)) {
+            Ok(()) => self.toast(format!("Saved {} lines to {}", cues.len(), path.display())),
+            Err(e) => self.toast(format!("Could not save {}: {e}", path.display())),
         }
     }
 
@@ -690,18 +744,12 @@ impl App {
         let Some(s) = &mut self.session else { return };
         s.primary = choice;
         self.scrolled_to = None;
-        // mpv draws image subtitles itself; for text tracks its own renderer stays off.
+        // mpv draws image subtitles (and tracks I could not read) itself; for text tracks its own renderer stays off.
         let bitmap_id = choice.and_then(|i| match (&s.tracks[i].origin, &s.tracks[i].load) {
-            (Origin::Embedded { mpv_id, .. }, Load::Bitmap) => Some(*mpv_id),
+            (Origin::Embedded { mpv_id, .. }, Load::Bitmap | Load::Failed(_)) => Some(*mpv_id),
             _ => None,
         });
-        match bitmap_id {
-            Some(id) => {
-                self.player.mpv.set("sid", &id.to_string());
-                self.player.mpv.set_flag("sub-visibility", true);
-            }
-            None => self.player.mpv.set_flag("sub-visibility", false),
-        }
+        self.mpv_draws(bitmap_id);
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -892,6 +940,11 @@ impl App {
 
     fn word_popup(&mut self, ctx: &egui::Context) {
         let Some(p) = &self.popup else { return };
+        let in_anki = p.saved_id.is_some_and(|id| {
+            self.vocab
+                .iter()
+                .any(|v| v.id == id && v.anki_note_id.is_some())
+        });
         let (mut save, mut anki, mut close) = (false, false, false);
         egui::Area::new(Id::unique("word-popup"))
             .order(egui::Order::Foreground)
@@ -955,7 +1008,12 @@ impl App {
                             if ui.button(label).clicked() {
                                 save = true;
                             }
-                            if ui.button("Send to Anki").clicked() {
+                            let label = if in_anki {
+                                "✔ In Anki"
+                            } else {
+                                "Send to Anki"
+                            };
+                            if ui.add_enabled(!in_anki, egui::Button::new(label)).clicked() {
                                 anki = true;
                             }
                             if ui.button("Copy").clicked() {

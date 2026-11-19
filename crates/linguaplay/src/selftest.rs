@@ -26,6 +26,8 @@ pub struct Plan {
     pub asr: bool,
     pub paused: bool,
     pub anki: bool,
+    pub strict: bool,
+    pub export_srt: Option<PathBuf>,
 }
 
 enum Phase {
@@ -53,6 +55,8 @@ pub struct State {
     word_opened: bool,
     subs_applied: bool,
     anki_sent: bool,
+    srt_exported: bool,
+    drops_at_start: Option<i64>,
     asr_first_cue: Option<Duration>,
     asr_minute_ready: Option<Duration>,
     asr_done: Option<Duration>,
@@ -73,6 +77,8 @@ impl State {
             word_opened: false,
             subs_applied: false,
             anki_sent: false,
+            srt_exported: false,
+            drops_at_start: None,
             asr_first_cue: None,
             asr_minute_ready: None,
             asr_done: None,
@@ -154,6 +160,7 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
             if loading && st.started.elapsed() < Duration::from_secs(60) {
                 return;
             }
+            export_srt(st, app);
             st.started = Instant::now();
             st.start_pos = app.snap.pos;
             app.player.set_paused(st.plan.paused);
@@ -231,6 +238,11 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
         }
         Phase::Play => {
             let elapsed = st.started.elapsed();
+            // The first moments of playback drop frames while the video output warms up; only
+            // what is dropped after that is judged.
+            if st.drops_at_start.is_none() && elapsed > Duration::from_secs(1) {
+                st.drops_at_start = app.player.mpv.get_i64("frame-drop-count");
+            }
             let pos = app.snap.pos;
             if let Some(s) = &app.session {
                 if st.seen_primary.is_none() {
@@ -353,11 +365,13 @@ fn report(st: &mut State, app: &App) {
     println!("pos_end_ms={}", app.snap.pos);
     println!("advanced_ms={advanced}");
     println!("frame_drop_count={}", int("frame-drop-count"));
+    let dropped = int("frame-drop-count");
     println!(
         "decoder_frame_drop_count={}",
         int("decoder-frame-drop-count")
     );
-    println!("fps={:.2}", mpv.get_f64("estimated-vf-fps").unwrap_or(0.0));
+    let fps = mpv.get_f64("estimated-vf-fps").unwrap_or(0.0);
+    println!("fps={fps:.2}");
     let has_video = app
         .player
         .tracks()
@@ -366,11 +380,31 @@ fn report(st: &mut State, app: &App) {
     if has_video && (width == 0 || height == 0) {
         st.failures.push("the video has no frame size".into());
     }
+    if st.plan.strict && has_video {
+        let hwdec = mpv.get_string("hwdec-current").unwrap_or_default();
+        if hwdec.is_empty() || hwdec == "no" {
+            st.failures
+                .push("the video is decoded in software (hwdec-current is empty or no)".into());
+        }
+        let fps = if fps > 0.0 {
+            fps
+        } else {
+            mpv.get_f64("container-fps").unwrap_or(0.0)
+        };
+        let allowed = (fps * st.plan.seconds * 0.01).max(3.0);
+        let late_drops = dropped - st.drops_at_start.unwrap_or(dropped);
+        if late_drops as f64 > allowed {
+            st.failures.push(format!(
+                "{late_drops} frames dropped while playing, more than the {allowed:.0} allowed"
+            ));
+        }
+    }
     if !st.plan.paused && advanced < 1_000 {
         st.failures
             .push(format!("playback advanced only {advanced} ms"));
     }
     report_vocab(st, app);
+    println!("toast={}", app.last_toast);
     let Some(s) = &app.session else { return };
     for (i, t) in s.tracks.iter().enumerate() {
         println!(
@@ -430,14 +464,47 @@ fn report(st: &mut State, app: &App) {
     }
 }
 
+fn export_srt(st: &mut State, app: &App) {
+    let Some(path) = st.plan.export_srt.clone().filter(|_| !st.srt_exported) else {
+        return;
+    };
+    st.srt_exported = true;
+    let Some(track) = app.session.as_ref().and_then(|s| s.primary_track()) else {
+        st.failures
+            .push("--export-srt: there is no primary subtitle track".into());
+        return;
+    };
+    let srt = lp_core::write_srt(&track.track.cues);
+    let back = lp_core::parse_subtitles(srt.as_bytes(), Some(lp_core::SubFormat::Srt));
+    if !back
+        .as_ref()
+        .is_ok_and(|b| b.len() == track.track.cues.len())
+    {
+        st.failures
+            .push("the exported SRT does not parse back to the same lines".into());
+        return;
+    }
+    match std::fs::write(&path, srt) {
+        Ok(()) => println!(
+            "exported_srt={} cues={}",
+            path.display(),
+            track.track.cues.len()
+        ),
+        Err(e) => st
+            .failures
+            .push(format!("could not write {}: {e}", path.display())),
+    }
+}
+
 fn report_vocab(st: &mut State, app: &App) {
     for v in &app.vocab {
         println!(
-            "word={} | {} | {} | anki={}",
+            "word={} | {} | {} | anki={} | media_path={}",
             v.word.word,
             v.word.translation,
             v.word.sentence,
-            v.anki_note_id.map_or("-".to_owned(), |id| id.to_string())
+            v.anki_note_id.map_or("-".to_owned(), |id| id.to_string()),
+            v.word.media_path
         );
     }
     if st.plan.anki && !app.vocab.iter().any(|v| v.anki_note_id.is_some()) {

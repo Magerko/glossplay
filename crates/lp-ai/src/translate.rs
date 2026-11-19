@@ -64,7 +64,7 @@ pub fn build_translator(cfg: &TranslationConfig) -> Result<Box<dyn Translator>, 
         }
         "openai" => {
             if cfg.model.is_empty() {
-                return Err(AiError::BadResponse(
+                return Err(AiError::Config(
                     "set translation.model for the openai provider".into(),
                 ));
             }
@@ -85,7 +85,7 @@ pub fn build_translator(cfg: &TranslationConfig) -> Result<Box<dyn Translator>, 
             key: need_key("anthropic")?,
             model: or(&cfg.model, "claude-opus-5-5"),
         })),
-        other => Err(AiError::BadResponse(format!(
+        other => Err(AiError::Config(format!(
             "unknown translation provider \"{other}\""
         ))),
     }
@@ -426,6 +426,19 @@ mod tests {
             lines,
             context_before: &[],
         }
+    }
+
+    #[test]
+    fn bad_settings_are_config_errors() {
+        let e = build_translator(&cfg("nope", "")).err().unwrap();
+        assert!(matches!(e, AiError::Config(_)) && !e.is_transient());
+        assert_eq!(e.to_string(), "unknown translation provider \"nope\"");
+        let mut no_model = cfg("openai", "");
+        no_model.model.clear();
+        assert!(matches!(
+            build_translator(&no_model).err(),
+            Some(AiError::Config(_))
+        ));
     }
 
     #[test]

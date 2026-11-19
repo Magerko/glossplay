@@ -28,6 +28,9 @@ Usage: linguaplay [FILE or URL] [options]
       --subs A,B                    languages of the primary and secondary track
       --autopause                   check auto-pause and repeat on the next line
       --asr                         run speech recognition
+      --anki                        save the opened word and send it to Anki
+      --strict                      also fail on software decoding or many dropped frames
+      --export-srt FILE.srt         write the primary subtitle track to a file
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
   --update-ytdlp                    download or update yt-dlp and print its version
@@ -61,6 +64,8 @@ fn main() {
             "--autopause" => plan.autopause = true,
             "--asr" => plan.asr = true,
             "--anki" => plan.anki = true,
+            "--strict" => plan.strict = true,
+            "--export-srt" => plan.export_srt = Some(value().into()),
             "--update-ytdlp" => {
                 return match ytdlp::ensure(false) {
                     Ok(outcome) => println!(
@@ -102,6 +107,7 @@ version={}",
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
+    let is_selftest = launch.selftest.is_some();
     let launch = Mutex::new(Some(launch));
     let result = eframe::run_native(
         "LinguaPlay",
@@ -116,6 +122,10 @@ version={}",
                 Ok(app) => Ok(Box::new(app) as Box<dyn eframe::App>),
                 Err(message) => {
                     eprintln!("{message}");
+                    if is_selftest {
+                        // Nobody is there to read a window; report on stderr and stop.
+                        std::process::exit(2);
+                    }
                     selftest::EXIT_CODE.store(2, Ordering::SeqCst);
                     Ok(Box::new(StartupError { message }))
                 }
@@ -151,7 +161,10 @@ impl eframe::App for StartupError {
 }
 
 fn translate_file_twice(file: &str, to: Option<&str>) -> i32 {
-    let (cfg, _) = paths::load_config();
+    let (cfg, config_error) = paths::load_config();
+    if let Some(e) = config_error {
+        eprintln!("{e}; using the default settings");
+    }
     let run = || -> Result<(), String> {
         let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
         let hint = file

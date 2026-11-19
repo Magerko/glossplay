@@ -484,16 +484,17 @@ fn run_asr(
 
         // Saved after every window: the player may be closed at any moment.
         let covered = asr_plan::covered_prefix(&p.done, p.duration);
-        let prefix: Vec<Cue> = p
-            .cues
-            .iter()
-            .filter(|c| c.start < covered)
-            .cloned()
-            .collect();
         let _ = store
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .save_transcript(&p.media_key, &engine.id(), &lang_key, covered, &prefix);
+            .save_transcript(
+                &p.media_key,
+                &engine.id(),
+                &lang_key,
+                covered,
+                &p.done,
+                &p.cues,
+            );
     }
     status("Transcript ready".into(), false);
     Ok(())

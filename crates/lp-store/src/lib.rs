@@ -51,11 +51,21 @@ pub struct VocabEntry {
     pub anki_note_id: Option<i64>,
 }
 
+/// Cached speech recognition: finished windows (empty for a pre-v2 row, where the
+/// windows before `covered` are the finished ones) and every cue found so far.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transcript {
+    pub covered: Ms,
+    pub done: Vec<bool>,
+    pub cues: Vec<Cue>,
+}
+
 pub struct Store {
     conn: Connection,
 }
 
-const MIGRATIONS: &[&str] = &["
+const MIGRATIONS: &[&str] = &[
+    "
 CREATE TABLE translation (
   provider TEXT NOT NULL,
   src_lang TEXT NOT NULL,
@@ -92,7 +102,10 @@ CREATE TABLE vocab (
   anki_note_id INTEGER,
   UNIQUE (word_key, lang)
 );
-"];
+",
+    // One '0'/'1' per recognition window; empty means only the prefix up to covered_ms is done.
+    "ALTER TABLE transcript ADD COLUMN done TEXT NOT NULL DEFAULT '';",
+];
 
 impl Store {
     pub fn open(path: &Path) -> Result<Store> {
@@ -167,16 +180,16 @@ impl Store {
         media_key: &str,
         engine: &str,
         lang: &str,
-    ) -> Result<Option<(Ms, Vec<Cue>)>> {
-        let row: Option<(Ms, String)> = self
+    ) -> Result<Option<Transcript>> {
+        let row: Option<(Ms, String, String)> = self
             .conn
             .query_row(
-                "SELECT covered_ms, cues FROM transcript WHERE media_key=?1 AND engine=?2 AND lang=?3",
+                "SELECT covered_ms, cues, done FROM transcript WHERE media_key=?1 AND engine=?2 AND lang=?3",
                 params![media_key, engine, lang],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let Some((covered, json)) = row else {
+        let Some((covered, json, done)) = row else {
             return Ok(None);
         };
         let raw: Vec<(Ms, Ms, String)> = serde_json::from_str(&json)
@@ -185,15 +198,21 @@ impl Store {
             .into_iter()
             .map(|(start, end, text)| Cue { start, end, text })
             .collect();
-        Ok(Some((covered, cues)))
+        Ok(Some(Transcript {
+            covered,
+            done: done.chars().map(|c| c == '1').collect(),
+            cues,
+        }))
     }
 
+    /// `done` has one flag per recognition window; pass an empty slice to store only the prefix.
     pub fn save_transcript(
         &self,
         media_key: &str,
         engine: &str,
         lang: &str,
         covered: Ms,
+        done: &[bool],
         cues: &[Cue],
     ) -> Result<()> {
         let raw: Vec<(Ms, Ms, &str)> = cues
@@ -201,10 +220,11 @@ impl Store {
             .map(|c| (c.start, c.end, c.text.as_str()))
             .collect();
         let json = serde_json::to_string(&raw).expect("tuples of numbers and strings serialize");
+        let mask: String = done.iter().map(|d| if *d { '1' } else { '0' }).collect();
         self.conn.execute(
-            "INSERT OR REPLACE INTO transcript (media_key, engine, lang, covered_ms, cues)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![media_key, engine, lang, covered, json],
+            "INSERT OR REPLACE INTO transcript (media_key, engine, lang, covered_ms, cues, done)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![media_key, engine, lang, covered, json, mask],
         )?;
         Ok(())
     }
@@ -350,16 +370,64 @@ mod tests {
             end: 900,
             text: "He said \"hi\"\nok".into(),
         }];
-        s.save_transcript("f:1", "w", "", 30_000, &cues).unwrap();
+        s.save_transcript("f:1", "w", "", 30_000, &[true, false], &cues)
+            .unwrap();
         assert_eq!(
             s.load_transcript("f:1", "w", "").unwrap(),
-            Some((30_000, cues.clone()))
+            Some(Transcript {
+                covered: 30_000,
+                done: vec![true, false],
+                cues: cues.clone()
+            })
         );
-        s.save_transcript("f:1", "w", "", 60_000, &[]).unwrap();
+        s.save_transcript("f:1", "w", "", 60_000, &[], &[]).unwrap();
         assert_eq!(
             s.load_transcript("f:1", "w", "").unwrap(),
-            Some((60_000, vec![]))
+            Some(Transcript {
+                covered: 60_000,
+                done: vec![],
+                cues: vec![]
+            })
         );
+    }
+
+    #[test]
+    fn out_of_order_windows_are_kept() {
+        let s = Store::open_in_memory().unwrap();
+        let done = [false, false, true, true, false];
+        s.save_transcript("f:2", "w", "en", 0, &done, &[]).unwrap();
+        let got = s.load_transcript("f:2", "w", "en").unwrap().unwrap();
+        assert_eq!(got.done, done);
+        assert_eq!(got.covered, 0);
+    }
+
+    #[test]
+    fn version_one_database_is_migrated() {
+        let dir = std::env::temp_dir().join(format!("lp-store-v1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v1.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN; {} PRAGMA user_version = 1; COMMIT;
+                 INSERT INTO transcript VALUES ('f:3', 'w', 'en', 45000, '[[0,900,\"old\"]]');",
+                MIGRATIONS[0]
+            ))
+            .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        let got = s.load_transcript("f:3", "w", "en").unwrap().unwrap();
+        assert_eq!(got.covered, 45_000);
+        assert!(got.done.is_empty(), "old rows have no mask");
+        assert_eq!(got.cues.len(), 1);
+        s.save_transcript("f:3", "w", "en", 0, &[false, true], &got.cues)
+            .unwrap();
+        assert_eq!(
+            s.load_transcript("f:3", "w", "en").unwrap().unwrap().done,
+            [false, true]
+        );
+        drop(s);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

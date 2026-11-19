@@ -77,6 +77,24 @@ pub fn covered_prefix(done: &[bool], duration: Ms) -> Ms {
     }
 }
 
+/// Windows already transcribed, from what was cached. A saved mask counts only if it fits the
+/// current window count; otherwise I fall back to the prefix up to `covered`. The flag says
+/// whether the mask was used, i.e. whether cues past `covered` can be trusted.
+pub fn restore_done(duration: Ms, covered: Ms, mask: &[bool]) -> (Vec<bool>, bool) {
+    let total = window_count(duration);
+    if !mask.is_empty() && mask.len() == total {
+        return (mask.to_vec(), true);
+    }
+    let n = if covered >= duration {
+        total
+    } else {
+        window_of(covered)
+    };
+    let mut done = vec![false; total];
+    done.iter_mut().take(n).for_each(|d| *d = true);
+    (done, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +176,22 @@ mod tests {
         );
         let texts: Vec<&str> = cues.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, ["a", "b", "border", "c"]);
+    }
+
+    #[test]
+    fn restoring_done_windows() {
+        assert_eq!(
+            restore_done(100_000, 60_000, &[]),
+            (vec![true, true, false, false], false)
+        );
+        assert_eq!(restore_done(45_000, 45_000, &[]).0, [true, true]);
+        let mask = [false, false, true, true];
+        assert_eq!(restore_done(100_000, 0, &mask), (mask.to_vec(), true));
+        // The file is longer than when it was cached: the mask no longer fits.
+        assert_eq!(
+            restore_done(130_000, 30_000, &mask),
+            (vec![true, false, false, false, false], false)
+        );
     }
 
     #[test]

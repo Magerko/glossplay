@@ -10,10 +10,17 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AiError {
-    MissingKey { provider: String },
-    Http { status: u16, body: String },
+    MissingKey {
+        provider: String,
+    },
+    Http {
+        status: u16,
+        body: String,
+    },
     Network(String),
     BadResponse(String),
+    /// A setting is wrong; the text already says what to change.
+    Config(String),
     Unsupported,
     Duplicate,
 }
@@ -36,6 +43,7 @@ impl fmt::Display for AiError {
             AiError::Http { status, body } => write!(f, "HTTP {status}: {body}"),
             AiError::Network(e) => write!(f, "network error: {e}"),
             AiError::BadResponse(e) => write!(f, "unexpected response: {e}"),
+            AiError::Config(e) => write!(f, "{e}"),
             AiError::Unsupported => write!(f, "this provider does not support the operation"),
             AiError::Duplicate => write!(f, "this note already exists"),
         }

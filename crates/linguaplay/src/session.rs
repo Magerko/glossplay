@@ -231,6 +231,26 @@ impl Session {
         }
     }
 
+    /// The primary track's cues with their translation as text, for export. Cues without a
+    /// translation yet are left out.
+    pub fn translation_cues(&self) -> Vec<Cue> {
+        let Some(t) = self.primary_track() else {
+            return Vec::new();
+        };
+        t.track
+            .cues
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                Some(Cue {
+                    start: c.start,
+                    end: c.end,
+                    text: self.translation_of(i)?,
+                })
+            })
+            .collect()
+    }
+
     /// The text shown as translation for one primary cue, whatever its source.
     pub fn translation_of(&self, cue: usize) -> Option<String> {
         let t = self.primary_track()?;
@@ -407,6 +427,26 @@ mod tests {
         assert!(s.secondary_lines(30_000).is_empty(), "not translated yet");
         s.tracks[0].translation[0] = Tr::Done("Здравствуй".into());
         assert_eq!(s.secondary_lines(30_000), ["Здравствуй"]);
+    }
+
+    #[test]
+    fn translation_cues_follow_the_shown_translation() {
+        let mut s = Session::new(1, "movie.mkv".into());
+        s.tracks.push(ready(
+            "en",
+            vec![cue(1_000, 2_000, "Hello"), cue(3_000, 4_000, "Bye")],
+        ));
+        s.tracks
+            .push(ready("ru", vec![cue(1_100, 2_100, "Привет")]));
+        s.primary = Some(0);
+        assert!(s.translation_cues().is_empty());
+
+        s.secondary = Secondary::Track(1);
+        assert_eq!(s.translation_cues(), [cue(1_000, 2_000, "Привет")]);
+
+        s.secondary = Secondary::Translate;
+        s.tracks[0].translation[1] = Tr::Done("Пока".into());
+        assert_eq!(s.translation_cues(), [cue(3_000, 4_000, "Пока")]);
     }
 
     #[test]
