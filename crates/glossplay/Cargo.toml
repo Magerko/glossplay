@@ -16,3 +16,11 @@ eframe = { version = "0.37", default-features = false, features = ["glow", "defa
 directories = "6"
 rfd = "0.15"
 png = "0.18"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+] }

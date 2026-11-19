@@ -6,6 +6,7 @@ mod paths;
 mod player;
 mod selftest;
 mod session;
+mod shell;
 mod theme;
 mod ui;
 mod video;
@@ -35,7 +36,10 @@ Usage: glossplay [FILE or URL] [options]
                                     translation shown under it to FILE.tr.srt
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
-  --update-ytdlp                    download or update yt-dlp and print its version
+  --shell-register                  add Glossplay to Explorer's \"Open with\" and context menu
+                                    (current user only; it does not become the default program)
+  --shell-unregister                remove those entries
+  --update-ytdlp                 download or update yt-dlp and print its version
   --size WxH                        window size
   --version, --help";
 
@@ -68,6 +72,8 @@ fn main() {
             "--anki" => plan.anki = true,
             "--strict" => plan.strict = true,
             "--export-srt" => plan.export_srt = Some(value().into()),
+            "--shell-register" => std::process::exit(shell::cli(true)),
+            "--shell-unregister" => std::process::exit(shell::cli(false)),
             "--update-ytdlp" => {
                 return match ytdlp::ensure(false) {
                     Ok(outcome) => println!(

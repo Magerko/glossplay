@@ -1207,6 +1207,14 @@ impl App {
                                 ui.label("Interface scale");
                                 ui.add(egui::Slider::new(&mut draft.general.ui_scale, 0.75..=2.0));
                                 ui.end_row();
+                                if crate::shell::SUPPORTED {
+                                    ui.label("");
+                                    ui.checkbox(
+                                        &mut draft.general.shell_integration,
+                                        "Show Glossplay in Explorer's \"Open with\" and context menu",
+                                    );
+                                    ui.end_row();
+                                }
                             });
                     });
                 ui.add_space(10.0);

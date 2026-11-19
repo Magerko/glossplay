@@ -58,6 +58,8 @@ Known limits of this version:
    `winget install Gyan.FFmpeg`
 3. Run `glossplay.exe`, drop a video on the window.
 
+Optionally, turn on "Show Glossplay in Explorer's Open with and context menu" in Settings: it adds entries for the current user only and does not make Glossplay your default player. On Windows 11 the entry is under "Show more options".
+
 ### Linux and macOS
 
 Build from source (below) and install mpv's library and FFmpeg:

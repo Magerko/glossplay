@@ -30,6 +30,8 @@ pub struct General {
     pub learn_lang: String,
     pub native_lang: String,
     pub ui_scale: f32,
+    /// Windows only: "Open with" and context-menu entries in Explorer.
+    pub shell_integration: bool,
 }
 
 impl Default for General {
@@ -38,6 +40,7 @@ impl Default for General {
             learn_lang: "en".into(),
             native_lang: "ru".into(),
             ui_scale: 1.0,
+            shell_integration: false,
         }
     }
 }
@@ -165,6 +168,9 @@ mod tests {
         let c = Config::from_toml("[general]\nnative_lang = \"de\"\nfuture_field = 1\n").unwrap();
         assert_eq!(c.general.native_lang, "de");
         assert_eq!(c.general.learn_lang, "en");
+        assert!(!c.general.shell_integration);
+        let on = Config::from_toml("[general]\nshell_integration = true\n").unwrap();
+        assert!(on.general.shell_integration);
         assert_eq!(c.translation.provider, "google");
     }
 

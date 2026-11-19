@@ -53,6 +53,8 @@
    `winget install Gyan.FFmpeg`
 3. 运行 `glossplay.exe`，把视频拖进窗口。
 
+如需，可在设置中开启“在资源管理器的“打开方式”和右键菜单中显示 Glossplay”：它只对当前用户生效，不会把 Glossplay 设为默认播放器。在 Windows 11 中，该项位于“显示更多选项”里。
+
 ### Linux 和 macOS
 
 从源码构建（见下文），并安装 mpv 库和 FFmpeg：

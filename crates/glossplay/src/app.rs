@@ -4,7 +4,7 @@ use crate::session::{
     Load, Origin, Secondary, Session, SubTrack, normalize_lang, sidecar_subtitles,
 };
 use crate::video::VideoSurface;
-use crate::{paths, selftest, theme};
+use crate::{paths, selftest, shell, theme};
 use eframe::egui;
 use gp_ai::translate::{Translator, build_translator};
 use gp_core::asr_plan;
@@ -129,6 +129,17 @@ impl App {
         let jobs = Jobs::new(cc.egui_ctx.clone(), store);
         if cfg.player.ytdl_path.is_empty() {
             jobs.spawn(|| Msg::YtDlp(crate::ytdlp::ensure(false)));
+        }
+
+        // Automated runs with a private data dir must not touch the user's registry.
+        let isolated_selftest =
+            launch.selftest.is_some() && std::env::var_os(paths::ENV_CONFIG_DIR).is_some();
+        if cfg.general.shell_integration && shell::SUPPORTED && !isolated_selftest {
+            std::thread::spawn(|| {
+                if let Err(e) = shell::refresh_if_stale() {
+                    eprintln!("shell integration: {e}");
+                }
+            });
         }
 
         let mut app = App {
@@ -884,7 +895,18 @@ impl App {
 
     pub fn apply_settings(&mut self, new: Config) {
         let rescale = new.general.ui_scale != self.cfg.general.ui_scale;
+        let shell_changed = new.general.shell_integration != self.cfg.general.shell_integration;
         self.cfg = new;
+        if shell_changed && shell::SUPPORTED && self.selftest.is_none() {
+            let result = if self.cfg.general.shell_integration {
+                shell::register()
+            } else {
+                shell::unregister()
+            };
+            if let Err(e) = result {
+                self.toast(format!("Explorer integration: {e}"));
+            }
+        }
         self.translator = make_translator(&self.cfg);
         self.trainer.autopause = self.cfg.training.autopause;
         self.ffmpeg = tools::locate("ffmpeg", &self.cfg.player.ffmpeg_path).ok();
