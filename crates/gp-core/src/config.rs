@@ -8,6 +8,7 @@ pub struct Config {
     pub subtitles: Subtitles,
     pub translation: Translation,
     pub asr: Asr,
+    pub tts: Tts,
     pub training: Training,
     pub anki: Anki,
 }
@@ -153,6 +154,36 @@ impl Default for Asr {
     }
 }
 
+/// Voice-over: the translation spoken over the original sound.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Tts {
+    pub enabled: bool,
+    /// Volume of the original sound while the voice-over plays, in percent of the normal one.
+    pub original_volume: f64,
+    pub voice_volume: f64,
+    /// What the install button sets up: "vulkan" (any graphics card) or "nvidia".
+    pub install_engine: String,
+    /// An OpenAI-style speech server of the user's own; empty runs the installed engine.
+    pub base_url: String,
+    pub model: String,
+    pub voice: String,
+}
+
+impl Default for Tts {
+    fn default() -> Self {
+        Tts {
+            enabled: false,
+            original_volume: 25.0,
+            voice_volume: 100.0,
+            install_engine: "vulkan".into(),
+            base_url: String::new(),
+            model: String::new(),
+            voice: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Training {
@@ -189,6 +220,8 @@ mod tests {
         let on = Config::from_toml("[general]\nshell_integration = true\n").unwrap();
         assert!(on.general.shell_integration);
         assert_eq!(c.translation.provider, "google");
+        assert!(!c.tts.enabled, "the voice-over stays off until asked for");
+        assert_eq!((c.tts.original_volume, c.tts.voice_volume), (25.0, 100.0));
     }
 
     #[test]
