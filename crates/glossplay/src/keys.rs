@@ -401,7 +401,23 @@ pub struct Combo {
     pub modifiers: Modifiers,
 }
 
+/// What egui-winit reports for the platform's main modifier: Cmd on macOS (`mac_cmd` and
+/// `command`, no `ctrl`), Ctrl elsewhere (`ctrl` and `command`); see `State::on_modifiers_changed`.
+pub fn primary_modifiers(mac: bool) -> Modifiers {
+    if mac {
+        Modifiers::MAC_CMD | Modifiers::COMMAND
+    } else {
+        Modifiers::CTRL | Modifiers::COMMAND
+    }
+}
+
 pub fn parse_combo(s: &str) -> Result<Combo, String> {
+    parse_combo_for(s, cfg!(target_os = "macos"))
+}
+
+/// `ctrl`, `cmd` and `command` all mean the platform's main modifier; I never produce a
+/// real Ctrl on macOS because nothing in the player is bound to it there.
+pub fn parse_combo_for(s: &str, mac: bool) -> Result<Combo, String> {
     let s = s.trim().to_lowercase();
     let mut parts: Vec<&str> = s.split('+').collect();
     // "ctrl++" would be a plus key; nothing here is bound to it.
@@ -409,13 +425,8 @@ pub fn parse_combo(s: &str) -> Result<Combo, String> {
     let mut modifiers = Modifiers::NONE;
     for m in parts {
         match m {
-            "ctrl" | "control" => {
-                modifiers.ctrl = true;
-                modifiers.command = !cfg!(target_os = "macos");
-            }
-            "cmd" => {
-                modifiers.mac_cmd = cfg!(target_os = "macos");
-                modifiers.command = true;
+            "ctrl" | "control" | "cmd" | "command" => {
+                modifiers |= primary_modifiers(mac);
             }
             "shift" => modifiers.shift = true,
             "alt" => modifiers.alt = true,
@@ -510,12 +521,15 @@ pub fn synthesize(layout: Layout, combo: &Combo, clipboard: &str) -> Synth {
 mod tests {
     use super::*;
 
-    fn press(layout: Layout, combo: &str, clipboard: &str) -> Vec<Event> {
-        synthesize(layout, &parse_combo(combo).unwrap(), clipboard).press
+    // Each test runs as on Windows/Linux and as on macOS, whatever the host is.
+    const PLATFORMS: [bool; 2] = [false, true];
+
+    fn press(mac: bool, layout: Layout, combo: &str, clipboard: &str) -> Vec<Event> {
+        synthesize(layout, &parse_combo_for(combo, mac).unwrap(), clipboard).press
     }
 
-    fn run(layout: Layout, combo: &str, gate: Gate) -> Vec<Action> {
-        actions(&press(layout, combo, ""), gate)
+    fn run(mac: bool, layout: Layout, combo: &str, gate: Gate) -> Vec<Action> {
+        actions(&press(mac, layout, combo, ""), gate)
     }
 
     const FREE: Gate = Gate {
@@ -533,60 +547,64 @@ mod tests {
 
     #[test]
     fn a_russian_layout_sends_the_physical_key_and_cyrillic_text() {
-        let events = press(Layout::Ru, "s", "");
-        assert_eq!(
-            events,
-            [
-                Event::Key {
-                    key: Key::S,
-                    physical_key: Some(Key::S),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: Modifiers::NONE,
-                },
-                Event::Text("ы".into()),
-            ]
-        );
-        assert_eq!(
-            press(Layout::Ru, "ctrl+v", "C:\\a.mkv"),
-            [
-                Event::ModifiersChanged(Modifiers::COMMAND | Modifiers::CTRL),
-                Event::Paste("C:\\a.mkv".into()),
-            ]
-        );
+        for mac in PLATFORMS {
+            let events = press(mac, Layout::Ru, "s", "");
+            assert_eq!(
+                events,
+                [
+                    Event::Key {
+                        key: Key::S,
+                        physical_key: Some(Key::S),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                    Event::Text("ы".into()),
+                ]
+            );
+            assert_eq!(
+                press(mac, Layout::Ru, "ctrl+v", "C:\\a.mkv"),
+                [
+                    Event::ModifiersChanged(primary_modifiers(mac)),
+                    Event::Paste("C:\\a.mkv".into()),
+                ]
+            );
+        }
     }
 
     #[test]
     fn every_letter_shortcut_works_the_same_in_both_layouts() {
-        let cases = [
-            ("space", Command::PlayPause),
-            ("left", Command::Back),
-            ("right", Command::Forward),
-            ("up", Command::VolumeUp),
-            ("down", Command::VolumeDown),
-            ("a", Command::PreviousLine),
-            ("s", Command::RepeatLine),
-            ("d", Command::NextLine),
-            ("p", Command::AutoPause),
-            ("f", Command::Fullscreen),
-            ("t", Command::Sidebar),
-            ("m", Command::Mute),
-            ("1", Command::ToggleOriginal),
-            ("2", Command::ToggleTranslation),
-            ("[", Command::Slower),
-            ("]", Command::Faster),
-            ("shift+s", Command::RepeatLine),
-            ("ctrl+o", Command::OpenFile),
-            ("ctrl+f", Command::Search),
-            ("escape", Command::Escape),
-        ];
-        for layout in [Layout::En, Layout::Ru] {
-            for (combo, want) in cases {
-                assert_eq!(
-                    run(layout, combo, FREE),
-                    [Action::Run(want)],
-                    "{layout:?} {combo}"
-                );
+        for mac in PLATFORMS {
+            let cases = [
+                ("space", Command::PlayPause),
+                ("left", Command::Back),
+                ("right", Command::Forward),
+                ("up", Command::VolumeUp),
+                ("down", Command::VolumeDown),
+                ("a", Command::PreviousLine),
+                ("s", Command::RepeatLine),
+                ("d", Command::NextLine),
+                ("p", Command::AutoPause),
+                ("f", Command::Fullscreen),
+                ("t", Command::Sidebar),
+                ("m", Command::Mute),
+                ("1", Command::ToggleOriginal),
+                ("2", Command::ToggleTranslation),
+                ("[", Command::Slower),
+                ("]", Command::Faster),
+                ("shift+s", Command::RepeatLine),
+                ("ctrl+o", Command::OpenFile),
+                ("ctrl+f", Command::Search),
+                ("escape", Command::Escape),
+            ];
+            for layout in [Layout::En, Layout::Ru] {
+                for (combo, want) in cases {
+                    assert_eq!(
+                        run(mac, layout, combo, FREE),
+                        [Action::Run(want)],
+                        "{layout:?} {combo}"
+                    );
+                }
             }
         }
     }
@@ -622,58 +640,64 @@ mod tests {
 
     #[test]
     fn typing_in_a_field_keeps_the_player_shortcuts_off() {
-        for layout in [Layout::En, Layout::Ru] {
-            for combo in ["s", "a", "space", "1", "[", "left", "m"] {
-                assert_eq!(run(layout, combo, TYPING), [], "{layout:?} {combo}");
+        for mac in PLATFORMS {
+            for layout in [Layout::En, Layout::Ru] {
+                for combo in ["s", "a", "space", "1", "[", "left", "m"] {
+                    assert_eq!(run(mac, layout, combo, TYPING), [], "{layout:?} {combo}");
+                }
+                assert_eq!(
+                    run(mac, layout, "ctrl+f", TYPING),
+                    [Action::Run(Command::Search)]
+                );
+                assert_eq!(
+                    run(mac, layout, "ctrl+o", TYPING),
+                    [Action::Run(Command::OpenFile)]
+                );
+                assert_eq!(
+                    run(mac, layout, "escape", TYPING),
+                    [Action::Run(Command::Escape)]
+                );
+                assert_eq!(
+                    actions(&press(mac, layout, "ctrl+v", "https://x.test/v"), TYPING),
+                    []
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_dialog_lets_only_escape_through() {
+        for mac in PLATFORMS {
+            for combo in ["s", "space", "ctrl+o", "ctrl+f", "f"] {
+                assert_eq!(run(mac, Layout::Ru, combo, MODAL), [], "{combo}");
             }
             assert_eq!(
-                run(layout, "ctrl+f", TYPING),
-                [Action::Run(Command::Search)]
-            );
-            assert_eq!(
-                run(layout, "ctrl+o", TYPING),
-                [Action::Run(Command::OpenFile)]
-            );
-            assert_eq!(
-                run(layout, "escape", TYPING),
+                run(mac, Layout::Ru, "escape", MODAL),
                 [Action::Run(Command::Escape)]
             );
             assert_eq!(
-                actions(&press(layout, "ctrl+v", "https://x.test/v"), TYPING),
+                actions(&press(mac, Layout::En, "ctrl+v", "https://x.test/v"), MODAL),
                 []
             );
         }
     }
 
     #[test]
-    fn a_dialog_lets_only_escape_through() {
-        for combo in ["s", "space", "ctrl+o", "ctrl+f", "f"] {
-            assert_eq!(run(Layout::Ru, combo, MODAL), [], "{combo}");
-        }
-        assert_eq!(
-            run(Layout::Ru, "escape", MODAL),
-            [Action::Run(Command::Escape)]
-        );
-        assert_eq!(
-            actions(&press(Layout::En, "ctrl+v", "https://x.test/v"), MODAL),
-            []
-        );
-    }
-
-    #[test]
     fn modifiers_keep_letters_from_firing() {
-        for combo in ["ctrl+s", "alt+s", "ctrl+space", "alt+space", "ctrl+1"] {
-            assert_eq!(run(Layout::En, combo, FREE), [], "{combo}");
+        for mac in PLATFORMS {
+            for combo in ["ctrl+s", "alt+s", "ctrl+space", "alt+space", "ctrl+1"] {
+                assert_eq!(run(mac, Layout::En, combo, FREE), [], "{combo}");
+            }
+            // Ctrl+V with nothing on the clipboard reaches nobody, as with egui-winit.
+            assert_eq!(run(mac, Layout::Ru, "ctrl+v", FREE), []);
+            assert_eq!(
+                actions(&press(mac, Layout::Ru, "ctrl+v", "x"), FREE),
+                [Action::Paste("x".into())]
+            );
+            // A release is not a press.
+            let release = synthesize(Layout::En, &parse_combo("s").unwrap(), "").release;
+            assert_eq!(actions(&release, FREE), []);
         }
-        // Ctrl+V with nothing on the clipboard reaches nobody, as with egui-winit.
-        assert_eq!(run(Layout::Ru, "ctrl+v", FREE), []);
-        assert_eq!(
-            actions(&press(Layout::Ru, "ctrl+v", "x"), FREE),
-            [Action::Paste("x".into())]
-        );
-        // A release is not a press.
-        let release = synthesize(Layout::En, &parse_combo("s").unwrap(), "").release;
-        assert_eq!(actions(&release, FREE), []);
     }
 
     #[test]
@@ -725,5 +749,53 @@ mod tests {
         assert!(parse_combo("hyper+s").is_err());
         assert!(parse_combo("ы").is_err());
         assert!(parse_combo("f13x").is_err());
+    }
+
+    #[test]
+    fn the_main_modifier_follows_the_platform() {
+        let win = parse_combo_for("ctrl+v", false).unwrap().modifiers;
+        assert!(win.ctrl && win.command && !win.mac_cmd);
+        let mac = parse_combo_for("ctrl+v", true).unwrap().modifiers;
+        assert!(mac.mac_cmd && mac.command && !mac.ctrl);
+        for name in ["ctrl", "control", "cmd", "command"] {
+            for on_mac in PLATFORMS {
+                assert_eq!(
+                    parse_combo_for(&format!("{name}+v"), on_mac)
+                        .unwrap()
+                        .modifiers,
+                    primary_modifiers(on_mac),
+                    "{name} mac={on_mac}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn on_a_mac_command_runs_the_shortcuts_and_ctrl_does_not() {
+        for (combo, want) in [("cmd+o", Command::OpenFile), ("cmd+f", Command::Search)] {
+            assert_eq!(run(true, Layout::En, combo, FREE), [Action::Run(want)]);
+        }
+        assert_eq!(
+            actions(&press(true, Layout::Ru, "cmd+v", "x"), FREE),
+            [Action::Paste("x".into())]
+        );
+        // A physical Ctrl on a Mac reaches the player as plain `ctrl`, without `command`.
+        let ctrl_o = Event::Key {
+            key: Key::O,
+            physical_key: Some(Key::O),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::CTRL,
+        };
+        assert_eq!(actions(&[ctrl_o], FREE), []);
+        // And Cmd on Windows/Linux is not a thing: no `command`, no shortcut.
+        let cmd_o = Event::Key {
+            key: Key::O,
+            physical_key: Some(Key::O),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::MAC_CMD,
+        };
+        assert_eq!(actions(&[cmd_o], FREE), []);
     }
 }
