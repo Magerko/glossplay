@@ -1,0 +1,13 @@
+[package]
+name = "make-icon"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Rasterises assets/icon.svg into the PNG set and icon.ico"
+
+# Not a member of the player workspace: its dependencies stay out of the player's Cargo.lock.
+[workspace]
+
+[dependencies]
+resvg = "0.50"
+ico = "0.6"
