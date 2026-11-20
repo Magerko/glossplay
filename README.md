@@ -73,7 +73,8 @@ Known limits of this version:
 
 ### Windows
 
-1. Download `glossplay-windows-x64.zip` from [Releases](../../releases) and unpack it.
+1. Download `glossplay-setup-x64.exe` from [Releases](../../releases) and run it. It installs for the current user and needs no administrator rights. The installer is not code-signed, so Windows SmartScreen may warn about an unknown publisher: click "More info", then "Run anyway".
+   Or download `glossplay-windows-x64.zip` and unpack it instead.
 2. Install FFmpeg — it is used to read subtitle tracks and audio:
    `winget install Gyan.FFmpeg`
 3. Run `glossplay.exe`, drop a video on the window.

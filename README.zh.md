@@ -62,7 +62,8 @@
 
 ### Windows
 
-1. 从 [Releases](../../releases) 页面下载 `glossplay-windows-x64.zip` 并解压。
+1. 从 [Releases](../../releases) 页面下载 `glossplay-setup-x64.exe` 并运行。它只为当前用户安装，不需要管理员权限。安装程序没有代码签名，因此 Windows SmartScreen 可能提示“未知发布者”：点击“更多信息”，再点击“仍要运行”。
+   或者下载 `glossplay-windows-x64.zip` 并解压。
 2. 安装 FFmpeg（用于读取字幕轨和音频）：
    `winget install Gyan.FFmpeg`
 3. 运行 `glossplay.exe`，把视频拖进窗口。
