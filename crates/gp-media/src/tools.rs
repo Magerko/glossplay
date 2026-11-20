@@ -72,6 +72,11 @@ pub fn output_of(program: &Path, args: &[&str]) -> Result<Vec<u8>, MediaError> {
 /// Options that go before `-i`: the headers a site wants, the size of the requests.
 fn with_input<'a>(input: &'a [String], media: &'a str) -> Vec<&'a str> {
     let mut args: Vec<&str> = input.iter().map(String::as_str).collect();
+    // Without a limit a stalled connection leaves ffmpeg, and the transcription behind it,
+    // waiting for ever at 0%.
+    if media.starts_with("http") {
+        args.extend(["-rw_timeout", "20000000"]);
+    }
     args.extend(["-i", media]);
     args
 }
