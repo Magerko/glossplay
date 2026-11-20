@@ -121,6 +121,26 @@ pub fn text(key: Tr) -> &'static str {
         Tr::AsrAutoCheck => "视频没有字幕时自动识别语音",
         Tr::DeckRow => "牌组",
         Tr::AnkiAddressRow => "AnkiConnect 地址",
+        Tr::AnkiStatusRow => "与 Anki 的连接",
+        Tr::AnkiCheckButton => "检查",
+        Tr::AnkiChecking => "正在检查…",
+        Tr::AnkiConnected => "已连接：Anki 有响应（AnkiConnect API 版本 {0}）。",
+        Tr::AnkiStatusNotRunning => "Anki 未运行。请启动 Anki，并在发送单词时保持它打开。",
+        Tr::AnkiStatusNoAddon => {
+            "未找到 AnkiConnect 插件。请先安装（见下方“如何连接 Anki”），然后启动 Anki。"
+        }
+        Tr::AnkiStatusNoAnswer => {
+            "此地址没有响应。请启动装有 AnkiConnect 插件的 Anki（见下方“如何连接 Anki”）。"
+        }
+        Tr::AnkiStatusError => "此地址有响应，但不像 AnkiConnect：{0}",
+        Tr::AnkiHowTo => "如何连接 Anki",
+        Tr::AnkiStep1 => "1. 安装 Anki（一款免费的记忆卡片软件）并启动它：",
+        Tr::AnkiStep2 => {
+            "2. 在 Anki 中选择“工具”→“附加组件”→“获取附加组件”，输入代码 {0}，然后点击确定。"
+        }
+        Tr::AnkiStep3 => "3. 重启 Anki，并在从播放器发送单词时保持它打开。",
+        Tr::AnkiCopyCode => "复制代码",
+        Tr::AnkiCodeCopied => "已复制",
         Tr::SectionPlayer => "播放器",
         Tr::HwdecRow => "硬件解码",
         Tr::InterfaceScaleRow => "界面缩放",
@@ -177,7 +197,9 @@ pub fn text(key: Tr) -> &'static str {
 
         // Messages from background jobs.
         Tr::FfmpegNotFound => "未找到 ffmpeg",
-        Tr::AnkiNotRunning => "Anki 未运行或未安装 AnkiConnect",
+        Tr::AnkiNotRunning => {
+            "Anki 没有响应：请启动装有 AnkiConnect 插件的 Anki（设置 → “单词与 Anki” → “如何连接 Anki”）"
+        }
         Tr::AlreadyInDeck => "这个单词已在牌组中",
         Tr::AsrStopped => "语音识别已停止：{0}",
         Tr::AsrStarting => "正在启动语音识别…",

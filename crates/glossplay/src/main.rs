@@ -1,5 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod anki_ui;
 mod app;
 mod asr_setup;
 mod buffering;

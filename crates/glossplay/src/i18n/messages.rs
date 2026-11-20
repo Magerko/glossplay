@@ -251,6 +251,52 @@ messages! {
     ],
     DeckRow => ["Deck", "Колода", "Колода"],
     AnkiAddressRow => ["AnkiConnect address", "Адрес AnkiConnect", "Адреса AnkiConnect"],
+    AnkiStatusRow => ["Connection to Anki", "Связь с Anki", "Зв’язок з Anki"],
+    AnkiCheckButton => ["Check", "Проверить", "Перевірити"],
+    AnkiChecking => ["Checking…", "Проверяем…", "Перевіряємо…"],
+    AnkiConnected => [
+        "Connected: Anki answers (AnkiConnect API version {0}).",
+        "Подключено: Anki отвечает (версия API AnkiConnect — {0}).",
+        "Підключено: Anki відповідає (версія API AnkiConnect — {0})."
+    ],
+    AnkiStatusNotRunning => [
+        "Anki is not running. Start Anki and keep it open while you send words.",
+        "Anki не запущена. Запустите Anki и оставьте её открытой, пока отправляете слова.",
+        "Anki не запущена. Запустіть Anki й залишайте її відкритою, поки надсилаєте слова."
+    ],
+    AnkiStatusNoAddon => [
+        "The AnkiConnect add-on was not found. Install it (see \"How to connect Anki\" below), then start Anki.",
+        "Дополнение AnkiConnect не найдено. Установите его (см. «Как подключить Anki» ниже) и запустите Anki.",
+        "Доповнення AnkiConnect не знайдено. Встановіть його (див. «Як підключити Anki» нижче) і запустіть Anki."
+    ],
+    AnkiStatusNoAnswer => [
+        "Nothing answers at this address. Start Anki with the AnkiConnect add-on (see \"How to connect Anki\" below).",
+        "По этому адресу никто не отвечает. Запустите Anki с дополнением AnkiConnect (см. «Как подключить Anki» ниже).",
+        "За цією адресою ніхто не відповідає. Запустіть Anki з доповненням AnkiConnect (див. «Як підключити Anki» нижче)."
+    ],
+    AnkiStatusError => [
+        "The address answers, but not like AnkiConnect: {0}",
+        "Адрес отвечает, но не как AnkiConnect: {0}",
+        "Адреса відповідає, але не як AnkiConnect: {0}"
+    ],
+    AnkiHowTo => ["How to connect Anki", "Как подключить Anki", "Як підключити Anki"],
+    AnkiStep1 => [
+        "1. Install Anki, a free flashcard program, and start it:",
+        "1. Установите Anki — бесплатную программу с карточками — и запустите её:",
+        "1. Встановіть Anki — безкоштовну програму з картками — і запустіть її:"
+    ],
+    AnkiStep2 => [
+        "2. In Anki choose Tools, Add-ons, Get Add-ons, enter the code {0} and press OK.",
+        "2. В Anki выберите «Инструменты» → «Дополнения» → «Получить дополнения», введите код {0} и нажмите OK.",
+        "2. В Anki виберіть «Інструменти» → «Доповнення» → «Отримати доповнення», введіть код {0} і натисніть OK."
+    ],
+    AnkiStep3 => [
+        "3. Restart Anki and keep it open while you send words from the player.",
+        "3. Перезапустите Anki и оставьте её открытой, пока отправляете слова из плеера.",
+        "3. Перезапустіть Anki й залишайте її відкритою, поки надсилаєте слова з плеєра."
+    ],
+    AnkiCopyCode => ["Copy the code", "Скопировать код", "Скопіювати код"],
+    AnkiCodeCopied => ["Copied", "Скопировано", "Скопійовано"],
     SectionPlayer => ["Player", "Плеер", "Плеєр"],
     HwdecRow => ["Hardware decoding", "Аппаратное декодирование", "Апаратне декодування"],
     InterfaceScaleRow => ["Interface scale", "Масштаб интерфейса", "Масштаб інтерфейсу"],
@@ -382,9 +428,9 @@ messages! {
     // Messages from background jobs.
     FfmpegNotFound => ["ffmpeg was not found", "ffmpeg не найден", "ffmpeg не знайдено"],
     AnkiNotRunning => [
-        "Anki is not running or AnkiConnect is not installed",
-        "Anki не запущен или не установлен AnkiConnect",
-        "Anki не запущено або не встановлено AnkiConnect"
+        "Anki does not answer: start it with the AnkiConnect add-on (Settings, \"Words and Anki\", \"How to connect Anki\")",
+        "Anki не отвечает: запустите её с дополнением AnkiConnect (Настройки → «Слова и Anki» → «Как подключить Anki»)",
+        "Anki не відповідає: запустіть її з доповненням AnkiConnect (Налаштування → «Слова та Anki» → «Як підключити Anki»)"
     ],
     AlreadyInDeck => [
         "this word is already in the deck",

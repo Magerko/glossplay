@@ -750,6 +750,7 @@ fn words(ui: &mut egui::Ui, form: &Form, draft: &mut Config) {
     form.row(ui, t(Tr::AnkiAddressRow), Some(t(Tr::InfoAnki)), |ui| {
         form.text(ui, &mut draft.anki.url, "http://127.0.0.1:8765");
     });
+    crate::anki_ui::section(ui, form, draft);
 }
 
 fn player(ui: &mut egui::Ui, form: &Form, draft: &mut Config) {
