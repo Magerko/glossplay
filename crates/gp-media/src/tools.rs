@@ -19,8 +19,26 @@ fn quiet(mut cmd: Command) -> Command {
     cmd
 }
 
-/// Finds a helper binary: explicit path, then next to the executable, then PATH.
+/// Finds a helper binary: explicit path, then next to the executable (in its folder or in a
+/// subfolder named after the tool, which is where the Windows package keeps ffmpeg), then PATH.
 pub fn locate(tool: &str, configured: &str) -> Result<PathBuf, MediaError> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_owned));
+    locate_in(
+        tool,
+        configured,
+        exe_dir.as_deref(),
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )
+}
+
+fn locate_in(
+    tool: &str,
+    configured: &str,
+    exe_dir: Option<&Path>,
+    path_var: &std::ffi::OsStr,
+) -> Result<PathBuf, MediaError> {
     if !configured.is_empty() {
         let p = PathBuf::from(configured);
         return if p.is_file() {
@@ -30,17 +48,14 @@ pub fn locate(tool: &str, configured: &str) -> Result<PathBuf, MediaError> {
         };
     }
     let exe_name = format!("{tool}{}", std::env::consts::EXE_SUFFIX);
-    if let Some(dir) = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(Path::to_owned))
-    {
+    if let Some(dir) = exe_dir {
         for candidate in [dir.join(&exe_name), dir.join(tool).join(&exe_name)] {
             if candidate.is_file() {
                 return Ok(candidate);
             }
         }
     }
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+    std::env::split_paths(path_var)
         .map(|dir| dir.join(&exe_name))
         .find(|p| p.is_file())
         .ok_or(MediaError::ToolNotFound { tool: tool.into() })
@@ -428,5 +443,68 @@ mod win {
             return Err(io::Error::last_os_error());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn touch(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"").unwrap();
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gp-locate-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn exe_name() -> String {
+        format!("ffmpeg{}", std::env::consts::EXE_SUFFIX)
+    }
+
+    #[test]
+    fn locate_goes_from_the_setting_to_the_package_to_path() {
+        let root = scratch("order");
+        let (app, on_path) = (root.join("app"), root.join("path"));
+        let bundled = app.join("ffmpeg").join(exe_name());
+        let system = on_path.join(exe_name());
+        let custom = root.join("mine").join("my-ffmpeg");
+        for p in [&bundled, &system, &custom] {
+            touch(p);
+        }
+        let path_var = std::env::join_paths([&on_path]).unwrap();
+
+        let found = locate_in("ffmpeg", custom.to_str().unwrap(), Some(&app), &path_var);
+        assert_eq!(found.unwrap(), custom);
+        let found = locate_in("ffmpeg", "", Some(&app), &path_var);
+        assert_eq!(found.unwrap(), bundled);
+        let beside = app.join(exe_name());
+        touch(&beside);
+        let found = locate_in("ffmpeg", "", Some(&app), &path_var);
+        assert_eq!(found.unwrap(), beside);
+        let found = locate_in("ffmpeg", "", Some(&root.join("elsewhere")), &path_var);
+        assert_eq!(found.unwrap(), system);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn locate_reports_a_wrong_setting_and_a_missing_tool() {
+        let root = scratch("wrong");
+        touch(&root.join("app").join(exe_name()));
+        let missing = root.join("nope").join("ffmpeg");
+        let none = std::ffi::OsStr::new("");
+        let found = locate_in(
+            "ffmpeg",
+            missing.to_str().unwrap(),
+            Some(&root.join("app")),
+            none,
+        );
+        assert!(matches!(found, Err(MediaError::ToolNotFound { .. })));
+        let found = locate_in("ffmpeg", "", Some(&root.join("empty")), none);
+        assert!(matches!(found, Err(MediaError::ToolNotFound { .. })));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

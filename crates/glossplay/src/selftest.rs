@@ -1028,6 +1028,10 @@ fn report(st: &mut State, app: &App) {
     let (width, height) = (int("width"), int("height"));
     let advanced = app.snap.pos - st.start_pos;
     println!("ui_lang={}", crate::i18n::lang().code());
+    match &app.ffmpeg {
+        Some(p) => println!("ffmpeg={}", p.display()),
+        None => println!("ffmpeg=none"),
+    }
     println!("duration_ms={}", app.snap.duration);
     let ms = |d: Option<Duration>| d.map_or("-".to_owned(), |d| d.as_millis().to_string());
     println!("first_frame_ms={}", ms(st.first_frame));
