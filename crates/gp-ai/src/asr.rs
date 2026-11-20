@@ -45,11 +45,17 @@ impl AsrEngine for WhisperServer {
     fn transcribe(&self, pcm: &[i16], lang: Option<&str>) -> Result<AsrOutput, AiError> {
         let boundary = "----glossplay-boundary-7d9f2c";
         let mut body = Vec::with_capacity(pcm.len() * 2 + 1024);
-        let fields = [
+        let lang = lang.filter(|l| !l.is_empty());
+        let mut fields = vec![
             ("response_format", "verbose_json"),
-            ("language", lang.filter(|l| !l.is_empty()).unwrap_or("auto")),
+            ("language", lang.unwrap_or("auto")),
             ("temperature", "0.0"),
         ];
+        // On a window where the voice detector finds nothing, whisper-server crashes while
+        // working out language probabilities. With the language given I have no use for them.
+        if lang.is_some() {
+            fields.push(("no_language_probabilities", "true"));
+        }
         for (name, value) in fields {
             body.extend_from_slice(
                 format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
@@ -199,6 +205,18 @@ mod tests {
         );
         assert!(got[0].body.contains("name=\"language\"\r\n\r\nauto"));
         assert!(got[0].body.contains("verbose_json") && got[0].body.contains("RIFF"));
+    }
+
+    #[test]
+    fn known_language_skips_the_probabilities_that_crash_the_server() {
+        let reply = r#"{"language":"english","segments":[]}"#;
+        let srv = TestServer::start(vec![(200, reply.into()), (200, reply.into())]);
+        let engine = WhisperServer::new(&srv.url, "m");
+        engine.transcribe(&[0i16; 1600], Some("en")).unwrap();
+        engine.transcribe(&[0i16; 1600], None).unwrap();
+        let got = srv.received.lock().unwrap();
+        assert!(got[0].body.contains("name=\"no_language_probabilities\""));
+        assert!(!got[1].body.contains("no_language_probabilities"));
     }
 
     #[test]

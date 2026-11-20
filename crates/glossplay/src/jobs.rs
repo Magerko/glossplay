@@ -6,7 +6,7 @@ use crate::session::SentenceKey;
 use eframe::egui;
 use gp_ai::AiError;
 use gp_ai::anki::{AnkiClient, AnkiNote};
-use gp_ai::asr::{AsrEngine, WhisperServer};
+use gp_ai::asr::{AsrEngine, AsrOutput, WhisperServer};
 use gp_ai::translate::{TranslateRequest, Translator, translate_resilient};
 use gp_core::asr_plan;
 use gp_core::{Cue, Ms};
@@ -468,8 +468,53 @@ impl Jobs {
     }
 }
 
-/// Crashes of whisper-server survived in one transcription before it gives up.
-const MAX_RESTARTS: usize = 2;
+/// A window that took the server down this many times in a row is taken for empty.
+const WINDOW_CRASHES: usize = 2;
+/// Windows skipped that way, one after another with no good answer between them, after which
+/// the server itself is blamed.
+const KILLER_WINDOWS: usize = 3;
+
+#[derive(Debug, PartialEq)]
+enum Verdict {
+    Retry,
+    /// Treat the window as done and empty; the server is fine otherwise.
+    Skip,
+    GiveUp(usize),
+}
+
+/// Tells a window that kills whisper-server from a server that does not work at all.
+#[derive(Default)]
+struct CrashLog {
+    window: Option<usize>,
+    repeats: usize,
+    skipped: usize,
+}
+
+impl CrashLog {
+    fn crashed(&mut self, window: usize) -> Verdict {
+        self.repeats = if self.window == Some(window) {
+            self.repeats + 1
+        } else {
+            1
+        };
+        self.window = Some(window);
+        if self.repeats < WINDOW_CRASHES {
+            return Verdict::Retry;
+        }
+        self.window = None;
+        self.repeats = 0;
+        self.skipped += 1;
+        if self.skipped >= KILLER_WINDOWS {
+            Verdict::GiveUp(self.skipped * WINDOW_CRASHES)
+        } else {
+            Verdict::Skip
+        }
+    }
+
+    fn answered(&mut self) {
+        *self = CrashLog::default();
+    }
+}
 
 /// What a transcription shares with the rest of the program.
 struct Asr<'a> {
@@ -583,7 +628,7 @@ fn run_asr(
             );
     };
     let mut saved = Instant::now();
-    let (mut restarts, mut retry) = (0, None);
+    let (mut crashes, mut retry) = (CrashLog::default(), None);
     while let Some(k) = retry
         .take()
         .or_else(|| asr_plan::next_window(&p.done, playhead.load(Ordering::Relaxed)))
@@ -623,7 +668,10 @@ fn run_asr(
             Vec::new()
         } else {
             let out = match engine.transcribe(&pcm, p.lang.as_deref()) {
-                Ok(out) => out,
+                Ok(out) => {
+                    crashes.answered();
+                    out
+                }
                 // The server was killed under me on purpose; that is not an error to show.
                 Err(_) if asr.stopped() => {
                     save(&p);
@@ -637,16 +685,19 @@ fn run_asr(
                             other => tf(Tr::WhisperFailed, &[&other]),
                         });
                     }
-                    if restarts == MAX_RESTARTS {
-                        return Err(tf(Tr::WhisperQuitTimes, &[&(restarts + 1)]));
+                    let verdict = crashes.crashed(k);
+                    if let Verdict::GiveUp(n) = verdict {
+                        return Err(tf(Tr::WhisperQuitTimes, &[&n]));
                     }
-                    restarts += 1;
                     let Some(fresh) = asr.server(&p)? else {
                         return Ok(());
                     };
                     engine = fresh;
-                    retry = Some(k);
-                    continue;
+                    if verdict == Verdict::Retry {
+                        retry = Some(k);
+                        continue;
+                    }
+                    AsrOutput::default()
                 }
             };
             language = out.language;
@@ -681,6 +732,54 @@ fn run_asr(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn window_that_kills_the_server_twice_is_skipped() {
+        let mut log = CrashLog::default();
+        assert_eq!(log.crashed(4), Verdict::Retry);
+        assert_eq!(log.crashed(4), Verdict::Skip);
+        // The counters start over, so the next window gets its own two tries.
+        assert_eq!(log.crashed(5), Verdict::Retry);
+        assert_eq!(log.crashed(5), Verdict::Skip);
+    }
+
+    #[test]
+    fn a_good_answer_clears_the_crash_record() {
+        let mut log = CrashLog::default();
+        for w in [1, 1, 2, 2] {
+            log.crashed(w);
+        }
+        log.answered();
+        assert_eq!(log.crashed(3), Verdict::Retry);
+        assert_eq!(log.crashed(3), Verdict::Skip);
+        assert_eq!(log.crashed(4), Verdict::Retry);
+        assert_eq!(log.crashed(4), Verdict::Skip);
+    }
+
+    #[test]
+    fn several_different_windows_in_a_row_blame_the_server() {
+        let mut log = CrashLog::default();
+        let verdicts: Vec<_> = [1, 1, 2, 2, 3, 3].iter().map(|w| log.crashed(*w)).collect();
+        assert_eq!(
+            verdicts,
+            vec![
+                Verdict::Retry,
+                Verdict::Skip,
+                Verdict::Retry,
+                Verdict::Skip,
+                Verdict::Retry,
+                Verdict::GiveUp(6)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_crash_on_another_window_restarts_the_count() {
+        let mut log = CrashLog::default();
+        assert_eq!(log.crashed(1), Verdict::Retry);
+        assert_eq!(log.crashed(2), Verdict::Retry);
+        assert_eq!(log.crashed(1), Verdict::Retry);
+    }
 
     struct Fake {
         calls: AtomicUsize,
