@@ -1060,7 +1060,7 @@ fn open_settings(st: &mut State, app: &mut App, args: &Value) -> Result<Outcome,
     match section {
         "top" | "speech_recognition" | "voice_over" => {
             if app.settings_draft.is_none() {
-                app.settings_draft = Some(app.cfg.clone());
+                app.settings_draft = Some(app.new_settings_draft());
             }
             st.scroll = match section {
                 "speech_recognition" => Some(Section::SpeechRecognition),

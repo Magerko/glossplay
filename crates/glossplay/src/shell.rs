@@ -48,6 +48,27 @@ fn verb_keys(perceived: &[(&str, Option<String>)]) -> Vec<String> {
     keys
 }
 
+/// What the registry says about the Explorer entries, compared with this exe's command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    /// Both the "Open with" entry and the menu verb run this copy of the player.
+    Here,
+    Missing,
+    /// Some entry exists but runs something else (another copy, or a half-written set).
+    Elsewhere,
+}
+
+/// `open_with` and `verb` are the stored commands of the two entries, `want` this exe's.
+/// Paths on Windows ignore case.
+fn classify(open_with: Option<&str>, verb: Option<&str>, want: &str) -> State {
+    let same = |c: Option<&str>| c.is_some_and(|c| c.eq_ignore_ascii_case(want));
+    match (open_with, verb) {
+        (None, None) => State::Missing,
+        _ if same(open_with) && same(verb) => State::Here,
+        _ => State::Elsewhere,
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use super::*;
@@ -253,6 +274,21 @@ mod imp {
         Ok("unregistered".into())
     }
 
+    /// Reads the registry; nothing is written.
+    pub fn state() -> Result<State, String> {
+        let want = command_for(&exe_path()?);
+        let at = |key: &str| {
+            get(
+                HKEY_CURRENT_USER,
+                &format!("Software\\Classes\\{key}\\command"),
+                None,
+            )
+        };
+        let open_with = at(&format!("{APP_KEY}\\shell\\open"));
+        let verb = at(&format!("SystemFileAssociations\\video\\shell\\{VERB}"));
+        Ok(classify(open_with.as_deref(), verb.as_deref(), &want))
+    }
+
     /// Re-registers when the stored command points somewhere else, e.g. after the player
     /// folder was moved. A missing registration counts as stale too.
     pub fn refresh_if_stale() -> Result<bool, String> {
@@ -277,9 +313,12 @@ mod imp {
     pub fn refresh_if_stale() -> Result<bool, String> {
         Err(NO.into())
     }
+    pub fn state() -> Result<super::State, String> {
+        Err(NO.into())
+    }
 }
 
-pub use imp::{refresh_if_stale, register, unregister};
+pub use imp::{refresh_if_stale, register, state, unregister};
 
 pub const SUPPORTED: bool = cfg!(windows);
 
@@ -317,6 +356,18 @@ mod tests {
         assert_eq!(label_for(0), "Play with Glossplay");
     }
 
+    #[test]
+    fn registry_state_is_judged_by_the_command() {
+        let me = r#""C:\Apps\Glossplay\glossplay.exe" "%1""#;
+        let other = r#""D:\Old\glossplay.exe" "%1""#;
+        let lower = me.to_lowercase();
+        assert_eq!(classify(None, None, me), State::Missing);
+        assert_eq!(classify(Some(me), Some(me), me), State::Here);
+        assert_eq!(classify(Some(&lower), Some(me), me), State::Here);
+        assert_eq!(classify(Some(other), Some(other), me), State::Elsewhere);
+        assert_eq!(classify(Some(me), None, me), State::Elsewhere);
+        assert_eq!(classify(Some(me), Some(other), me), State::Elsewhere);
+    }
     #[test]
     fn extension_keys_only_where_type_is_unknown() {
         let perceived = [

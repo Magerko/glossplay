@@ -285,7 +285,7 @@ fn inject_step(st: &mut State, app: &mut App, ctx: &egui::Context, raw: &mut egu
         }
         "playing" => s.playing_from = Some((app.snap.pos, Instant::now())),
         "settings" => {
-            app.settings_draft = Some(app.cfg.clone());
+            app.settings_draft = Some(app.new_settings_draft());
             println!("step=settings");
         }
         _ => {
@@ -422,7 +422,7 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 // Dialogs are drawn before this runs, so they must be open a frame ahead.
                 st.word_opened = true;
                 if st.plan.settings {
-                    app.settings_draft = Some(app.cfg.clone());
+                    app.settings_draft = Some(app.new_settings_draft());
                 }
                 if st.plan.setup_dialog {
                     app.open_asr_setup(false);
@@ -476,13 +476,13 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                     app.open_asr_setup(false);
                 }
                 if st.plan.settings {
-                    app.settings_draft = Some(app.cfg.clone());
+                    app.settings_draft = Some(app.new_settings_draft());
                 }
                 if st.plan.tts_dialog {
                     app.open_tts_setup(false);
                 }
                 if st.plan.settings_voice {
-                    app.settings_draft = Some(app.cfg.clone());
+                    app.settings_draft = Some(app.new_settings_draft());
                 }
                 if st.plan.setup_install {
                     // The Install button of the dialog opened from the Subtitles menu: when the

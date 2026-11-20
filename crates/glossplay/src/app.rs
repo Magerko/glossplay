@@ -229,7 +229,25 @@ impl App {
         if let Some(media) = launch.media {
             app.open(&media);
         }
+        if !app.cfg.general.shell_integration {
+            app.sync_shell_switch();
+        }
         Ok(app)
+    }
+
+    /// The settings start from the config, except that the Explorer switch shows what the
+    /// registry says: the installer registers the entries without touching the config.
+    pub fn new_settings_draft(&mut self) -> Config {
+        self.sync_shell_switch();
+        self.cfg.clone()
+    }
+
+    fn sync_shell_switch(&mut self) {
+        if shell::SUPPORTED && self.selftest.is_none() {
+            if let Ok(state) = shell::state() {
+                self.cfg.general.shell_integration = state == shell::State::Here;
+            }
+        }
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {

@@ -414,7 +414,7 @@ impl App {
         }
         ui.add_space(8.0);
         if ui.link(t(Tr::SettingsLink)).clicked() {
-            self.settings_draft = Some(self.cfg.clone());
+            self.settings_draft = Some(self.new_settings_draft());
         }
         if self.asr_setup.installed.is_none() {
             ui.add_space(4.0);
@@ -644,7 +644,7 @@ impl App {
                     self.toggle_fullscreen(ui.ctx());
                 }
                 if fit.settings && icon_button(ui, "⚙", t(Tr::SettingsHint)) {
-                    self.settings_draft = Some(self.cfg.clone());
+                    self.settings_draft = Some(self.new_settings_draft());
                 }
                 if fit.settings
                     && self.search_available()
@@ -986,7 +986,7 @@ impl App {
             self.toggle_autopause();
         }
         if open_settings {
-            self.settings_draft = Some(self.cfg.clone());
+            self.settings_draft = Some(self.new_settings_draft());
         }
         if open_search {
             self.open_search(None);
