@@ -172,7 +172,6 @@ pub fn text(key: Tr) -> &'static str {
         Tr::ExplorerIntegration => "资源管理器集成：{0}",
         Tr::OldConfigKept => "旧的 config.toml 无法解析；已将其保存为 {0}",
         Tr::CouldNotKeepConfig => "无法保存旧 config.toml 的副本：{0}",
-        Tr::ScaleAfterRestart => "界面缩放将在重启后生效",
         Tr::OpenDialogTitle => "打开视频或字幕",
         Tr::CouldNotPlay => "无法播放此文件",
 
@@ -453,7 +452,7 @@ pub fn text(key: Tr) -> &'static str {
         Tr::InfoAnki => "Anki 需要安装 AnkiConnect 插件并保持运行。已存的单词会进入这个牌组。",
         Tr::InfoHwdec => "让显卡解码视频。留空或填写“auto”；如果画面出现异常，填写“no”。",
         Tr::InfoFfmpeg => "ffmpeg 用来读取视频文件内的字幕，以及语音识别所需的声音。",
-        Tr::InfoScale => "放大或缩小所有文字和按钮。重启后生效。",
+        Tr::InfoScale => "放大或缩小所有文字和按钮。点击保存后生效。",
         Tr::AsrListensFor => "识别语言：{0}（视频语言）",
         Tr::AsrListensAny => "识别任何语言，并自动判断是哪一种",
         Tr::ChangeLanguage => "更改…",

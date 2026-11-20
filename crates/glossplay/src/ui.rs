@@ -100,6 +100,9 @@ impl eframe::App for App {
         if std::mem::take(&mut self.restyle) {
             theme::apply_colors(&ctx, &self.cfg.general.theme);
         }
+        if std::mem::take(&mut self.rescale) {
+            theme::apply(&ctx, self.cfg.general.ui_scale, &self.cfg.general.theme);
+        }
         let chinese = crate::i18n::lang() == crate::i18n::Lang::Zh;
         if chinese != self.fonts_chinese {
             self.fonts_chinese = chinese;

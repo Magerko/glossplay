@@ -368,11 +368,6 @@ messages! {
         "Не удалось сохранить копию старого config.toml: {0}",
         "Не вдалося зберегти копію старого config.toml: {0}"
     ],
-    ScaleAfterRestart => [
-        "The interface scale applies after a restart",
-        "Масштаб интерфейса применится после перезапуска",
-        "Масштаб інтерфейсу застосується після перезапуску"
-    ],
     OpenDialogTitle => [
         "Open video or subtitles",
         "Открыть видео или субтитры",
@@ -1209,9 +1204,9 @@ messages! {
         "ffmpeg читає субтитри всередині відеофайлів і звук для розпізнавання мовлення."
     ],
     InfoScale => [
-        "Makes all text and buttons larger or smaller. It applies after a restart.",
-        "Делает весь текст и кнопки крупнее или мельче. Применяется после перезапуска.",
-        "Робить увесь текст і кнопки більшими або меншими. Застосовується після перезапуску."
+        "Makes all text and buttons larger or smaller. It applies when you press Save.",
+        "Делает весь текст и кнопки крупнее или мельче. Применяется при сохранении.",
+        "Робить увесь текст і кнопки більшими або меншими. Застосовується під час збереження."
     ],
     AsrListensFor => [
         "Listens for: {0} (the language of the videos)",

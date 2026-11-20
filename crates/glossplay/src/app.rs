@@ -89,6 +89,8 @@ pub struct App {
     pub help_open: bool,
     /// The theme setting changed; the next frame sets the colours again.
     pub restyle: bool,
+    /// The interface scale changed in Settings and is applied in the next frame.
+    pub rescale: bool,
     /// The fonts are ordered for a Chinese interface.
     pub fonts_chinese: bool,
     pub url_input: String,
@@ -252,6 +254,7 @@ impl App {
             settings_tab: Default::default(),
             help_open: false,
             restyle: false,
+            rescale: false,
             fonts_chinese,
             url_input: String::new(),
             status: None,
@@ -1223,7 +1226,7 @@ impl App {
     }
 
     pub fn apply_settings(&mut self, new: Config) {
-        let rescale = new.general.ui_scale != self.cfg.general.ui_scale;
+        self.rescale |= new.general.ui_scale != self.cfg.general.ui_scale;
         self.restyle |= new.general.theme != self.cfg.general.theme;
         if self.selftest.is_none() {
             i18n::apply_setting(&new.general.ui_lang);
@@ -1286,9 +1289,6 @@ impl App {
         }
         if let Err(e) = paths::save_config(&mut self.cfg) {
             self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
-        }
-        if rescale {
-            self.toast(t(Tr::ScaleAfterRestart));
         }
     }
 
