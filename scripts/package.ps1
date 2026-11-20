@@ -108,6 +108,9 @@ ffmpeg\ffmpeg.exe
         param($name)
         [IO.File]::ReadAllText((Join-Path $repo "licenses\$name"), [Text.Encoding]::UTF8).TrimEnd()
     }
+    $pins = Get-Content (Join-Path $repo 'installer\anki-pins.iss') -Raw
+    $ankiVersion = [regex]::Match($pins, 'AnkiVersion "([^"]+)"').Groups[1].Value
+    $ankiConnectVersion = [regex]::Match($pins, 'AnkiConnectVersion "([^"]+)"').Groups[1].Value
     $rule = '-' * 78
     $third = @"
 Third-party components shipped with Glossplay
@@ -119,6 +122,12 @@ Glossplay
 $mpvText
 
 $ffmpegText
+
+Anki and the AnkiConnect add-on (not part of this package)
+  If you tick the Anki page of the Windows installer, it downloads Anki $ankiVersion
+  (AGPL-3.0-or-later, https://github.com/ankitects/anki) and the AnkiConnect add-on $ankiConnectVersion
+  (GPL-3.0-or-later, https://git.sr.ht/~foosoft/anki-connect) from those official sources and
+  installs them. Glossplay does not distribute either one, and its uninstaller leaves them alone.
 
 Rust crates
   Every crate linked into glossplay.exe, with its licence and copyright notices, is

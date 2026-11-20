@@ -70,6 +70,7 @@
 1. 从 [Releases](../../releases) 页面下载 `glossplay-setup-x64.exe` 并运行。它只为当前用户安装，不需要管理员权限。安装程序没有代码签名，因此 Windows SmartScreen 可能提示“未知发布者”：点击“更多信息”，再点击“仍要运行”。
    或者下载 `glossplay-windows-x64.zip` 并解压。
    FFmpeg 已包含在内（位于 `glossplay.exe` 旁的 `ffmpeg` 文件夹），无需另行安装。
+   安装程序还有一个可选的 Anki 页面：它会说明 Anki 是什么，如果勾选相应选项，就会从官方来源下载 Anki 和 AnkiConnect 插件（校验文件的校验和）并完成安装。跳过它，播放器也能完整使用：已存的单词保存在内置列表中。
 2. 运行 `glossplay.exe`，把视频拖进窗口。
 
 语音识别和配音需要 Microsoft Visual C++ Redistributable 2015–2022 (x64)。
@@ -165,7 +166,7 @@ GitHub 上的 audio.cpp（版本 v0.9.5）和 Hugging Face 上的 OmniVoice 模�
 `base_url`（例如 `http://host:port/v1`；留空表示使用已安装的引擎）、`model`、`voice`（留空表示服务器默认声音）、
 以听感响度百分比表示的 `original_volume` 和 `voice_volume`（50 听起来响度减半，即 −10 dB；原声默认 35，约 −15 dB），以及 `enabled`（默认关闭）。使用已安装的引擎时，`voice_source = "speaker"`（默认）用视频中说话人的声音朗读：声音只在本机根据视频自身几秒钟的音频复制，不会发送到任何地方；`"default"` 则使用一个固定的标准声音。自己的服务器始终使用它自己的声音。
 
-**Anki。** 安装 [AnkiConnect](https://ankiweb.net/shared/info/2055492159) 插件并保持 Anki 运行。
+**Anki。** Windows 安装程序可以替您安装 Anki 和插件（Anki 页面）。手动安装：先装 [Anki](https://apps.ankiweb.net)，再装 [AnkiConnect](https://ankiweb.net/shared/info/2055492159) 插件（“工具”→“附加组件”→“获取附加组件”，代码 `2055492159`），并保持 Anki 运行。“设置”→“单词与 Anki”会显示 Anki 是否有响应，并重复这些步骤。
 牌组和“Glossplay”笔记类型会在第一次导出时自动创建。
 
 **自己的来源。** Glossplay 可以通过支持 Torznab 协议的搜索服务器

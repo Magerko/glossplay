@@ -88,6 +88,7 @@ Known limits of this version:
 1. Download `glossplay-setup-x64.exe` from [Releases](../../releases) and run it. It installs for the current user and needs no administrator rights. The installer is not code-signed, so Windows SmartScreen may warn about an unknown publisher: click "More info", then "Run anyway".
    Or download `glossplay-windows-x64.zip` and unpack it instead.
    FFmpeg is included (it is in the `ffmpeg` folder next to `glossplay.exe`); you do not need to install it.
+   The installer also has an optional Anki page. It explains what Anki is and, if you tick the boxes, downloads Anki and the AnkiConnect add-on from their official sources (the checksums are verified) and sets them up. Skip it and the player works in full; saved words stay in its built-in list.
 2. Run `glossplay.exe`, drop a video on the window.
 
 Speech recognition and voice-over need the Microsoft Visual C++ Redistributable 2015–2022 (x64).
@@ -204,8 +205,10 @@ engine, `voice_source = "speaker"` (the default) speaks in the voice of the pers
 copied from a few seconds of its own sound on this computer and sent nowhere, and `"default"`
 in one standard voice; a server of your own always speaks in its own voice.
 
-**Anki.** Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on and keep
-Anki running. The deck and the "Glossplay" note type are created on first use.
+**Anki.** The Windows installer can set up Anki and the add-on for you (its Anki page). By hand:
+install [Anki](https://apps.ankiweb.net), then the [AnkiConnect](https://ankiweb.net/shared/info/2055492159)
+add-on (Tools, Add-ons, Get Add-ons, code `2055492159`), and keep Anki running. Settings, "Words and
+Anki" shows whether Anki answers and repeats these steps. The deck and the "Glossplay" note type are created on first use.
 
 **Your own sources.** Glossplay can search through a search server that speaks the Torznab
 protocol ([Jackett](https://github.com/Jackett/Jackett), [Prowlarr](https://prowlarr.com)) and

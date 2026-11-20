@@ -14,6 +14,9 @@
 #define AppExe "glossplay.exe"
 #define AppUrl "https://github.com/Magerko/glossplay"
 
+; Pinned versions and SHA-256 of the optional Anki downloads (written by scripts\update-anki-pins.ps1).
+#include "anki-pins.iss"
+
 [Setup]
 ; Never change this GUID: it is what makes a new version install over the old one.
 AppId={{89171F3D-837A-44EF-9C99-5DCA626462A3}
@@ -76,6 +79,8 @@ chinese.TaskDefaultGroup=默认应用：
 chinese.DefaultAppHint=Windows 会请您确认选择：请为需要的文件类型选择 Glossplay。
 chinese.AskRemoveData=是否同时删除设置、词典和已下载的组件？
 
+#include "anki-messages.iss"
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "shell"; Description: "{cm:TaskShell}"; GroupDescription: "{cm:TaskShellGroup}"
@@ -120,6 +125,19 @@ const
 var
   OpenDefaultApps: Boolean;
   HintAdded: Boolean;
+
+#include "anki-code.pas"
+
+var
+  AnkiPage: TWizardPage;
+  AnkiText: TNewMemo;
+  AnkiStatus: TNewStaticText;
+  AnkiCheck, AddonCheck: TNewCheckBox;
+  AnkiPresent, AddonPresent: Boolean;
+  DownloadPage: TDownloadWizardPage;
+  // Paths of verified downloads; empty when the part was not chosen or did not download.
+  AnkiMsi, AddonZip: String;
+  AnkiNow, AddonNow: Boolean;
 
 function NextExtension(var List: String): String;
 var
@@ -195,6 +213,175 @@ begin
     SaveStringToFile(Dir + '\config.toml', '[general]' + #13#10 + 'ui_lang = "' + Lang + '"' + #13#10, False);
 end;
 
+function OnDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+begin
+  Result := True;
+end;
+
+procedure CreateAnkiPage;
+var
+  Y: Integer;
+  Info, Status: String;
+begin
+  AnkiPresent := AnkiAppFound;
+  AddonPresent := DirExists(AddonDir(AnkiBaseDir));
+
+  AnkiPage := CreateCustomPage(wpSelectTasks, CustomMessage('AnkiPageTitle'), CustomMessage('AnkiPageSub'));
+
+  Info := CustomMessage('AnkiAbout') + #13#10#13#10;
+  if AnkiPresent then
+    Info := Info + CustomMessage('AnkiDownloadAddon')
+  else
+    Info := Info + FmtMessage(CustomMessage('AnkiDownloadBoth'), ['{#AnkiSizeMB}']);
+
+  AnkiText := TNewMemo.Create(AnkiPage);
+  AnkiText.Parent := AnkiPage.Surface;
+  AnkiText.Left := 0;
+  AnkiText.Top := 0;
+  AnkiText.Width := AnkiPage.SurfaceWidth;
+  AnkiText.Height := AnkiPage.SurfaceHeight - ScaleY(76);
+  AnkiText.ReadOnly := True;
+  AnkiText.ScrollBars := ssVertical;
+  AnkiText.WordWrap := True;
+  AnkiText.Text := Info;
+
+  Y := AnkiText.Top + AnkiText.Height + ScaleY(8);
+  Status := '';
+  if AnkiPresent then Status := CustomMessage('AnkiAlready')
+  else if AddonPresent then Status := CustomMessage('AddonAlready');
+  if Status <> '' then
+  begin
+    AnkiStatus := TNewStaticText.Create(AnkiPage);
+    AnkiStatus.Parent := AnkiPage.Surface;
+    AnkiStatus.Left := 0;
+    AnkiStatus.Top := Y;
+    AnkiStatus.Width := AnkiPage.SurfaceWidth;
+    AnkiStatus.Caption := Status;
+    Y := Y + ScaleY(20);
+  end;
+
+  if not AnkiPresent then
+  begin
+    AnkiCheck := TNewCheckBox.Create(AnkiPage);
+    AnkiCheck.Parent := AnkiPage.Surface;
+    AnkiCheck.Left := 0;
+    AnkiCheck.Top := Y;
+    AnkiCheck.Width := AnkiPage.SurfaceWidth;
+    AnkiCheck.Caption := FmtMessage(CustomMessage('AnkiCheckInstall'), ['{#AnkiSizeMB}']);
+    AnkiCheck.Checked := True;
+    Y := Y + ScaleY(22);
+  end;
+  if not AddonPresent then
+  begin
+    AddonCheck := TNewCheckBox.Create(AnkiPage);
+    AddonCheck.Parent := AnkiPage.Surface;
+    AddonCheck.Left := 0;
+    AddonCheck.Top := Y;
+    AddonCheck.Width := AnkiPage.SurfaceWidth;
+    AddonCheck.Caption := CustomMessage('AnkiCheckAddon');
+    AddonCheck.Checked := True;
+  end;
+end;
+
+procedure InitializeWizard;
+begin
+  CreateAnkiPage;
+  DownloadPage := CreateDownloadPage(CustomMessage('AnkiDlTitle'), CustomMessage('AnkiDlDesc'), @OnDownloadProgress);
+  DownloadPage.ShowBaseNameInsteadOfUrl := True;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (AnkiPage <> nil) and (PageID = AnkiPage.ID) and AnkiPresent and AddonPresent;
+end;
+
+function WantAnki: Boolean;
+begin
+  Result := (AnkiCheck <> nil) and AnkiCheck.Checked and (not AnkiPresent);
+end;
+
+function WantAddon: Boolean;
+begin
+  Result := (AddonCheck <> nil) and AddonCheck.Checked and (not AddonPresent);
+end;
+
+// Downloads one file into {tmp} and checks its SHA-256. A failure is reported and returns
+// False; Cancelled tells apart a click on Cancel from a real error.
+function FetchOne(const Url, FileName, Sha256: String; var Cancelled: Boolean): Boolean;
+begin
+  Result := False;
+  DownloadPage.Clear;
+  DownloadPage.Add(Url, FileName, Sha256);
+  try
+    DownloadPage.Download;
+    Result := True;
+  except
+    if DownloadPage.AbortedByUser then
+      Cancelled := True
+    else
+      MsgBox(FmtMessage(CustomMessage('AnkiDlFailed'), [FileName, GetExceptionMessage]), mbError, MB_OK);
+  end;
+end;
+
+// Runs when the user presses Install. A failed or cancelled download only drops that part;
+// the player itself is always installed.
+function DownloadChosenParts: Boolean;
+var
+  Cancelled: Boolean;
+begin
+  Result := True;
+  Cancelled := False;
+  if (not WantAnki) and (not WantAddon) then Exit;
+
+  DownloadPage.Show;
+  try
+    if WantAnki and (AnkiMsi = '') then
+      if FetchOne('{#AnkiUrl}', '{#AnkiFileName}', '{#AnkiSha256}', Cancelled) then
+        AnkiMsi := ExpandConstant('{tmp}\{#AnkiFileName}');
+    if WantAddon and (AddonZip = '') and (not Cancelled) then
+      if FetchOne('{#AnkiConnectUrl}', '{#AnkiConnectFileName}', '{#AnkiConnectSha256}', Cancelled) then
+        AddonZip := ExpandConstant('{tmp}\{#AnkiConnectFileName}');
+  finally
+    DownloadPage.Hide;
+  end;
+
+  if Cancelled then
+    Result := MsgBox(CustomMessage('AnkiDlCancelAsk'), mbConfirmation, MB_YESNO) = IDYES;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = wpReady then
+    Result := DownloadChosenParts;
+end;
+
+// The add-on goes first: it is quick, and the MSI below is the long step.
+procedure InstallAnkiParts;
+var
+  Err: String;
+  Code: Integer;
+begin
+  if (AddonZip <> '') and WantAddon then
+  begin
+    Err := InstallAnkiConnect(AddonZip, AnkiBaseDir);
+    if Err = '' then
+      AddonNow := True
+    else
+      SuppressibleMsgBox(FmtMessage(CustomMessage('AddonFailed'), [Err]), mbError, MB_OK, IDOK);
+  end;
+  if (AnkiMsi <> '') and WantAnki then
+  begin
+    // MSIINSTALLPERUSER keeps this a per-user install, so no administrator rights are needed.
+    // 3010 only says a restart would be tidy, which Anki does not need.
+    if Exec(ExpandConstant('{sys}\msiexec.exe'), '/i "' + AnkiMsi + '" /passive /norestart MSIINSTALLPERUSER=1',
+         '', SW_SHOWNORMAL, ewWaitUntilTerminated, Code) and ((Code = 0) or (Code = 3010)) then
+      AnkiNow := True
+    else
+      SuppressibleMsgBox(FmtMessage(CustomMessage('AnkiInstallFailed'), [IntToStr(Code)]), mbError, MB_OK, IDOK);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Code: Integer;
@@ -207,6 +394,7 @@ begin
       RegisterDefaultAppExtensions;
       OpenDefaultApps := not WizardSilent;
     end;
+    InstallAnkiParts;
   end
   else if (CurStep = ssDone) and OpenDefaultApps then
   begin
@@ -219,12 +407,21 @@ end;
 procedure CurPageChanged(CurPageID: Integer);
 var
   Old, Delta: Integer;
+  Note: String;
 begin
-  if (CurPageID = wpFinished) and OpenDefaultApps and (not HintAdded) then
+  if (CurPageID = wpFinished) and (not HintAdded) then
   begin
+    Note := '';
+    if OpenDefaultApps then Note := CustomMessage('DefaultAppHint');
+    if AnkiNow or AddonNow then
+    begin
+      if Note <> '' then Note := Note + #13#10#13#10;
+      Note := Note + CustomMessage('AnkiFinish');
+    end;
+    if Note = '' then Exit;
     HintAdded := True;
     Old := WizardForm.FinishedLabel.Height;
-    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 + CustomMessage('DefaultAppHint');
+    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 + Note;
     WizardForm.FinishedLabel.AdjustHeight;
     Delta := WizardForm.FinishedLabel.Height - Old;
     WizardForm.RunList.Top := WizardForm.RunList.Top + Delta;
