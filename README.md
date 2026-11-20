@@ -34,6 +34,8 @@ and keeps the words you want to remember.
   hardware decoding. Paste a link to an online video and it plays: Glossplay downloads yt-dlp by itself and keeps it up to date. On the first launch it fetches yt-dlp (about 23 MB) into its own data folder.
 - **Interface** in English, Russian and Ukrainian. You choose in Settings; by default it follows
   the language of the system.
+- **Your own sources.** Search through your own search server and watch through your own
+  TorrServer. The player contains no sources.
 
 ![Transcript made by speech recognition, with translations](docs/screenshots/en/transcript.png)
 
@@ -50,7 +52,8 @@ Known limits of this version:
 
 - Live transcription may not keep up with playback without a graphics card; on the processor,
   let it finish first.
-- Transcription works for local files, not for online video.
+- Transcription works for local files and for streams from your own TorrServer; for video
+  played from a link on a web page it does not.
 - Voice-over was tried only on an NVIDIA card. Its Vulkan build is meant for any graphics card
   but has not been tried on AMD or Intel.
 - The quality of the voice depends on the model; one-word lines ("Yes.", "No.") can sound uneven.
@@ -167,6 +170,33 @@ installed engine), `model`, `voice` (empty means the server's default), `origina
 **Anki.** Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on and keep
 Anki running. The deck and the "Glossplay" note type are created on first use.
 
+**Your own sources.** Glossplay can search through a search server that speaks the Torznab
+protocol ([Jackett](https://github.com/Jackett/Jackett), [Prowlarr](https://prowlarr.com)) and
+play the result through [TorrServer](https://github.com/YouROK/TorrServer) without waiting for the
+whole download, with everything the player does: dual subtitles, translation, click a word,
+speech recognition.
+
+Glossplay contains no sources and recommends none. Which sources you add to your search server
+and what you watch through them is your decision and your responsibility; respect copyright and
+the laws of your country.
+
+1. Install and set up a search server and TorrServer. If you already use them (for example with
+   a TV app), there is nothing to install.
+2. In Settings, in the **Sources** section, enter the Torznab address (for Jackett it looks like
+   `http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab/api`), the API key and the
+   TorrServer address (like `http://127.0.0.1:8090`). Press **Check**.
+3. The search field now appears on the start screen, and **Ctrl+F** works in the player.
+
+Type a query and you get a list (title, size, seeds, source); double-click a row to watch. If the
+torrent holds several video files, you choose the file.
+
+Limits: subtitles embedded in a streamed file can only be read once the whole file has been
+downloaded (`.srt` files lying next to the video in the torrent are picked up at once); a
+TorrServer protected by a password is not supported; the search stays hidden until both addresses
+are filled in. The settings live in the `[sources]` section of `config.toml` (`torznab_url`,
+`torznab_key`, `torrserver_url`); the environment variable `GLOSSPLAY_TORZNAB_KEY` overrides the
+key.
+
 ## Keys
 
 | Key | Action |
@@ -183,6 +213,7 @@ Anki running. The deck and the "Glossplay" note type are created on first use.
 | `F`, double click | Full screen |
 | `M` | Mute |
 | `Ctrl+O` | Open a file |
+| `Ctrl+F` | Search your sources (shown when sources are set up) |
 | `Esc` | Close the word card, leave full screen |
 
 Subtitle files next to the video (`Movie.srt`, `Movie.en.srt`, `Movie.ru.ass`) are picked up
@@ -193,7 +224,8 @@ automatically. You can also drop a subtitle file on the window.
 No dates are promised; this is the direction.
 
 - Export a video to a file with translated tracks, single or dual subtitles burned in, and a voice-over track.
-- A catalogue of films and series that plays from sources you add yourself.
+- A catalogue of films and series, with posters and descriptions, on top of your own sources.
+- A built-in torrent engine, so a separate TorrServer is not needed.
 - Faster speech recognition on AMD and Intel graphics cards.
 - Playback without copying frames on AMD and Intel graphics cards on Windows.
 - Tested builds and packages for Linux and macOS.
@@ -240,7 +272,7 @@ Rust throughout, in five crates:
 |---|---|
 | `gp-core` | Subtitle parsers (SRT, WebVTT, ASS), word segmentation, practice logic, config. No I/O. |
 | `gp-store` | SQLite: translation cache, transcripts, saved words. |
-| `gp-ai` | Translation services, the Whisper client, the speech synthesis client, AnkiConnect. |
+| `gp-ai` | Translation services, the Whisper client, the speech synthesis client, AnkiConnect, the Torznab and TorrServer clients. |
 | `gp-media` | A small run-time binding to libmpv; FFmpeg, whisper-server and the voice engine as child processes. |
 | `glossplay` | The application: an [egui](https://github.com/emilk/egui) interface that shares one OpenGL context with mpv. |
 

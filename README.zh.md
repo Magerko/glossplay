@@ -27,6 +27,7 @@
   MKV、MP4、WebM、AVI、MOV、TS；H.264、HEVC、AV1、VP9 等，并支持硬件解码。
   粘贴在线视频的链接即可播放：Glossplay 会自动下载 yt-dlp 并保持其更新。首次启动时，播放器会把 yt-dlp（约 23 MB）下载到自己的数据文件夹。
 - **界面语言**为英语、俄语和乌克兰语，可在设置中选择；默认跟随系统语言。
+- **自己的来源。** 通过你自己的搜索服务器搜索，通过你自己的 TorrServer 观看。播放器本身不含任何来源。
 
 ![由语音识别生成并附带翻译的文字稿](docs/screenshots/en/transcript.png)
 
@@ -42,7 +43,7 @@
 本版本的已知限制：
 
 - 没有显卡时，实时语音识别可能跟不上播放速度；只用处理器时，建议先让它处理完再看。
-- 语音识别只支持本地文件，不支持在线视频。
+- 语音识别支持本地文件和你自己 TorrServer 的视频流；通过网页链接播放的视频则不支持。
 - 配音只在 NVIDIA 显卡上试过。其 Vulkan 版本面向任意显卡，但尚未在 AMD 和 Intel 显卡上试过。
 - 语音的质量取决于模型；只有一个词的台词（如“好。”“不。”）听起来可能不太自然。
 - 在 Windows 上，只有 NVIDIA 显卡可以不复制画面地解码；其他显卡使用带复制的硬件解码
@@ -146,6 +147,27 @@ GitHub 上的 audio.cpp（版本 v0.9.5）和 Hugging Face 上的 OmniVoice 模�
 **Anki。** 安装 [AnkiConnect](https://ankiweb.net/shared/info/2055492159) 插件并保持 Anki 运行。
 牌组和“Glossplay”笔记类型会在第一次导出时自动创建。
 
+**自己的来源。** Glossplay 可以通过支持 Torznab 协议的搜索服务器
+（[Jackett](https://github.com/Jackett/Jackett)、[Prowlarr](https://prowlarr.com)）进行搜索，
+并通过 [TorrServer](https://github.com/YouROK/TorrServer) 播放结果，无需等待下载完成；
+播放器的全部功能都可使用：双语字幕、翻译、点击单词、语音识别。
+
+Glossplay 本身不含任何来源，也不推荐任何来源。往自己的搜索服务器里添加哪些来源、通过它们观看什么，
+由用户自己决定并承担责任；请尊重版权和所在国家的法律。
+
+1. 安装并配置搜索服务器和 TorrServer。如果你已经在用（例如配合电视应用），则无需再安装。
+2. 在播放器的 **Settings → Sources** 中填写 Torznab 地址（Jackett 的地址形如
+   `http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab/api`）、API 密钥和 TorrServer 地址
+   （形如 `http://127.0.0.1:8090`），然后点击 **Check**。
+3. 之后起始页会出现搜索框，播放器中也可以使用 **Ctrl+F**。
+
+输入关键词会得到一个列表（名称、大小、做种数、来源）；双击某一行即可观看。如果种子里有多个视频文件，需要先选择文件。
+
+限制：串流文件中内嵌的字幕要等文件完全下载后才能读取（种子里与视频放在一起的 `.srt` 文件会立即被识别）；
+不支持设置了密码的 TorrServer；两个地址都填写之前，搜索功能不会显示。设置保存在 `config.toml` 的
+`[sources]` 部分（`torznab_url`、`torznab_key`、`torrserver_url`）；环境变量 `GLOSSPLAY_TORZNAB_KEY`
+的优先级高于其中的密钥。
+
 ## 快捷键
 
 | 按键 | 功能 |
@@ -162,6 +184,7 @@ GitHub 上的 audio.cpp（版本 v0.9.5）和 Hugging Face 上的 OmniVoice 模�
 | `F`、双击 | 全屏 |
 | `M` | 静音 |
 | `Ctrl+O` | 打开文件 |
+| `Ctrl+F` | 在自己的来源中搜索（配置好来源后显示） |
 | `Esc` | 关闭单词卡片、退出全屏 |
 
 与视频放在一起的字幕文件（`Movie.srt`、`Movie.en.srt`、`Movie.zh.ass`）会被自动加载。
@@ -172,7 +195,8 @@ GitHub 上的 audio.cpp（版本 v0.9.5）和 Hugging Face 上的 OmniVoice 模�
 不承诺时间表，这只是大致方向。
 
 - 把视频导出为文件，带有译文音轨、内嵌的单语或双语字幕，以及配音音轨。
-- 影视剧目录，可从用户自己添加的来源直接播放。
+- 影视剧目录，在自己的来源之上提供海报和简介。
+- 内置种子引擎，不再需要单独的 TorrServer。
 - 在 AMD 和 Intel 显卡上加速语音识别。
 - 在 Windows 的 AMD 和 Intel 显卡上实现不复制画面的播放。
 - 经过验证的 Linux 和 macOS 构建与安装包。
@@ -217,7 +241,7 @@ glossplay --selftest video.mkv --subs en,zh --at 30
 |---|---|
 | `gp-core` | 字幕解析（SRT、WebVTT、ASS）、分词、练习逻辑、配置。不做任何输入输出。 |
 | `gp-store` | SQLite：翻译缓存、识别结果、已保存的单词。 |
-| `gp-ai` | 翻译服务、Whisper 客户端、语音合成客户端、AnkiConnect。 |
+| `gp-ai` | 翻译服务、Whisper 客户端、语音合成客户端、AnkiConnect、Torznab 和 TorrServer 客户端。 |
 | `gp-media` | 运行时加载的 libmpv 轻量绑定；以子进程方式调用 FFmpeg、whisper-server 和语音引擎。 |
 | `glossplay` | 应用本体：基于 [egui](https://github.com/emilk/egui) 的界面，与 mpv 共用同一个 OpenGL 上下文。 |
 
