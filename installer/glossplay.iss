@@ -268,7 +268,7 @@ begin
     AnkiCheck.Top := Y;
     AnkiCheck.Width := AnkiPage.SurfaceWidth;
     AnkiCheck.Caption := FmtMessage(CustomMessage('AnkiCheckInstall'), ['{#AnkiSizeMB}']);
-    AnkiCheck.Checked := True;
+    AnkiCheck.Checked := False;
     Y := Y + ScaleY(22);
   end;
   if not AddonPresent then
