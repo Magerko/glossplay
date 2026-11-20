@@ -261,6 +261,16 @@ pub fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> std::io::
     writer.write_image_data(rgba).map_err(std::io::Error::other)
 }
 
+/// The size of a PNG, from its header alone.
+pub fn png_size(path: &Path) -> Option<(u32, u32)> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info()
+        .ok()?;
+    let info = reader.info();
+    Some((info.width, info.height))
+}
+
 /// A PNG as 8-bit RGBA, whatever depth and colour type mpv wrote it in.
 pub fn read_png(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;

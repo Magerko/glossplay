@@ -1553,7 +1553,9 @@ fn screenshot(_app: &mut App, args: &Value) -> Result<Outcome, String> {
     let overwrite = opt_bool(args, "overwrite")?.unwrap_or(false);
     let path = output_path(need_str(args, "path")?, "png", overwrite)?;
     let capture: video::Capture = Arc::default();
+    let written: Arc<Mutex<Option<Result<Value, String>>>> = Arc::default();
     let mut asked = false;
+    let mut writing = false;
     let wait: Wait = Box::new(move |_, ctx, late| {
         // Asked a frame after the call, so whatever the calls before it changed is drawn.
         if !asked {
@@ -1563,13 +1565,27 @@ fn screenshot(_app: &mut App, args: &Value) -> Result<Outcome, String> {
                 .add(video::capture_callback(ctx.content_rect(), capture.clone()));
             return None;
         }
+        if writing {
+            let done = written.lock().unwrap_or_else(|e| e.into_inner()).take();
+            return done.or_else(|| late.then(|| Err("the PNG was not written in time".into())));
+        }
         let shot = capture.lock().unwrap().take();
         match shot {
-            Some((w, h, pixels)) => Some(
-                video::save_png(&path, w, h, &pixels)
-                    .map(|()| json!({"path": path, "width": w, "height": h}))
-                    .map_err(|e| format!("could not write {}: {e}", path.display())),
-            ),
+            Some((w, h, pixels)) => {
+                // A big window takes over half a second to compress; the picture must not
+                // stand still meanwhile.
+                writing = true;
+                let (path, written) = (path.clone(), written.clone());
+                let ctx = ctx.clone();
+                std::thread::spawn(move || {
+                    let result = video::save_png(&path, w, h, &pixels)
+                        .map(|()| json!({"path": path, "width": w, "height": h}))
+                        .map_err(|e| format!("could not write {}: {e}", path.display()));
+                    *written.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+                    ctx.request_repaint();
+                });
+                None
+            }
             None => late.then(|| Err("the window was not drawn in time".into())),
         }
     });
@@ -1588,7 +1604,7 @@ fn save_frame(app: &mut App, args: &Value) -> Result<Outcome, String> {
     let wait: Wait = Box::new(move |app, _, late| {
         match app.frame_done.as_ref().filter(|(r, _)| *r == request) {
             Some((_, Ok(path))) => {
-                let size = crate::frame::read_png(path).ok().map(|(w, h, _)| (w, h));
+                let size = crate::frame::png_size(path);
                 Some(Ok(json!({
                     "path": path,
                     "subtitles": subtitles,
