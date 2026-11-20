@@ -45,7 +45,10 @@ impl AsrEngine for WhisperServer {
     fn transcribe(&self, pcm: &[i16], lang: Option<&str>) -> Result<AsrOutput, AiError> {
         let boundary = "----glossplay-boundary-7d9f2c";
         let mut body = Vec::with_capacity(pcm.len() * 2 + 1024);
-        let lang = lang.filter(|l| !l.is_empty());
+        let lang = lang
+            .map(|l| gp_core::lang::code_for(gp_core::lang::Service::Whisper, l))
+            .filter(|l| !l.is_empty());
+        let lang = lang.as_deref();
         let mut fields = vec![
             ("response_format", "verbose_json"),
             ("language", lang.unwrap_or("auto")),

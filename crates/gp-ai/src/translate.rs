@@ -1,5 +1,6 @@
 use crate::{AiError, http};
 use gp_core::config::Translation as TranslationConfig;
+use gp_core::lang::{self, Service};
 use serde_json::{Value, json};
 
 pub struct TranslateRequest<'a> {
@@ -191,10 +192,16 @@ impl Translator for Google {
             .collect::<Vec<_>>()
             .join("\n");
         let url = format!("{}/translate_a/single", self.base_url);
+        let src = req
+            .src_lang
+            .map(|l| lang::code_for(Service::Google, l))
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| "auto".to_owned());
+        let dst = lang::code_for(Service::Google, req.dst_lang);
         let form = [
             ("client", "gtx"),
-            ("sl", req.src_lang.unwrap_or("auto")),
-            ("tl", req.dst_lang),
+            ("sl", src.as_str()),
+            ("tl", dst.as_str()),
             ("dt", "t"),
             ("q", q.as_str()),
         ];
@@ -230,9 +237,10 @@ impl Translator for DeepL {
 
     fn translate(&self, req: &TranslateRequest) -> Result<Vec<String>, AiError> {
         let lines: Vec<String> = req.lines.iter().map(|l| l.replace('\n', " ")).collect();
-        let mut body = json!({ "text": lines, "target_lang": req.dst_lang.to_uppercase() });
-        if let Some(src) = req.src_lang {
-            body["source_lang"] = json!(src.to_uppercase());
+        let target = lang::code_for(Service::DeepLTarget, req.dst_lang);
+        let mut body = json!({ "text": lines, "target_lang": target });
+        if let Some(src) = req.src_lang.filter(|l| !l.trim().is_empty()) {
+            body["source_lang"] = json!(lang::code_for(Service::DeepLSource, src));
         }
         let auth = format!("DeepL-Auth-Key {}", self.key);
         let v = http::post_json(
@@ -261,9 +269,9 @@ fn bad(provider: &str, v: &Value) -> AiError {
 }
 
 fn llm_translate_prompt(req: &TranslateRequest) -> (String, String) {
-    let src = req
-        .src_lang
-        .map_or("the source language".to_owned(), |l| format!("\"{l}\""));
+    let src = req.src_lang.map_or("the source language".to_owned(), |l| {
+        format!("\"{}\"", lang::code_for(Service::Llm, l))
+    });
     let system = format!(
         "You translate the dialogue of a film or video from {src} into \"{dst}\" (language codes \
          are BCP-47). The input is a JSON array of consecutive sentences of the dialogue, in the \
@@ -277,7 +285,7 @@ fn llm_translate_prompt(req: &TranslateRequest) -> (String, String) {
          reorder items, and do not add explanations.\n\
          Reply with a JSON array of exactly {n} strings, item i being the translation of input \
          item i, and nothing else.",
-        dst = req.dst_lang,
+        dst = lang::code_for(Service::Llm, req.dst_lang),
         n = req.lines.len(),
     );
     let flat = |l: &String| l.replace('\n', " ");
@@ -538,6 +546,31 @@ mod tests {
             body,
             json!({ "text": ["Hello"], "target_lang": "RU", "source_lang": "EN" })
         );
+    }
+
+    #[test]
+    fn chinese_is_asked_for_in_each_service_s_own_code() {
+        let input = lines(&["Hello"]);
+        let zh = TranslateRequest {
+            dst_lang: "zh",
+            ..req(&input)
+        };
+        let google = TestServer::start(vec![(200, r#"[[["你好","Hello",null,null,1]]]"#.into())]);
+        let t = build_translator(&cfg("google", &google.url)).unwrap();
+        assert_eq!(t.translate(&zh).unwrap(), lines(&["你好"]));
+        let body = &google.received.lock().unwrap()[0].body;
+        assert!(body.contains("tl=zh-CN"), "{body}");
+
+        let reply = r#"{"translations":[{"text":"你好"}]}"#;
+        let deepl = TestServer::start(vec![(200, reply.into())]);
+        let t = build_translator(&cfg("deepl", &deepl.url)).unwrap();
+        t.translate(&zh).unwrap();
+        let body: Value = serde_json::from_str(&deepl.received.lock().unwrap()[0].body).unwrap();
+        assert_eq!(body["target_lang"], "ZH-HANS");
+        assert_eq!(body["source_lang"], "EN");
+
+        let (system, _) = llm_translate_prompt(&zh);
+        assert!(system.contains("into \"zh-Hans\""), "{system}");
     }
 
     #[test]

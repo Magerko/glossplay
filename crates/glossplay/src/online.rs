@@ -214,8 +214,9 @@ impl OnlineInfo {
         {
             out.push(sub);
         }
-        for want in [learn, native] {
-            let want = normalize_lang(want);
+        for asked in [learn, native] {
+            let want = normalize_lang(asked);
+            let listed = gp_core::lang::code_for(gp_core::lang::Service::YouTube, asked);
             if want.is_empty()
                 || spoken_lang.as_deref() == Some(want.as_str())
                 || out.iter().any(|s| s.lang == want)
@@ -227,8 +228,9 @@ impl OnlineInfo {
                 .keys()
                 .filter(|k| !k.ends_with("-orig") && normalize_lang(k) == want)
                 .collect();
-            // "ru" before "ru-RU": the plain code is the one the site lists for everybody.
-            keys.sort_by_key(|k| (k.len(), *k));
+            // The site's own key for the language first ("zh-Hans" for Chinese, not
+            // "zh-Hant"), then "ru" before "ru-RU": the plain code is the one listed for all.
+            keys.sort_by_key(|k| (**k != listed, k.len(), *k));
             if let Some(sub) = keys.first().and_then(|k| self.pick(k, Auto::Translated)) {
                 out.push(sub);
             }
@@ -425,6 +427,28 @@ mod tests {
             info.auto_subs("ja", "").len() == 1,
             "no Japanese: only the spoken track"
         );
+    }
+
+    #[test]
+    fn chinese_takes_the_written_form_asked_for() {
+        let mut auto = serde_json::Map::new();
+        auto.insert(
+            "en-orig".into(),
+            formats("en-orig", "English (Original)", None),
+        );
+        for (k, n) in [
+            ("zh-Hant", "Chinese (Traditional)"),
+            ("zh-Hans", "Chinese (Simplified)"),
+        ] {
+            auto.insert(k.into(), formats(k, n, Some(k)));
+        }
+        let json = serde_json::json!({"id": "x", "extractor_key": "Youtube", "language": "en", "automatic_captions": auto}).to_string();
+        let info = OnlineInfo::from_ytdlp_json(&json).unwrap();
+        let simplified = info.auto_subs("en", "zh");
+        assert_eq!(simplified[1].lang, "zh");
+        assert!(simplified[1].url.contains("tlang=zh-Hans&"));
+        let traditional = info.auto_subs("en", "zh-TW");
+        assert!(traditional[1].url.contains("tlang=zh-Hant&"));
     }
 
     #[test]

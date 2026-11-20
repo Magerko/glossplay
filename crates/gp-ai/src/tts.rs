@@ -97,10 +97,9 @@ impl SpeechServer {
         }
         body.insert("input".into(), json!(text));
         body.insert("response_format".into(), json!("wav"));
-        if !lang.is_empty() {
-            // audio.cpp wants a bare ISO code: "ru-RU" is an error there.
-            let code = lang.split(['-', '_']).next().unwrap_or(lang);
-            body.insert("language".into(), json!(code.to_ascii_lowercase()));
+        let code = gp_core::lang::code_for(gp_core::lang::Service::Speech, lang);
+        if !code.is_empty() {
+            body.insert("language".into(), json!(code));
         }
         if !self.voice.is_empty() {
             body.insert("voice".into(), json!(self.voice));

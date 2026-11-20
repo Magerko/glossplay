@@ -1,6 +1,7 @@
 pub mod asr_plan;
 pub mod config;
 pub mod dub_plan;
+pub mod lang;
 pub mod loudness;
 pub mod media_key;
 pub mod scratch;

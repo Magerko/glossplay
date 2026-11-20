@@ -673,29 +673,7 @@ pub fn subtitle_url(name: &str) -> String {
 
 /// Maps the language tags found in the wild ("eng", "en-US", "rus") to two-letter codes.
 pub fn normalize_lang(tag: &str) -> String {
-    let tag = tag.to_ascii_lowercase();
-    let primary = tag.split(['-', '_']).next().unwrap_or(&tag);
-    let short = match primary {
-        "eng" => "en",
-        "rus" => "ru",
-        "ukr" => "uk",
-        "jpn" => "ja",
-        "zho" | "chi" | "cmn" => "zh",
-        "kor" => "ko",
-        "ger" | "deu" => "de",
-        "fre" | "fra" => "fr",
-        "spa" => "es",
-        "ita" => "it",
-        "por" => "pt",
-        "pol" => "pl",
-        "tur" => "tr",
-        "ara" => "ar",
-        "hin" => "hi",
-        "nld" | "dut" => "nl",
-        "swe" => "sv",
-        other => other,
-    };
-    short.to_owned()
+    gp_core::lang::normalize(tag)
 }
 
 #[cfg(test)]
