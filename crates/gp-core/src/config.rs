@@ -34,6 +34,35 @@ impl Config {
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).expect("config has only serializable fields")
     }
+
+    /// `theirs` with every setting `ours` changed since `base`: the file as someone else left
+    /// it, plus what was changed here since both were the same.
+    pub fn merge(base: &Config, ours: &Config, theirs: &Config) -> Config {
+        fn value(c: &Config) -> toml::Table {
+            toml::Table::try_from(c).expect("config has only serializable fields")
+        }
+        fn apply(base: &toml::Table, ours: &toml::Table, theirs: &mut toml::Table) {
+            for (key, mine) in ours {
+                let was = base.get(key);
+                match (mine, was, theirs.get_mut(key)) {
+                    (
+                        toml::Value::Table(m),
+                        Some(toml::Value::Table(b)),
+                        Some(toml::Value::Table(t)),
+                    ) => {
+                        apply(b, m, t);
+                    }
+                    _ if was != Some(mine) => {
+                        theirs.insert(key.clone(), mine.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = value(theirs);
+        apply(&value(base), &value(ours), &mut out);
+        out.try_into().unwrap_or_else(|_| ours.clone())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -253,6 +282,28 @@ impl Sources {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_keeps_what_was_edited_in_the_file_meanwhile() {
+        let base = Config::default();
+        // Changed in the player: the volume and the auto-pause.
+        let mut ours = base.clone();
+        ours.player.volume = 40.0;
+        ours.training.autopause = !base.training.autopause;
+        // Changed in the file by hand while the player was open: Whisper's paths, and the
+        // volume too.
+        let mut theirs = base.clone();
+        theirs.asr.model_path = r"E:\models\large.bin".into();
+        theirs.asr.server_path = r"E:\whisper\server.exe".into();
+        theirs.player.volume = 70.0;
+        let m = Config::merge(&base, &ours, &theirs);
+        assert_eq!(m.asr.model_path, r"E:\models\large.bin");
+        assert_eq!(m.asr.server_path, r"E:\whisper\server.exe");
+        assert_eq!(m.training.autopause, ours.training.autopause);
+        assert_eq!(m.player.volume, 40.0, "the last change made wins");
+        // Nothing changed here: the file stays as it is.
+        assert_eq!(Config::merge(&base, &base, &theirs), theirs);
+    }
 
     #[test]
     fn search_needs_both_addresses() {

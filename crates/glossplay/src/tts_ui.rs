@@ -163,7 +163,7 @@ impl App {
         if self.quiet {
             return;
         }
-        if let Err(e) = crate::paths::save_config(&self.cfg) {
+        if let Err(e) = crate::paths::save_config(&mut self.cfg) {
             self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
     }

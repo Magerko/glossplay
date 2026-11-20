@@ -380,7 +380,7 @@ impl App {
     pub fn set_subtitle_scale(&mut self, scale: f32) {
         self.cfg.subtitles.scale = scale;
         if !self.quiet
-            && let Err(e) = crate::paths::save_config(&self.cfg)
+            && let Err(e) = crate::paths::save_config(&mut self.cfg)
         {
             self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
@@ -1337,7 +1337,7 @@ impl App {
             new.tts.voice_source = voice_source;
             self.apply_settings(new);
             if !self.quiet
-                && let Err(e) = crate::paths::save_config(&self.cfg)
+                && let Err(e) = crate::paths::save_config(&mut self.cfg)
             {
                 self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
             }
@@ -1349,7 +1349,7 @@ impl App {
         }
         if volumes_done
             && !self.quiet
-            && let Err(e) = crate::paths::save_config(&self.cfg)
+            && let Err(e) = crate::paths::save_config(&mut self.cfg)
         {
             self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
@@ -1369,7 +1369,7 @@ impl App {
         if let Some(style) = pick_style {
             self.cfg.subtitles.style = style.id().to_owned();
             if !self.quiet
-                && let Err(e) = crate::paths::save_config(&self.cfg)
+                && let Err(e) = crate::paths::save_config(&mut self.cfg)
             {
                 self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
             }

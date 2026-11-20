@@ -1284,7 +1284,7 @@ impl App {
                 Err(e) => self.toast(tf(Tr::CouldNotKeepConfig, &[&e])),
             }
         }
-        if let Err(e) = paths::save_config(&self.cfg) {
+        if let Err(e) = paths::save_config(&mut self.cfg) {
             self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
         if rescale {

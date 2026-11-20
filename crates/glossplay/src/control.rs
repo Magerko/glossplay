@@ -495,7 +495,7 @@ fn run_tool(
 fn save_config(app: &mut App) {
     // A --quiet run is a test run: it leaves the user's settings as they were.
     if !app.quiet
-        && let Err(e) = crate::paths::save_config(&app.cfg)
+        && let Err(e) = crate::paths::save_config(&mut app.cfg)
     {
         app.toast(crate::i18n::tf(Tr::CouldNotSaveSettings, &[&e]));
     }

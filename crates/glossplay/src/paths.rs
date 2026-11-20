@@ -33,7 +33,11 @@ pub fn media_dir() -> PathBuf {
 /// and report the problem instead.
 pub fn load_config() -> (Config, Option<String>) {
     let path = config_path();
-    match std::fs::read(&path) {
+    let read = std::fs::read(&path);
+    if let Ok(bytes) = &read {
+        *seen() = String::from_utf8(bytes.clone()).ok();
+    }
+    match read {
         Ok(bytes) => match parse_config(&path.display().to_string(), &bytes) {
             Ok(cfg) => (cfg, None),
             Err(message) => (Config::default(), Some(message)),
@@ -66,8 +70,38 @@ pub fn keep_broken_config() -> std::io::Result<PathBuf> {
     Ok(backup)
 }
 
-pub fn save_config(cfg: &Config) -> std::io::Result<()> {
-    std::fs::write(config_path(), cfg.to_toml())
+/// The text of config.toml as the player last read or wrote it.
+fn seen() -> std::sync::MutexGuard<'static, Option<String>> {
+    static SEEN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    SEEN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Saves the settings. When the file was changed by someone else since the player read it,
+/// their changes stay and only what was changed here goes over them; `cfg` gets theirs too.
+pub fn save_config(cfg: &mut Config) -> std::io::Result<()> {
+    save_to(&config_path(), cfg, &mut seen())
+}
+
+fn save_to(
+    path: &std::path::Path,
+    cfg: &mut Config,
+    seen: &mut Option<String>,
+) -> std::io::Result<()> {
+    let disk = std::fs::read_to_string(path).ok();
+    if let Some(disk) = disk.filter(|d| seen.as_ref() != Some(d)) {
+        let base = match seen.as_deref() {
+            Some(text) => Config::from_toml(text).ok(),
+            None => Some(Config::default()),
+        };
+        // A file that does not parse is kept aside elsewhere; here mine is all I can save.
+        if let (Some(base), Ok(theirs)) = (base, Config::from_toml(&disk)) {
+            *cfg = Config::merge(&base, cfg, &theirs);
+        }
+    }
+    let text = cfg.to_toml();
+    std::fs::write(path, &text)?;
+    *seen = Some(text);
+    Ok(())
 }
 
 /// Helper programs the player downloads and updates by itself.
@@ -79,7 +113,41 @@ pub fn tools_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_config;
+    use super::{parse_config, save_to};
+    use gp_core::config::Config;
+
+    #[test]
+    fn a_hand_edit_made_while_the_player_runs_survives_its_saves() {
+        let dir = std::env::temp_dir().join(format!("glossplay-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let mut seen = None;
+        let mut cfg = Config::default();
+        save_to(&path, &mut cfg, &mut seen).unwrap();
+
+        // Someone edits the file by hand, comments and all.
+        let edited = std::fs::read_to_string(&path).unwrap().replace(
+            "model_path = \"\"",
+            "# my own model\nmodel_path = 'E:\\models\\large.bin'",
+        );
+        assert_ne!(edited, std::fs::read_to_string(&path).unwrap());
+        std::fs::write(&path, &edited).unwrap();
+
+        // The player saves a setting of its own, twice.
+        cfg.player.volume = 33.0;
+        save_to(&path, &mut cfg, &mut seen).unwrap();
+        assert_eq!(
+            cfg.asr.model_path, r"E:\models\large.bin",
+            "the player sees it too"
+        );
+        cfg.player.volume = 44.0;
+        save_to(&path, &mut cfg, &mut seen).unwrap();
+
+        let on_disk = Config::from_toml(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(on_disk.asr.model_path, r"E:\models\large.bin");
+        assert_eq!(on_disk.player.volume, 44.0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn syntax_error_is_one_line_with_file_and_line() {

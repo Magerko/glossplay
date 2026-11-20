@@ -80,7 +80,7 @@ impl App {
         // A running whisper-server keeps its files open, and Windows will not replace them.
         self.stop_asr();
         gp_media::tools::stop_named(gp_media::tools::WHISPER);
-        if let Err(e) = crate::paths::save_config(&self.cfg) {
+        if let Err(e) = crate::paths::save_config(&mut self.cfg) {
             self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
         let component = asr_setup::component(&v);
