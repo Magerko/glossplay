@@ -148,17 +148,23 @@ impl App {
         if ctx.input(|i| i.modifiers.command && i.key_pressed(Key::O)) {
             self.open_dialog();
         }
+        // The top window first: the setup dialogs open over Settings, and all of them over
+        // the word card.
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            if self.popup.is_some() {
-                self.close_popup();
+            if self.asr_setup.dialog_open {
+                self.close_asr_setup();
+            } else if self.tts_setup.dialog_open {
+                self.close_tts_setup();
             } else if self.settings_draft.is_some() {
                 self.settings_draft = None;
+            } else if self.popup.is_some() {
+                self.close_popup();
             } else if self.fullscreen {
                 self.toggle_fullscreen(ctx);
             }
         }
         // Typing in a text field must not trigger player shortcuts.
-        if ctx.egui_wants_keyboard_input() || self.settings_draft.is_some() {
+        if ctx.egui_wants_keyboard_input() || self.modal_open() {
             return;
         }
         let pressed = |key| ctx.input(|i| i.key_pressed(key) && !i.modifiers.command);
@@ -227,6 +233,11 @@ impl App {
         });
     }
 
+    /// A dialog or Settings is open: the player under it takes no clicks and no shortcuts.
+    pub fn modal_open(&self) -> bool {
+        self.settings_draft.is_some() || self.asr_setup.dialog_open || self.tts_setup.dialog_open
+    }
+
     pub fn controls_visible(&self) -> bool {
         self.snap.paused
             || self.popup.is_some()
@@ -239,7 +250,12 @@ impl App {
         if self.session.is_none() {
             return self.empty_state(ui, rect);
         }
-        let response = ui.interact(rect, Id::unique("video"), Sense::click());
+        let sense = if self.modal_open() {
+            Sense::hover()
+        } else {
+            Sense::click()
+        };
+        let response = ui.interact(rect, Id::unique("video"), sense);
         if response.double_clicked() {
             self.toggle_fullscreen(ui.ctx());
         } else if response.clicked() {
@@ -392,6 +408,7 @@ impl App {
         }
 
         let open_token = self.popup.as_ref().map(|p| p.token);
+        let words_live = !self.modal_open();
         let mut clicked: Option<(String, usize, usize, egui::Pos2)> = None;
         for line in primary.iter().rev() {
             let tokens = self.tokens_for(track_index, line.cue, &line.text, lang.as_deref());
@@ -451,18 +468,23 @@ impl App {
                         continue;
                     }
                     let word = &line.text[token.range.clone()];
-                    let resp = ui.interact(
-                        word_rect,
-                        Id::unique(("word", line.cue, *i)),
-                        Sense::click(),
-                    );
+                    let resp = words_live.then(|| {
+                        ui.interact(
+                            word_rect,
+                            Id::unique(("word", line.cue, *i)),
+                            Sense::click(),
+                        )
+                    });
+                    let hovered = resp.as_ref().is_some_and(|r| r.hovered());
                     let selected = open_token == Some((line.cue, *i));
-                    if resp.hovered() || selected {
+                    if hovered || selected {
                         ui.painter().rect_filled(
                             word_rect.expand2(vec2(2.0, 0.0)),
                             5.0,
                             ACCENT.gamma_multiply(0.45),
                         );
+                    }
+                    if hovered {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     outlined(ui.painter(), at, galley.clone(), SUB_PRIMARY, scale);
@@ -476,7 +498,7 @@ impl App {
                             Stroke::new(2.0 * scale, ACCENT),
                         );
                     }
-                    if resp.clicked() {
+                    if resp.is_some_and(|r| r.clicked()) {
                         clicked = Some((word.to_owned(), line.cue, *i, word_rect.center_top()));
                     }
                 }
@@ -1167,8 +1189,9 @@ impl App {
             .and_then(|s| s.primary_track())
             .and_then(|t| t.track.lang.clone());
         let (mut save, mut anki, mut close) = (false, false, false);
+        // Above the subtitles and the controls, below every window.
         egui::Area::new(Id::unique("word-popup"))
-            .order(egui::Order::Foreground)
+            .order(egui::Order::Middle)
             .pivot(Align2::CENTER_BOTTOM)
             .fixed_pos(p.anchor - vec2(0.0, 14.0))
             .constrain(true)
@@ -1275,6 +1298,7 @@ impl App {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
+            .order(egui::Order::Foreground)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()

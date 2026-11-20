@@ -284,11 +284,15 @@ impl App {
             self.install_asr(v);
         }
         if close || !open {
-            // Closing only hides the dialog; an install in progress carries on.
-            self.asr_setup.dialog_open = false;
-            if !self.asr_setup.running() {
-                self.asr_setup.start_after = false;
-            }
+            self.close_asr_setup();
+        }
+    }
+
+    /// Closing only hides the dialog; an install in progress carries on.
+    pub fn close_asr_setup(&mut self) {
+        self.asr_setup.dialog_open = false;
+        if !self.asr_setup.running() {
+            self.asr_setup.start_after = false;
         }
     }
 }

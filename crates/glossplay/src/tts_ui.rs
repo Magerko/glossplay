@@ -378,10 +378,14 @@ impl App {
             self.install_tts(e);
         }
         if close || !open {
-            self.tts_setup.dialog_open = false;
-            if !self.tts_setup.running() {
-                self.tts_setup.enable_after = false;
-            }
+            self.close_tts_setup();
+        }
+    }
+
+    pub fn close_tts_setup(&mut self) {
+        self.tts_setup.dialog_open = false;
+        if !self.tts_setup.running() {
+            self.tts_setup.enable_after = false;
         }
     }
 }
