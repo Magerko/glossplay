@@ -371,6 +371,7 @@ pub fn text(key: Tr) -> &'static str {
         Tr::DubStarting => "配音：正在启动语音引擎…",
         Tr::DubFirstStart => "在这块显卡上首次启动最多需要半分钟",
         Tr::DubPreparing => "配音：正在准备…",
+        Tr::DubWaiting => "正在准备配音",
         Tr::DubOn => "配音",
         Tr::DubStopped => "配音已停止：{0}",
         Tr::DubLineFailed => "配音：有一句无法朗读（{0}）",

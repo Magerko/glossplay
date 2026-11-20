@@ -505,10 +505,13 @@ impl App {
 
     /// A spinner with what is known of the wait, in the middle of the picture.
     fn buffering_overlay(&self, ui: &egui::Ui, rect: Rect) {
-        if !self.buffering_shown {
+        let text = if self.buffering_shown {
+            crate::buffering::label_in(crate::i18n::lang(), &self.cache)
+        } else if self.dub_wait_shown {
+            t(Tr::DubWaiting).to_owned()
+        } else {
             return;
-        }
-        let text = crate::buffering::label_in(crate::i18n::lang(), &self.cache);
+        };
         let galley =
             ui.painter()
                 .layout_no_wrap(text, FontId::proportional(15.0), theme::DARK.text);

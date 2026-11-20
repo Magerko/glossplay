@@ -28,8 +28,9 @@ const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 const CACHE_KEEP: u64 = 400 * 1024 * 1024;
 const MAX_RESTARTS: usize = 2;
 /// Playback stops for a line whose clip is not ready yet, the way a video stops to buffer,
-/// but not for longer than this.
-const MAX_HOLD: Duration = Duration::from_secs(25);
+/// but not for longer than this: then the film goes on in its own voice, and the voice-over
+/// joins at the first line whose clip is ready.
+const MAX_HOLD: Duration = Duration::from_secs(3);
 /// A jump of the playhead this far from where it should be is a seek.
 const SEEK_JUMP: Ms = 600;
 /// Clips are started this much after the exact moment rather than before it: a voice a
@@ -1081,6 +1082,7 @@ impl Player {
             current: None,
             latency_ms: 30.0,
             hold: None,
+            gave_up: false,
             overridden: None,
             last: None,
             voice_paused: None,
@@ -1123,6 +1125,7 @@ impl Player {
             // click on a line in the transcript is spoken.
             st.floor = pos - 300;
             st.last_end = None;
+            st.gave_up = false;
             if st.current.take().is_some() {
                 self.voice.command(&["stop"]).ok();
             }
@@ -1294,6 +1297,7 @@ impl Player {
             );
         }
         st.handled.insert(unit.clone());
+        st.gave_up = false;
         st.current = Some(Current {
             unit,
             clip_ms: clip.ms,
@@ -1307,30 +1311,38 @@ impl Player {
     /// The line is due and its clip is not there: playback waits for it, unless the engine
     /// has given up, the wait has gone on too long, or the user pressed play meanwhile.
     fn wait_for_clip(&self, st: &mut State, unit: Unit, paused: bool, stopped: bool) {
-        if let Some(h) = &st.hold {
-            if h.unit != unit {
-                self.release_hold(st, true);
-            } else if !paused {
-                // Playing again, and not by me: the user does not want to wait.
+        let hold = st
+            .hold
+            .as_ref()
+            .map(|h| (h.unit == unit, h.since.elapsed()));
+        let overridden = st.overridden.as_ref() == Some(&unit);
+        match wait_step(hold, paused, stopped, overridden, st.gave_up) {
+            WaitStep::Nothing => {}
+            WaitStep::Release => self.release_hold(st, true),
+            WaitStep::LetPlay => {
                 st.overridden = Some(unit);
                 self.release_hold(st, false);
-            } else if h.since.elapsed() > MAX_HOLD {
+            }
+            WaitStep::GiveUp => {
                 st.handled.insert(unit);
                 lock(&self.shared).stats.skipped += 1;
+                st.gave_up = true;
                 self.release_hold(st, true);
             }
-            return;
+            WaitStep::Skip => {
+                st.handled.insert(unit);
+                lock(&self.shared).stats.skipped += 1;
+            }
+            WaitStep::Hold => {
+                self.main.set_flag("pause", true);
+                st.hold = Some(Hold {
+                    unit,
+                    since: Instant::now(),
+                });
+                lock(&self.shared).holding = true;
+                self.ctx.request_repaint();
+            }
         }
-        if stopped || paused || st.overridden.as_ref() == Some(&unit) {
-            return;
-        }
-        self.main.set_flag("pause", true);
-        st.hold = Some(Hold {
-            unit,
-            since: Instant::now(),
-        });
-        lock(&self.shared).holding = true;
-        self.ctx.request_repaint();
     }
 
     fn release_hold(&self, st: &mut State, resume: bool) {
@@ -1348,6 +1360,43 @@ impl Player {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum WaitStep {
+    Nothing,
+    /// Stop waiting and play on.
+    Release,
+    /// The user pressed play during the wait: stop waiting, and not for this line again.
+    LetPlay,
+    /// The wait ran out: the line goes without a voice, and so do the next ones without a clip.
+    GiveUp,
+    /// No wait after one ran out: the line goes without a voice.
+    Skip,
+    /// Pause the film until the clip is there.
+    Hold,
+}
+
+/// What to do about a line that is due and has no clip. `hold` is whether a wait is on, for
+/// this line or not, and how long it has been on.
+fn wait_step(
+    hold: Option<(bool, Duration)>,
+    paused: bool,
+    stopped: bool,
+    overridden: bool,
+    gave_up: bool,
+) -> WaitStep {
+    match hold {
+        Some((false, _)) => WaitStep::Release,
+        // Playing again, and not by me: the user does not want to wait.
+        Some((true, _)) if !paused => WaitStep::LetPlay,
+        Some((true, waited)) if waited > MAX_HOLD => WaitStep::GiveUp,
+        Some(_) => WaitStep::Nothing,
+        // The engine is behind: waiting for every line would stop the film each time.
+        None if gave_up => WaitStep::Skip,
+        None if stopped || paused || overridden => WaitStep::Nothing,
+        None => WaitStep::Hold,
+    }
+}
+
 struct State {
     /// Lines played or given up on.
     handled: HashSet<Unit>,
@@ -1357,6 +1406,8 @@ struct State {
     /// From `loadfile` to the voice playing, smoothed; clips are started this much early.
     latency_ms: f64,
     hold: Option<Hold>,
+    /// A wait ran out; lines without a clip are let go until one plays or the user seeks.
+    gave_up: bool,
     overridden: Option<Unit>,
     last: Option<(Ms, Instant)>,
     voice_paused: Option<bool>,
@@ -1410,6 +1461,46 @@ mod tests {
             .collect();
         left.sort();
         assert_eq!(left, ["c.wav", "d.wav"]);
+    }
+
+    #[test]
+    fn a_missing_clip_stops_the_film_for_a_few_seconds_at_most() {
+        let s = Duration::from_secs;
+        // A line due without its clip: the film waits, as for buffering.
+        assert_eq!(wait_step(None, false, false, false, false), WaitStep::Hold);
+        assert_eq!(
+            wait_step(Some((true, s(1))), true, false, false, false),
+            WaitStep::Nothing
+        );
+        // Past the limit the film goes on in its own voice...
+        assert_eq!(
+            wait_step(Some((true, s(4))), true, false, false, false),
+            WaitStep::GiveUp
+        );
+        // ...and the next lines without a clip do not stop it again.
+        assert_eq!(wait_step(None, false, false, false, true), WaitStep::Skip);
+        // The user pressing play ends the wait; a paused film or a stopped engine never waits.
+        assert_eq!(
+            wait_step(Some((true, s(1))), false, false, false, false),
+            WaitStep::LetPlay
+        );
+        assert_eq!(
+            wait_step(None, true, false, false, false),
+            WaitStep::Nothing
+        );
+        assert_eq!(
+            wait_step(None, false, true, false, false),
+            WaitStep::Nothing
+        );
+        assert_eq!(
+            wait_step(None, false, false, true, false),
+            WaitStep::Nothing
+        );
+        // A wait for another line ends when this one comes due.
+        assert_eq!(
+            wait_step(Some((false, s(1))), true, false, false, false),
+            WaitStep::Release
+        );
     }
 
     #[test]

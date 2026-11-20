@@ -124,6 +124,9 @@ pub struct App {
     pub cache: crate::buffering::Cache,
     /// The "Buffering" overlay is up.
     pub buffering_shown: bool,
+    dub_wait: crate::buffering::Delay,
+    /// The film stands still for a voice-over clip, long enough to say so.
+    pub dub_wait_shown: bool,
     /// Where the video area was drawn in the last frame.
     pub stage_rect: egui::Rect,
     /// The context menu is open there.
@@ -271,6 +274,8 @@ impl App {
             key_log: Vec::new(),
             cache: Default::default(),
             buffering_shown: false,
+            dub_wait: Default::default(),
+            dub_wait_shown: false,
             stage_rect: egui::Rect::NOTHING,
             menu_at: None,
             menu_request: None,
@@ -1366,7 +1371,9 @@ impl App {
         self.update_dub();
         let waiting = self.cache.waiting(self.snap.paused);
         self.buffering_shown = self.cache.shown(waiting, Instant::now());
-        if waiting {
+        let dub_waiting = self.dub.as_ref().is_some_and(|d| d.holding());
+        self.dub_wait_shown = self.dub_wait.shown(dub_waiting, Instant::now());
+        if waiting || dub_waiting {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
         if !self.snap.paused && !self.snap.idle {

@@ -78,7 +78,25 @@ pub struct Cache {
     /// The playback core stands still, for whatever reason, a user's pause included.
     pub core_idle: bool,
     pub state: CacheState,
-    waiting_since: Option<Instant>,
+    delay: Delay,
+}
+
+/// A wait shown only once it has lasted a moment, so short stalls do not flicker.
+#[derive(Debug, Default)]
+pub struct Delay {
+    since: Option<Instant>,
+}
+
+impl Delay {
+    /// Whether the wait is shown at `now`; call it once a frame.
+    pub fn shown(&mut self, waiting: bool, now: Instant) -> bool {
+        if !waiting {
+            self.since = None;
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        now.duration_since(since) >= SHOW_AFTER
+    }
 }
 
 impl Cache {
@@ -127,12 +145,7 @@ impl Cache {
 
     /// Whether the overlay is up at `now`; call it once a frame.
     pub fn shown(&mut self, waiting: bool, now: Instant) -> bool {
-        if !self.observing || !waiting {
-            self.waiting_since = None;
-            return false;
-        }
-        let since = *self.waiting_since.get_or_insert(now);
-        now.duration_since(since) >= SHOW_AFTER
+        self.delay.shown(self.observing && waiting, now)
     }
 }
 

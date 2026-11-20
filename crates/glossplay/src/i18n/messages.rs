@@ -972,6 +972,11 @@ messages! {
         "Озвучка: подготовка…",
         "Озвучення: підготовка…"
     ],
+    DubWaiting => [
+        "Preparing the voice-over",
+        "Готовлю озвучку",
+        "Готую озвучення"
+    ],
     DubOn => ["Voice-over", "Озвучка", "Озвучення"],
     DubStopped => [
         "Voice-over stopped: {0}",
