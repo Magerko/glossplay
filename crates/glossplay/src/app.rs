@@ -618,7 +618,10 @@ impl App {
         let index = match s.tracks.iter().position(|t| t.origin == Origin::Asr) {
             Some(i) => i,
             None => {
-                let lang = Some(self.cfg.general.learn_lang.clone()).filter(|l| !l.is_empty());
+                let lang = crate::online::OnlineInfo::speech_lang(
+                    s.online.as_ref(),
+                    &self.cfg.general.learn_lang,
+                );
                 s.tracks.push(SubTrack::new(
                     t(Tr::AsrTrackLabel).into(),
                     lang,
@@ -634,7 +637,8 @@ impl App {
         }
         self.player.mpv.set_flag("sub-visibility", false);
 
-        let lang = Some(self.cfg.general.learn_lang.clone()).filter(|l| !l.is_empty());
+        let lang =
+            crate::online::OnlineInfo::speech_lang(s.online.as_ref(), &self.cfg.general.learn_lang);
         let engine_id = format!(
             "whisper.cpp:{}#{}",
             model.file_stem().unwrap_or_default().to_string_lossy(),

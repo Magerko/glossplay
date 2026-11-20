@@ -144,6 +144,16 @@ struct HookResult {
 }
 
 impl OnlineInfo {
+    /// The language to recognise speech in: the one the site says is spoken, if it is a plain
+    /// two-letter code Whisper knows how to take; otherwise `fallback`.
+    pub fn speech_lang(info: Option<&OnlineInfo>, fallback: &str) -> Option<String> {
+        info.and_then(|i| i.language.as_deref())
+            .map(normalize_lang)
+            .filter(|l| l.len() == 2 && l.bytes().all(|b| b.is_ascii_lowercase()))
+            .or_else(|| Some(fallback.to_owned()))
+            .filter(|l| !l.is_empty())
+    }
+
     /// `hook` is the property as mpv prints it: JSON with yt-dlp's output in `stdout`.
     pub fn from_hook_result(hook: &str) -> Option<OnlineInfo> {
         let outer: HookResult = serde_json::from_str(hook).ok()?;
@@ -336,6 +346,21 @@ mod tests {
             ]
         })
         .to_string()
+    }
+
+    #[test]
+    fn speech_is_recognised_in_the_language_the_site_names() {
+        let with = |lang: Option<&str>| OnlineInfo {
+            language: lang.map(str::to_owned),
+            ..Default::default()
+        };
+        let pick = |i: Option<&OnlineInfo>| OnlineInfo::speech_lang(i, "ru");
+        assert_eq!(pick(Some(&with(Some("en-US")))).as_deref(), Some("en"));
+        assert_eq!(pick(Some(&with(Some("fra")))).as_deref(), Some("fr"));
+        assert_eq!(pick(Some(&with(None))).as_deref(), Some("ru"));
+        assert_eq!(pick(Some(&with(Some("und-x")))).as_deref(), Some("ru"));
+        assert_eq!(pick(None).as_deref(), Some("ru"));
+        assert_eq!(OnlineInfo::speech_lang(None, ""), None);
     }
 
     #[test]
