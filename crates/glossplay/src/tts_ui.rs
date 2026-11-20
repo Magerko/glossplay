@@ -10,7 +10,7 @@ use crate::setup_text as text;
 use crate::theme;
 use crate::tts_setup::{self, ENGINE_AVAILABLE, Engine, TtsInstall};
 use crate::ui::dialog_height;
-use eframe::egui::{self, Align, Align2, RichText, vec2};
+use eframe::egui::{self, Align2, RichText, vec2};
 use gp_core::config::Config;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,7 +37,6 @@ pub struct TtsSetup {
     pub progress: Option<Progress>,
     outcome: Option<Outcome>,
     pub installed: Option<TtsInstall>,
-    pub scroll_to: bool,
 }
 
 impl TtsSetup {
@@ -81,6 +80,8 @@ pub enum Action {
     OpenDialog,
     Remove,
     Cancel,
+    /// "Change…" by the language: Settings goes to its Languages tab.
+    Languages,
 }
 
 impl App {
@@ -338,6 +339,7 @@ impl App {
             }
             Action::Remove => self.remove_tts(),
             Action::Cancel => self.cancel_tts_install(),
+            Action::Languages => {}
         }
     }
 
@@ -458,14 +460,28 @@ impl App {
     }
 }
 
-/// The Voice-over part of the Settings window.
-pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> Option<Action> {
-    if s.scroll_to {
-        let at = egui::Rect::from_min_size(ui.cursor().min - vec2(0.0, 32.0), vec2(1.0, 1.0));
-        ui.scroll_to_rect(at, Some(Align::TOP));
-    }
+/// The Voice-over tab of the Settings window.
+pub fn settings_section(
+    ui: &mut egui::Ui,
+    form: &crate::settings_ui::Form,
+    draft: &mut Config,
+    s: &TtsSetup,
+) -> Option<Action> {
     let mut action = None;
     ui.checkbox(&mut draft.tts.enabled, t(Tr::TtsEnable));
+    let native = &draft.general.native_lang;
+    if crate::settings_ui::language_line(
+        ui,
+        &text::tts_language(&crate::i18n::language_label(native)),
+    ) {
+        action = Some(Action::Languages);
+    }
+    // The engine I install speaks every language of the list; a code of the user's own may
+    // be one it has never heard.
+    if gp_core::lang::find(native).is_none() {
+        ui.label(RichText::new(t(Tr::TtsLangUnknown)).color(theme::hint()));
+    }
+    ui.add_space(6.0);
     let status = match &s.installed {
         Some(i) => i.status(),
         None => t(Tr::NotInstalledStatus).to_owned(),
@@ -503,50 +519,37 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
             action = Some(Action::Remove);
         }
     });
-    ui.label(RichText::new(text::tts_language(&draft.general.native_lang)).color(theme::muted()));
-    egui::Grid::new("tts-volumes")
-        .num_columns(2)
-        .spacing([16.0, 6.0])
-        .show(ui, |ui| {
-            ui.label(t(Tr::RowOriginalVolume));
-            ui.add(egui::Slider::new(&mut draft.tts.original_volume, 0.0..=150.0).integer());
-            ui.end_row();
-            ui.label(t(Tr::RowVoiceVolume));
-            ui.add(egui::Slider::new(&mut draft.tts.voice_volume, 0.0..=150.0).integer());
-            ui.end_row();
-            ui.label(t(Tr::RowVoiceSource));
-            ui.horizontal(|ui| voice_source_choice(ui, &mut draft.tts.voice_source));
-            ui.end_row();
-        });
-    ui.label(
-        RichText::new(t(Tr::VoiceSpeakerNote))
-            .color(theme::muted())
-            .small(),
+    ui.add_space(8.0);
+    form.row(
+        ui,
+        t(Tr::RowOriginalVolume),
+        Some(t(Tr::InfoVolumes)),
+        |ui| form.slider(ui, volume_slider(&mut draft.tts.original_volume)),
     );
-    ui.label(RichText::new(t(Tr::TtsAdvanced)).color(theme::muted()));
-    egui::Grid::new("tts-own")
-        .num_columns(2)
-        .spacing([16.0, 6.0])
+    form.row(ui, t(Tr::RowVoiceVolume), Some(t(Tr::InfoVolumes)), |ui| {
+        form.slider(ui, volume_slider(&mut draft.tts.voice_volume))
+    });
+    form.row(
+        ui,
+        t(Tr::RowVoiceSource),
+        Some(t(Tr::VoiceSpeakerNote)),
+        |ui| {
+            ui.horizontal_wrapped(|ui| voice_source_choice(ui, &mut draft.tts.voice_source));
+        },
+    );
+    egui::CollapsingHeader::new(RichText::new(t(Tr::TtsAdvanced)).color(theme::muted()))
+        .id_salt("tts-advanced")
         .show(ui, |ui| {
-            for (label, hint, value) in [
-                (t(Tr::RowServer), t(Tr::HintServer), &mut draft.tts.base_url),
-                (
-                    t(Tr::RowTtsModel),
-                    text::HINT_TTS_MODEL,
-                    &mut draft.tts.model,
-                ),
-                (t(Tr::RowVoice), t(Tr::HintVoice), &mut draft.tts.voice),
-            ] {
-                ui.label(label);
-                ui.add(
-                    egui::TextEdit::singleline(value)
-                        .hint_text(hint)
-                        .desired_width(300.0),
-                );
-                ui.end_row();
-            }
+            form.row(ui, t(Tr::RowServer), None, |ui| {
+                form.text(ui, &mut draft.tts.base_url, t(Tr::HintServer))
+            });
+            form.row(ui, t(Tr::RowTtsModel), None, |ui| {
+                form.text(ui, &mut draft.tts.model, text::HINT_TTS_MODEL)
+            });
+            form.row(ui, t(Tr::RowVoice), None, |ui| {
+                form.text(ui, &mut draft.tts.voice, t(Tr::HintVoice))
+            });
         });
-    ui.add_space(6.0);
     action
 }
 
@@ -559,7 +562,8 @@ fn choice(ui: &mut egui::Ui, salt: &str, engine: &mut String) {
         }
         let current = tts_setup::resolve(engine);
         egui::ComboBox::from_id_salt((salt, "tts-engine"))
-            .width(360.0)
+            .width((ui.available_width() - 8.0).clamp(160.0, 360.0))
+            .truncate()
             .selected_text(current.choice_name())
             .show_ui(ui, |ui| {
                 for e in [Engine::Vulkan, Engine::Nvidia] {
@@ -683,4 +687,8 @@ fn progress(ui: &mut egui::Ui, p: &Progress) {
             .color(theme::muted())
             .small(),
     );
+}
+
+fn volume_slider(value: &mut f64) -> egui::Slider<'_> {
+    egui::Slider::new(value, 0.0..=150.0).integer()
 }

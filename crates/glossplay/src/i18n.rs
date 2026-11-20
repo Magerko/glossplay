@@ -81,7 +81,7 @@ fn main_modifier(text: &'static str, mac: bool) -> std::borrow::Cow<'static, str
     }
 }
 
-/// The name of a language by its two-letter code, for the few languages people learn most.
+/// The name of a language by its two-letter code, for the languages of the pickers.
 pub fn language_name(code: &str) -> Option<Tr> {
     Some(match code {
         "en" => Tr::LangEnglish,
@@ -97,8 +97,31 @@ pub fn language_name(code: &str) -> Option<Tr> {
         "ja" => Tr::LangJapanese,
         "ko" => Tr::LangKorean,
         "zh" => Tr::LangChinese,
+        "nl" => Tr::LangDutch,
+        "ar" => Tr::LangArabic,
+        "hi" => Tr::LangHindi,
+        "id" => Tr::LangIndonesian,
+        "vi" => Tr::LangVietnamese,
+        "cs" => Tr::LangCzech,
+        "sv" => Tr::LangSwedish,
         _ => return None,
     })
+}
+
+/// A language tag as text for people: "eng" and "en" are "English" in the interface
+/// language, "pt-BR" is "Portuguese (pt-BR)", and a tag I have no name for stays as it is.
+pub fn language_label(code: &str) -> String {
+    language_label_in(lang(), code)
+}
+
+fn language_label_in(lang: Lang, code: &str) -> String {
+    let code = code.trim();
+    let exact = gp_core::lang::find(code).is_some() || code.len() == 3;
+    match language_name(&gp_core::lang::normalize(code)) {
+        Some(name) if exact => text_in(lang, name).to_owned(),
+        Some(name) => format!("{} ({code})", text_in(lang, name)),
+        None => code.to_owned(),
+    }
 }
 
 /// A message whose `{0}`, `{1}`… are replaced by `args`.
@@ -278,6 +301,27 @@ mod tests {
                 "{lang:?}"
             );
         }
+    }
+
+    #[test]
+    fn every_language_of_the_pickers_has_a_name() {
+        for l in &gp_core::lang::LANGUAGES {
+            let name = language_name(l.code).unwrap_or_else(|| panic!("{} has no name", l.code));
+            assert_eq!(
+                text_in(Lang::En, name),
+                l.english.split(" (").next().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn tags_read_as_language_names() {
+        let en = |code| language_label_in(Lang::En, code);
+        assert_eq!(en("eng"), "English");
+        assert_eq!(en("zh"), "Chinese");
+        assert_eq!(en("pt-BR"), "Portuguese (pt-BR)");
+        assert_eq!(en("eo"), "eo");
+        assert_eq!(language_label_in(Lang::Ru, "JPN"), "Японский");
     }
 
     #[test]

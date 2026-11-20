@@ -53,8 +53,6 @@ pub struct SearchUi {
     pub current: Arc<AtomicU64>,
     opening_title: String,
     pub check: Check,
-    /// Scroll Settings to the Sources section (self-test screenshots).
-    pub scroll_to: bool,
     /// A torrent I added to TorrServer for what plays now; removed once another torrent is
     /// played or the player closes. One the server had before is never mine to remove.
     added: Option<(String, String)>,
@@ -75,7 +73,6 @@ impl SearchUi {
             current: Arc::default(),
             opening_title: String::new(),
             check: Check::Idle,
-            scroll_to: false,
             added: None,
         }
     }
@@ -705,46 +702,23 @@ fn table<const N: usize>(
     hit
 }
 
-/// The Sources part of Settings. Returns true when Check was pressed.
-pub fn sources_section(ui: &mut egui::Ui, draft: &mut Config, s: &SearchUi, wide: f32) -> bool {
-    if s.scroll_to {
-        let at = Rect::from_min_size(ui.cursor().min - vec2(0.0, 32.0), vec2(1.0, 1.0));
-        ui.scroll_to_rect(at, Some(egui::Align::TOP));
-    }
-    ui.add(
-        egui::Label::new(
-            RichText::new(t(Tr::SourcesNote))
-                .color(theme::muted())
-                .small(),
-        )
-        .wrap(),
-    );
-    egui::Grid::new("sources")
-        .num_columns(2)
-        .spacing([16.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t(Tr::SearchServerRow));
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.sources.torznab_url)
-                    .hint_text("http://…/api")
-                    .desired_width(wide),
-            );
-            ui.end_row();
-            ui.label(t(Tr::ApiKeyRow));
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.sources.torznab_key)
-                    .password(true)
-                    .desired_width(wide),
-            );
-            ui.end_row();
-            ui.label(t(Tr::TorrServerRow));
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.sources.torrserver_url)
-                    .hint_text("http://…:8090")
-                    .desired_width(wide),
-            );
-            ui.end_row();
-        });
+/// The Sources tab of Settings. Returns true when Check was pressed.
+pub fn sources_section(
+    ui: &mut egui::Ui,
+    form: &crate::settings_ui::Form,
+    draft: &mut Config,
+    s: &SearchUi,
+) -> bool {
+    let src = &mut draft.sources;
+    form.row(ui, t(Tr::SearchServerRow), None, |ui| {
+        form.text(ui, &mut src.torznab_url, "http://…/api")
+    });
+    form.row(ui, t(Tr::ApiKeyRow), None, |ui| {
+        form.secret(ui, &mut src.torznab_key)
+    });
+    form.row(ui, t(Tr::TorrServerRow), None, |ui| {
+        form.text(ui, &mut src.torrserver_url, "http://…:8090")
+    });
     let mut clicked = false;
     ui.horizontal(|ui| {
         let running = matches!(s.check, Check::Running);

@@ -92,6 +92,30 @@ const BINDINGS: [(Key, Chord, Command); 22] = [
     (Key::Escape, Chord::Any, Command::Escape),
 ];
 
+/// The keys bound to `command`, written the way people know them: "Space", "A", "Ctrl+O".
+pub fn keys_of(command: Command) -> Vec<String> {
+    let ctrl = if cfg!(target_os = "macos") {
+        "Cmd+"
+    } else {
+        "Ctrl+"
+    };
+    BINDINGS
+        .iter()
+        .filter(|(_, _, c)| *c == command)
+        .map(|(key, chord, _)| {
+            let name = match key {
+                Key::Space => crate::i18n::t(crate::i18n::Tr::KeySpace),
+                Key::Escape => "Esc",
+                other => other.symbol_or_name(),
+            };
+            match chord {
+                Chord::Ctrl => format!("{ctrl}{name}"),
+                _ => name.to_owned(),
+            }
+        })
+        .collect()
+}
+
 /// What else holds the keyboard at the moment.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Gate {
@@ -537,6 +561,15 @@ mod tests {
 
     fn run(mac: bool, layout: Layout, combo: &str, gate: Gate) -> Vec<Action> {
         actions(&press(mac, layout, combo, ""), gate)
+    }
+
+    #[test]
+    fn the_help_names_the_keys_of_the_table() {
+        assert_eq!(keys_of(Command::RepeatLine), ["S"]);
+        assert_eq!(keys_of(Command::SubtitlesLarger), ["=", "+"]);
+        assert_eq!(keys_of(Command::Escape), ["Esc"]);
+        let open = keys_of(Command::OpenFile);
+        assert!(open == ["Ctrl+O"] || open == ["Cmd+O"], "{open:?}");
     }
 
     const FREE: Gate = Gate {

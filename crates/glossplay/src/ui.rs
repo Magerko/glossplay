@@ -2,6 +2,7 @@ use crate::app::{App, Async, SidebarTab};
 use crate::i18n::{Tr, t, tf, tk};
 use crate::keys;
 use crate::session::{Load, Origin, Secondary};
+use crate::settings_ui::SettingsTab;
 use crate::substyle::{self, Position, SubStyle};
 use crate::theme;
 use eframe::egui::{
@@ -73,6 +74,7 @@ impl eframe::App for App {
         self.word_popup(&ctx);
         self.search_window(&ctx);
         self.settings_window(&ctx);
+        self.help_window(&ctx);
         self.asr_setup_dialog(&ctx);
         self.tts_setup_dialog(&ctx);
         self.toast_ui(&ctx);
@@ -113,6 +115,26 @@ fn icon_button(ui: &mut egui::Ui, icon: &str, hint: &str) -> bool {
     );
     crate::record::place(icon, r.rect);
     r.on_hover_text(hint).clicked()
+}
+
+/// The "How to use" button of the control bar, the same size as the icons beside it.
+fn help_button(ui: &mut egui::Ui) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let color = if resp.hovered() {
+        theme::DARK.accent
+    } else {
+        theme::DARK.text
+    };
+    crate::settings_ui::paint_info(ui.painter(), rect.center(), 8.0, color);
+    crate::record::place("help_button", rect);
+    resp.on_hover_text(t(Tr::HelpHint)).clicked()
+}
+
+/// A small gear after an item of the Subtitles menu, opening its tab of Settings.
+fn settings_gear(ui: &mut egui::Ui, tab: SettingsTab) -> bool {
+    ui.add(egui::Button::new(RichText::new("⚙").color(theme::muted())).frame(false))
+        .on_hover_text(tf(Tr::SettingsOf, &[&tab.title()]))
+        .clicked()
 }
 
 /// The font's play and pause glyphs differ in size, so I draw this pair myself.
@@ -277,6 +299,8 @@ impl App {
                     self.close_asr_setup();
                 } else if self.tts_setup.dialog_open {
                     self.close_tts_setup();
+                } else if self.help_open {
+                    self.help_open = false;
                 } else if self.settings_draft.is_some() {
                     self.settings_draft = None;
                 } else if self.search_ui.open {
@@ -342,6 +366,7 @@ impl App {
     /// A dialog or Settings is open: the player under it takes no clicks and no shortcuts.
     pub fn modal_open(&self) -> bool {
         self.settings_draft.is_some()
+            || self.help_open
             || self.asr_setup.dialog_open
             || self.tts_setup.dialog_open
             || self.search_ui.open
@@ -471,13 +496,22 @@ impl App {
             );
         }
         ui.add_space(8.0);
-        if ui.link(t(Tr::SettingsLink)).clicked() {
-            self.settings_draft = Some(self.new_settings_draft());
+        let (mut settings, mut help) = (false, false);
+        centered_row(ui, |ui| {
+            help = crate::settings_ui::info_link(ui, t(Tr::HelpTitle));
+            ui.label(RichText::new("·").color(theme::muted()));
+            settings = ui.link(t(Tr::SettingsLink)).clicked();
+        });
+        if help {
+            self.help_open = true;
+        }
+        if settings {
+            self.open_settings(None);
         }
         if self.asr_setup.installed.is_none() {
             ui.add_space(4.0);
             if ui.link(t(Tr::SetUpLink)).clicked() {
-                self.open_asr_setup(false);
+                self.open_settings(Some(SettingsTab::SpeechRecognition));
             }
         }
     }
@@ -756,8 +790,11 @@ impl App {
                 if fit.fullscreen && icon_button(ui, "⛶", t(Tr::FullscreenHint)) {
                     self.toggle_fullscreen(ui.ctx());
                 }
+                if fit.settings && help_button(ui) {
+                    self.help_open = true;
+                }
                 if fit.settings && icon_button(ui, "⚙", t(Tr::SettingsHint)) {
-                    self.settings_draft = Some(self.new_settings_draft());
+                    self.open_settings(None);
                 }
                 if fit.settings
                     && self.search_available()
@@ -850,6 +887,7 @@ impl App {
                 (f.speed, speed_w),
                 (f.autopause, autopause_w),
                 (f.settings, icon),
+                (f.settings, icon),
                 (f.settings && search, icon),
                 (f.sidebar, icon),
                 (f.fullscreen, icon),
@@ -938,7 +976,8 @@ impl App {
         let mut save_srt = None;
         let mut pick_audio = None;
         let mut toggle_autopause = false;
-        let mut open_settings = false;
+        let mut open_settings: Option<Option<SettingsTab>> = None;
+        let mut open_help = false;
         let mut open_search = false;
         let mut pick_style = None;
         let mut size_step = None;
@@ -976,11 +1015,16 @@ impl App {
                 pick_primary = Some(None);
             }
             ui.separator();
-            ui.label(
-                RichText::new(t(Tr::TranslationLabel))
-                    .color(theme::muted())
-                    .small(),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(t(Tr::TranslationLabel))
+                        .color(theme::muted())
+                        .small(),
+                );
+                if settings_gear(ui, SettingsTab::Translation) {
+                    open_settings = Some(Some(SettingsTab::Translation));
+                }
+            });
             if ui
                 .selectable_label(
                     s.secondary == Secondary::Translate,
@@ -1015,18 +1059,28 @@ impl App {
             } else {
                 t(Tr::TranscribeSpeech)
             };
-            let transcribe = ui.button(label);
-            crate::record::place("transcribe", transcribe.rect);
-            if transcribe.clicked() {
-                toggle_asr = true;
-            }
-            if ui
-                .selectable_label(dub_on, t(Tr::MenuVoiceOver))
-                .on_hover_text(t(Tr::MenuVoiceOverHint))
-                .clicked()
-            {
-                toggle_dub = true;
-            }
+            ui.horizontal(|ui| {
+                let transcribe = ui.button(label);
+                crate::record::place("transcribe", transcribe.rect);
+                if transcribe.clicked() {
+                    toggle_asr = true;
+                }
+                if settings_gear(ui, SettingsTab::SpeechRecognition) {
+                    open_settings = Some(Some(SettingsTab::SpeechRecognition));
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(dub_on, t(Tr::MenuVoiceOver))
+                    .on_hover_text(t(Tr::MenuVoiceOverHint))
+                    .clicked()
+                {
+                    toggle_dub = true;
+                }
+                if settings_gear(ui, SettingsTab::VoiceOver) {
+                    open_settings = Some(Some(SettingsTab::VoiceOver));
+                }
+            });
             if dub_on {
                 egui::Grid::new("dub-volumes")
                     .num_columns(2)
@@ -1126,7 +1180,10 @@ impl App {
                 toggle_autopause = true;
             }
             if !fit.settings && ui.button(t(Tr::SettingsMenu)).clicked() {
-                open_settings = true;
+                open_settings = Some(None);
+            }
+            if !fit.settings && ui.button(t(Tr::HelpMenu)).clicked() {
+                open_help = true;
             }
             if !fit.settings && self.search_available() && ui.button(t(Tr::SearchMenu)).clicked() {
                 open_search = true;
@@ -1163,8 +1220,11 @@ impl App {
         if toggle_autopause {
             self.toggle_autopause();
         }
-        if open_settings {
-            self.settings_draft = Some(self.new_settings_draft());
+        if let Some(tab) = open_settings {
+            self.open_settings(tab);
+        }
+        if open_help {
+            self.help_open = true;
         }
         if let Some(up) = size_step {
             let scale = substyle::step_scale(self.cfg.subtitles.scale, up);
@@ -1602,317 +1662,6 @@ impl App {
         }
     }
 
-    fn settings_window(&mut self, ctx: &egui::Context) {
-        let Some(mut draft) = self.settings_draft.take() else {
-            return;
-        };
-        let (mut open, mut save, mut cancel) = (true, false, false);
-        let (asr_setup, mut asr_action) = (&self.asr_setup, None);
-        let (tts_setup, mut tts_action) = (&self.tts_setup, None);
-        let (search_ui, mut check_sources) = (&self.search_ui, false);
-        egui::Window::new(t(Tr::SettingsTitle))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .order(egui::Order::Foreground)
-            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(dialog_height(ctx).min(520.0))
-                    .show(ui, |ui| {
-                        let wide = 300.0;
-                        let section = |ui: &mut egui::Ui, title: &str| {
-                            ui.add_space(8.0);
-                            ui.label(RichText::new(title).strong().color(theme::accent()));
-                        };
-                        section(ui, t(Tr::SectionLanguages));
-                        egui::Grid::new("lang")
-                            .num_columns(2)
-                            .spacing([16.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label(t(Tr::InterfaceLanguage));
-                                egui::ComboBox::from_id_salt("ui-lang")
-                                    .selected_text(ui_lang_name(&draft.general.ui_lang))
-                                    .show_ui(ui, |ui| {
-                                        for code in ["auto", "en", "ru", "uk"] {
-                                            ui.selectable_value(
-                                                &mut draft.general.ui_lang,
-                                                code.to_owned(),
-                                                ui_lang_name(code),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-                                ui.label(t(Tr::Learning));
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut draft.general.learn_lang)
-                                        .hint_text(t(Tr::LearnHint))
-                                        .desired_width(wide),
-                                );
-                                ui.end_row();
-                                ui.label(t(Tr::TranslateInto));
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut draft.general.native_lang)
-                                        .hint_text("ru, uk, en…")
-                                        .desired_width(wide),
-                                );
-                                ui.end_row();
-                            });
-                        section(ui, t(Tr::SectionSubtitles));
-                        egui::Grid::new("subs")
-                            .num_columns(2)
-                            .spacing([16.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label(t(Tr::TextSize));
-                                ui.add(egui::Slider::new(
-                                    &mut draft.subtitles.font_size,
-                                    16.0..=60.0,
-                                ));
-                                ui.end_row();
-                                ui.label(t(Tr::TranslationSize));
-                                ui.add(egui::Slider::new(
-                                    &mut draft.subtitles.secondary_scale,
-                                    0.5..=1.2,
-                                ));
-                                ui.end_row();
-                                ui.label(t(Tr::SubSizeLabel));
-                                ui.add(
-                                    egui::Slider::new(
-                                        &mut draft.subtitles.scale,
-                                        substyle::SCALE_MIN..=substyle::SCALE_MAX,
-                                    )
-                                    .step_by(f64::from(substyle::SCALE_STEP))
-                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
-                                    .custom_parser(|s| {
-                                        s.trim()
-                                            .trim_end_matches('%')
-                                            .parse::<f64>()
-                                            .ok()
-                                            .map(|p| p / 100.0)
-                                    }),
-                                );
-                                ui.end_row();
-                                ui.label(t(Tr::SubStyleLabel));
-                                let current = SubStyle::from_id(&draft.subtitles.style);
-                                egui::ComboBox::from_id_salt("sub-style")
-                                    .selected_text(t(current.name()))
-                                    .show_ui(ui, |ui| {
-                                        for style in SubStyle::ALL {
-                                            ui.selectable_value(
-                                                &mut draft.subtitles.style,
-                                                style.id().to_owned(),
-                                                t(style.name()),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-                                ui.label(t(Tr::SubPositionLabel));
-                                let current = Position::from_id(&draft.subtitles.position);
-                                egui::ComboBox::from_id_salt("sub-position")
-                                    .selected_text(t(current.name()))
-                                    .show_ui(ui, |ui| {
-                                        for place in [Position::Bottom, Position::Top] {
-                                            ui.selectable_value(
-                                                &mut draft.subtitles.position,
-                                                place.id().to_owned(),
-                                                t(place.name()),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-                                ui.label(t(Tr::SubMarginLabel));
-                                ui.add(egui::Slider::new(&mut draft.subtitles.margin, 0.0..=150.0));
-                                ui.end_row();
-                                ui.label("");
-                                ui.checkbox(
-                                    &mut draft.subtitles.auto_translate,
-                                    t(Tr::AutoTranslateCheck),
-                                );
-                                ui.end_row();
-                            });
-                        ui.label(
-                            RichText::new(t(Tr::SubPreviewLabel))
-                                .color(theme::muted())
-                                .small(),
-                        );
-                        subtitle_preview(ui, &draft.subtitles);
-                        section(ui, t(Tr::SectionTranslation));
-                        egui::Grid::new("tr")
-                            .num_columns(2)
-                            .spacing([16.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label(t(Tr::ServiceRow));
-                                egui::ComboBox::from_id_salt("provider")
-                                    .selected_text(provider_name(&draft.translation.provider))
-                                    .show_ui(ui, |ui| {
-                                        for id in ["google", "deepl", "openai", "anthropic"] {
-                                            ui.selectable_value(
-                                                &mut draft.translation.provider,
-                                                id.to_owned(),
-                                                provider_name(id),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-                                let llm = matches!(
-                                    draft.translation.provider.as_str(),
-                                    "openai" | "anthropic"
-                                );
-                                if llm {
-                                    ui.label(t(Tr::ModelRow));
-                                    let hint = if draft.translation.provider == "anthropic" {
-                                        "claude-opus-5-5"
-                                    } else {
-                                        t(Tr::ModelNameHint)
-                                    };
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut draft.translation.model)
-                                            .hint_text(hint)
-                                            .desired_width(wide),
-                                    );
-                                    ui.end_row();
-                                }
-                                if draft.translation.provider == "openai" {
-                                    ui.label(t(Tr::ServerAddressRow));
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut draft.translation.base_url)
-                                            .hint_text(t(Tr::OpenAiAddressHint))
-                                            .desired_width(wide),
-                                    );
-                                    ui.end_row();
-                                }
-                                if draft.translation.provider != "google" {
-                                    ui.label(t(Tr::ApiKeyRow));
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut draft.translation.api_key)
-                                            .password(true)
-                                            .desired_width(wide),
-                                    );
-                                    ui.end_row();
-                                }
-                            });
-                        section(ui, t(Tr::SectionSpeechRecognition));
-                        asr_action = crate::setup_ui::settings_section(ui, &mut draft, asr_setup);
-                        ui.label(RichText::new(t(Tr::Advanced)).color(theme::muted()));
-                        egui::Grid::new("asr")
-                            .num_columns(2)
-                            .spacing([16.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label("whisper-server");
-                                path_field(ui, &mut draft.asr.server_path, wide);
-                                ui.end_row();
-                                ui.label(t(Tr::ModelFileRow));
-                                path_field(ui, &mut draft.asr.model_path, wide);
-                                ui.end_row();
-                                ui.label("");
-                                ui.checkbox(&mut draft.asr.enabled, t(Tr::AsrAutoCheck));
-                                ui.end_row();
-                            });
-                        section(ui, t(Tr::SectionVoiceOver));
-                        tts_action = crate::tts_ui::settings_section(ui, &mut draft, tts_setup);
-                        section(ui, "Anki");
-                        egui::Grid::new("anki")
-                            .num_columns(2)
-                            .spacing([16.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label(t(Tr::DeckRow));
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut draft.anki.deck)
-                                        .desired_width(wide),
-                                );
-                                ui.end_row();
-                                ui.label(t(Tr::AnkiAddressRow));
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut draft.anki.url)
-                                        .desired_width(wide),
-                                );
-                                ui.end_row();
-                            });
-                        section(ui, t(Tr::SectionSources));
-                        check_sources =
-                            crate::search_ui::sources_section(ui, &mut draft, search_ui, wide);
-                        section(ui, t(Tr::SectionPlayer));
-                        egui::Grid::new("player")
-                            .num_columns(2)
-                            .spacing([16.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label(t(Tr::HwdecRow));
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut draft.player.hwdec)
-                                        .hint_text("auto")
-                                        .desired_width(wide),
-                                );
-                                ui.end_row();
-                                ui.label("ffmpeg");
-                                path_field(ui, &mut draft.player.ffmpeg_path, wide);
-                                ui.end_row();
-                                ui.label(t(Tr::InterfaceScaleRow));
-                                ui.add(egui::Slider::new(&mut draft.general.ui_scale, 0.75..=2.0));
-                                ui.end_row();
-                                ui.label(t(Tr::ThemeRow));
-                                let choices = [
-                                    ("dark", Tr::ThemeDark),
-                                    ("light", Tr::ThemeLight),
-                                    ("system", Tr::ThemeSystem),
-                                ];
-                                let shown = choices
-                                    .iter()
-                                    .find(|(id, _)| *id == draft.general.theme)
-                                    .map_or(Tr::ThemeDark, |(_, name)| *name);
-                                egui::ComboBox::from_id_salt("theme")
-                                    .selected_text(t(shown))
-                                    .show_ui(ui, |ui| {
-                                        for (id, name) in choices {
-                                            ui.selectable_value(
-                                                &mut draft.general.theme,
-                                                id.to_owned(),
-                                                t(name),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-                                if crate::shell::SUPPORTED {
-                                    ui.label("");
-                                    ui.checkbox(
-                                        &mut draft.general.shell_integration,
-                                        t(Tr::ShellCheck),
-                                    );
-                                    ui.end_row();
-                                }
-                            });
-                    });
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(RichText::new(t(Tr::SaveButton)).strong())
-                        .clicked()
-                    {
-                        save = true;
-                    }
-                    if ui.button(t(Tr::Cancel)).clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        self.asr_setup.scroll_to = false;
-        self.tts_setup.scroll_to = false;
-        self.search_ui.scroll_to = false;
-        if check_sources {
-            self.check_sources(draft.sources.clone());
-        }
-        if let Some(action) = asr_action {
-            self.asr_settings_action(action, &draft);
-        }
-        if let Some(action) = tts_action {
-            self.tts_settings_action(action, &draft);
-        }
-        if save {
-            self.apply_settings(draft);
-        } else if open && !cancel {
-            self.settings_draft = Some(draft);
-        }
-    }
-
     fn toast_ui(&mut self, ctx: &egui::Context) {
         let Some((text, _, _)) = &self.status else {
             return;
@@ -1937,37 +1686,18 @@ impl App {
     }
 }
 
-fn provider_name(id: &str) -> &'static str {
-    match id {
-        "google" => t(Tr::ProviderGoogle),
-        "deepl" => "DeepL",
-        "openai" => t(Tr::ProviderOpenAi),
-        "anthropic" => "Claude",
-        _ => t(Tr::ProviderUnknown),
-    }
-}
-
-/// Each language is named in itself, so it can be found whatever the interface says.
-fn ui_lang_name(code: &str) -> &'static str {
-    match code {
-        "en" => "English",
-        "ru" => "Русский",
-        "uk" => "Українська",
-        _ => t(Tr::LangAuto),
-    }
-}
-
-fn path_field(ui: &mut egui::Ui, value: &mut String, width: f32) {
+/// A row of widgets in the middle of a centred column. egui centres single widgets only, so
+/// the row is pushed in by half of the width it took in the frame before.
+fn centered_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let id = ui.next_auto_id().with("centered-row");
+    let width: f32 = ui.data(|d| d.get_temp(id)).unwrap_or(0.0);
+    let left = ((ui.available_width() - width) / 2.0).max(0.0);
     ui.horizontal(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(value)
-                .hint_text(t(Tr::PathAutoHint))
-                .desired_width(width - 70.0),
-        );
-        if ui.button(t(Tr::BrowseButton)).clicked()
-            && let Some(path) = rfd::FileDialog::new().pick_file()
-        {
-            *value = path.to_string_lossy().into_owned();
+        ui.add_space(left);
+        let used = ui.horizontal(add).response.rect.width();
+        if (used - width).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(id, used));
+            ui.ctx().request_repaint();
         }
     });
 }
@@ -1978,7 +1708,7 @@ pub fn dialog_height(ctx: &egui::Context) -> f32 {
 }
 
 /// A sample of the chosen look on a dark and on a light picture.
-fn subtitle_preview(ui: &mut egui::Ui, subs: &gp_core::config::Subtitles) {
+pub fn subtitle_preview(ui: &mut egui::Ui, subs: &gp_core::config::Subtitles) {
     let look = SubStyle::from_id(&subs.style).look();
     let size =
         (subs.font_size * substyle::clamp_scale(subs.scale) * look.size * 0.5).clamp(9.0, 24.0);

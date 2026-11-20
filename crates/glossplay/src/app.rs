@@ -83,6 +83,10 @@ pub struct App {
     /// Translation jobs sent, for the self-test report.
     pub translate_jobs: usize,
     pub settings_draft: Option<Config>,
+    /// The tab Settings shows; it stays while the program runs.
+    pub settings_tab: crate::settings_ui::SettingsTab,
+    /// The "How to use" window is open.
+    pub help_open: bool,
     /// The theme setting changed; the next frame sets the colours again.
     pub restyle: bool,
     pub url_input: String,
@@ -217,6 +221,8 @@ impl App {
             panel_busy: false,
             translate_jobs: 0,
             settings_draft: None,
+            settings_tab: Default::default(),
+            help_open: false,
             restyle: false,
             url_input: String::new(),
             status: None,

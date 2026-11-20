@@ -54,8 +54,14 @@ pub struct Plan {
     pub words_tab: bool,
     /// Open the search window and search for this.
     pub search_dialog: Option<String>,
-    /// Settings scrolled to Sources, with the Check button pressed.
+    /// Settings at Sources, with the Check button pressed.
     pub settings_sources: bool,
+    /// `--settings-tab ID`: the tab Settings opens at.
+    pub settings_tab: Option<String>,
+    /// Open the "How to use" window.
+    pub help: bool,
+    /// `--open-picker SALT`: the language list of Settings to show open.
+    pub open_picker: Option<String>,
     /// Key presses to replay as egui-winit sends them with a layout, instead of playing:
     /// `ru:s`, `en:ctrl+v=paste_file` (with the action expected), `focus:url`,
     /// `focus:transcript`, `blur`, `clip:TEXT`, `wait:MS`, `playing`, `settings`.
@@ -178,6 +184,23 @@ impl State {
     }
 }
 
+/// The tab a self-test opens Settings at. Without one asked for, a run with a file shows
+/// speech recognition and one without shows the first tab, as the flags did before tabs.
+fn settings_tab(plan: &Plan) -> crate::settings_ui::SettingsTab {
+    use crate::settings_ui::SettingsTab;
+    if let Some(tab) = plan.settings_tab.as_deref().and_then(SettingsTab::parse) {
+        tab
+    } else if plan.settings_sources {
+        SettingsTab::Sources
+    } else if plan.settings_voice {
+        SettingsTab::VoiceOver
+    } else if plan.empty {
+        SettingsTab::Languages
+    } else {
+        SettingsTab::SpeechRecognition
+    }
+}
+
 pub fn step(app: &mut App, ctx: &egui::Context) {
     let Some(mut st) = app.selftest.take() else {
         return;
@@ -203,16 +226,9 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
             st.seek_took = Some(from.elapsed());
         }
     }
-    if st.plan.settings && !st.plan.empty {
-        // The section is below the fold of the settings window; it has to be in the screenshot.
-        // Without a file the window stays at its top, which shows the language choice.
-        app.asr_setup.scroll_to = true;
-    }
-    if st.plan.settings_voice {
-        app.tts_setup.scroll_to = true;
-    }
-    if st.plan.settings_sources {
-        app.search_ui.scroll_to = true;
+    if let Some(salt) = &st.plan.open_picker {
+        let id = egui::Id::unique(crate::settings_ui::OPEN_PICKER);
+        ctx.data_mut(|d| d.insert_temp(id, salt.clone()));
     }
     if st.plan.keys.is_empty() {
         advance(&mut st, app, ctx);
@@ -293,7 +309,7 @@ fn inject_step(st: &mut State, app: &mut App, ctx: &egui::Context, raw: &mut egu
         }
         "playing" => s.playing_from = Some((app.snap.pos, Instant::now())),
         "settings" => {
-            app.settings_draft = Some(app.new_settings_draft());
+            app.open_settings(None);
             println!("step=settings");
         }
         _ => {
@@ -430,8 +446,9 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 // Dialogs are drawn before this runs, so they must be open a frame ahead.
                 st.word_opened = true;
                 if st.plan.settings {
-                    app.settings_draft = Some(app.new_settings_draft());
+                    app.open_settings(Some(settings_tab(&st.plan)));
                 }
+                app.help_open |= st.plan.help;
                 if st.plan.setup_dialog {
                     app.open_asr_setup(false);
                 }
@@ -483,14 +500,12 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 if st.plan.setup_dialog {
                     app.open_asr_setup(false);
                 }
-                if st.plan.settings {
-                    app.settings_draft = Some(app.new_settings_draft());
+                if st.plan.settings || st.plan.settings_voice {
+                    app.open_settings(Some(settings_tab(&st.plan)));
                 }
+                app.help_open |= st.plan.help;
                 if st.plan.tts_dialog {
                     app.open_tts_setup(false);
-                }
-                if st.plan.settings_voice {
-                    app.settings_draft = Some(app.new_settings_draft());
                 }
                 if st.plan.setup_install {
                     // The Install button of the dialog opened from the Subtitles menu: when the

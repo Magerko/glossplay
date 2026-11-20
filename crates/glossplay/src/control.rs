@@ -13,6 +13,7 @@ mod mcp;
 use crate::app::{App, Async, SidebarTab};
 use crate::i18n::{self, Tr, t};
 use crate::session::{Load, Origin, Secondary, Session, normalize_lang};
+use crate::settings_ui::SettingsTab;
 use crate::video;
 use eframe::egui;
 use gp_core::{Ms, TokenKind};
@@ -177,15 +178,7 @@ struct State {
     rx: Receiver<Incoming>,
     outbox: Arc<Outbox>,
     pending: Vec<Pending>,
-    /// Settings scroll to a section only while asked every frame; this keeps asking a while.
-    scroll: Option<(Instant, Section)>,
     closing: bool,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Section {
-    SpeechRecognition,
-    VoiceOver,
 }
 
 impl State {
@@ -212,7 +205,6 @@ impl State {
             rx: INBOX.lock().unwrap().take().expect("launch set the inbox"),
             outbox: OUTBOX.get().expect("launch set the outbox").clone(),
             pending: Vec::new(),
-            scroll: None,
             closing: false,
         }
     }
@@ -238,28 +230,18 @@ impl State {
             let answer = answer.unwrap_or_else(|| Err(format!("{} timed out", p.call.name)));
             self.outbox.finish(&p.call.id, p.call.modern, answer);
         }
-        if let Some((until, section)) = self.scroll {
-            if now < until && app.settings_draft.is_some() {
-                match section {
-                    Section::SpeechRecognition => app.asr_setup.scroll_to = true,
-                    Section::VoiceOver => app.tts_setup.scroll_to = true,
-                }
-            } else {
-                self.scroll = None;
-            }
-        }
         if STDIN_CLOSED.load(Ordering::SeqCst) && !self.closing {
             self.closing = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if !self.pending.is_empty() || self.scroll.is_some() {
+        if !self.pending.is_empty() {
             ctx.request_repaint_after(POLL);
         }
     }
 
     fn dispatch(&mut self, app: &mut App, ctx: &egui::Context, call: ToolCall) {
-        let outcome = run_tool(self, app, ctx, &call.name, &call.args)
-            .unwrap_or_else(|e| Outcome::Now(Err(e)));
+        let outcome =
+            run_tool(app, ctx, &call.name, &call.args).unwrap_or_else(|e| Outcome::Now(Err(e)));
         match outcome {
             Outcome::Now(reply) => {
                 self.outbox.finish(&call.id, call.modern, reply);
@@ -365,7 +347,6 @@ fn later(name: &str, args: &Value, wait: Wait) -> Result<Outcome, String> {
 // ----- the tools -----
 
 fn run_tool(
-    st: &mut State,
     app: &mut App,
     ctx: &egui::Context,
     name: &str,
@@ -468,10 +449,11 @@ fn run_tool(
             CHROME.with(|c| c.set(choice));
             now(json!({"controls": choice.map_or(json!("auto"), Value::Bool)}))
         }
-        "open_settings" => open_settings(st, app, args),
+        "open_settings" => open_settings(app, args),
         "close_dialogs" => {
             let closed = json!({
                 "settings": app.settings_draft.take().is_some(),
+                "help": std::mem::take(&mut app.help_open),
                 "speech_recognition_setup": app.asr_setup.dialog_open,
                 "voice_over_setup": app.tts_setup.dialog_open,
             });
@@ -481,7 +463,6 @@ fn run_tool(
             if app.tts_setup.dialog_open {
                 app.close_tts_setup();
             }
-            st.scroll = None;
             now(json!({"closed": closed}))
         }
         "set_ui_language" => {
@@ -1068,28 +1049,31 @@ fn search_transcript(app: &mut App, args: &Value) -> Result<Outcome, String> {
     }))))
 }
 
-fn open_settings(st: &mut State, app: &mut App, args: &Value) -> Result<Outcome, String> {
+/// The values `open_settings` takes: the tabs, "top" (the first tab, as it was before there
+/// were tabs), the help window and the two setup dialogs.
+fn settings_sections() -> Vec<&'static str> {
+    let mut all = vec!["top"];
+    all.extend(SettingsTab::ALL.iter().map(|tab| tab.id()));
+    all.extend(["help", "speech_recognition_setup", "voice_over_setup"]);
+    all
+}
+
+fn open_settings(app: &mut App, args: &Value) -> Result<Outcome, String> {
     let section = opt_str(args, "section")?.unwrap_or("top");
     match section {
-        "top" | "speech_recognition" | "voice_over" => {
-            if app.settings_draft.is_none() {
-                app.settings_draft = Some(app.new_settings_draft());
-            }
-            st.scroll = match section {
-                "speech_recognition" => Some(Section::SpeechRecognition),
-                "voice_over" => Some(Section::VoiceOver),
-                _ => None,
-            }
-            .map(|s| (Instant::now() + Duration::from_millis(1500), s));
-        }
+        "top" => app.open_settings(Some(SettingsTab::Languages)),
+        "help" => app.help_open = true,
         "speech_recognition_setup" => app.open_asr_setup(false),
         "voice_over_setup" => app.open_tts_setup(false),
-        other => {
-            return Err(format!(
-                "unknown section \"{other}\": top, speech_recognition, voice_over, \
-                 speech_recognition_setup or voice_over_setup"
-            ));
-        }
+        other => match SettingsTab::parse(other) {
+            Some(tab) => app.open_settings(Some(tab)),
+            None => {
+                return Err(format!(
+                    "unknown section \"{other}\": {}",
+                    settings_sections().join(", ")
+                ));
+            }
+        },
     }
     Ok(Outcome::Now(Ok(json!({"opened": section}))))
 }
@@ -1611,6 +1595,8 @@ fn status(app: &App, ctx: &egui::Context) -> Value {
         "word_card": app.popup.as_ref().map(|p| p.word.clone()),
         "dialogs": {
             "settings": app.settings_draft.is_some(),
+            "settings_tab": app.settings_tab.id(),
+            "help": app.help_open,
             "speech_recognition_setup": app.asr_setup.dialog_open,
             "voice_over_setup": app.tts_setup.dialog_open,
         },
@@ -1853,8 +1839,8 @@ pub fn tool_list() -> Value {
         tool(
             "open_settings",
             "Open settings",
-            "Opens the Settings window (scrolled to a section) or a setup dialog.",
-            json!({"section": {"type": "string", "enum": ["top", "speech_recognition", "voice_over", "speech_recognition_setup", "voice_over_setup"]}}),
+            "Opens the Settings window at a tab (top is the first one), the How to use window, or a setup dialog.",
+            json!({"section": {"type": "string", "enum": settings_sections()}}),
             &[]
         ),
         tool(

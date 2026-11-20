@@ -206,12 +206,6 @@ messages! {
     SectionLanguages => ["Languages", "Языки", "Мови"],
     InterfaceLanguage => ["Interface language", "Язык интерфейса", "Мова інтерфейсу"],
     LangAuto => ["Automatic", "Автоматически", "Автоматично"],
-    LearnHint => [
-        "en, ja, de… empty = detect",
-        "en, ja, de… пусто = определять",
-        "en, ja, de… порожньо = визначати"
-    ],
-    TranslateInto => ["Translate into", "Переводить на", "Перекладати на"],
     SectionSubtitles => ["Subtitles", "Субтитры", "Субтитри"],
     TextSize => ["Text size", "Размер текста", "Розмір тексту"],
     TranslationSize => ["Translation size", "Размер перевода", "Розмір перекладу"],
@@ -326,6 +320,13 @@ messages! {
     LangJapanese => ["Japanese", "Японский", "Японська"],
     LangKorean => ["Korean", "Корейский", "Корейська"],
     LangChinese => ["Chinese", "Китайский", "Китайська"],
+    LangDutch => ["Dutch", "Нидерландский", "Нідерландська"],
+    LangArabic => ["Arabic", "Арабский", "Арабська"],
+    LangHindi => ["Hindi", "Хинди", "Гінді"],
+    LangIndonesian => ["Indonesian", "Индонезийский", "Індонезійська"],
+    LangVietnamese => ["Vietnamese", "Вьетнамский", "В’єтнамська"],
+    LangCzech => ["Czech", "Чешский", "Чеська"],
+    LangSwedish => ["Swedish", "Шведский", "Шведська"],
     CouldNotReadSubsShown => [
         "Could not read the subtitles \"{0}\": {1} — they are shown without word lookup.",
         "Не удалось прочитать субтитры «{0}»: {1} — они показываются без поиска слов.",
@@ -901,7 +902,7 @@ messages! {
     ],
     SliderOriginal => ["Original", "Громкость оригинала", "Гучність оригіналу"],
     SliderVoice => ["Voice-over", "Громкость озвучки", "Гучність озвучення"],
-    SectionVoiceOver => ["Voice-over", "Озвучка", "Озвучення"],
+    SectionVoiceOver => ["Voice-over", "Озвучка перевода", "Озвучення перекладу"],
     TtsEnable => [
         "Speak the translation over the video",
         "Озвучивать перевод поверх видео",
@@ -950,9 +951,9 @@ messages! {
         "за замовчуванням на сервері"
     ],
     TtsLanguage => [
-        "Spoken in: {0} (the \"Translate into\" language)",
-        "Язык озвучки: {0} (язык из поля «Переводить на»)",
-        "Мова озвучення: {0} (мова з поля «Перекладати на»)"
+        "Spoken in: {0} (\"My language\" on the Languages tab)",
+        "Язык озвучки: {0} («Мой язык» на вкладке «Языки»)",
+        "Мова озвучення: {0} («Моя мова» на вкладці «Мови»)"
     ],
     DubStarting => [
         "Voice-over: starting the voice engine…",
@@ -1109,4 +1110,184 @@ messages! {
         "Чтобы смотреть magnet-ссылку, укажите адрес TorrServer в Настройках → Источники",
         "Щоб дивитися magnet-посилання, вкажіть адресу TorrServer у Налаштуваннях → Джерела"
     ],
+
+    // Settings tabs: what each is for, and the notes behind the ⓘ signs.
+    SectionWords => ["Words and Anki", "Слова и Anki", "Слова та Anki"],
+    IntroLanguages => [
+        "Subtitles in the language of the video go on top, the translation into your language goes under them.",
+        "Сверху — субтитры на языке видео, под ними — перевод на ваш язык.",
+        "Зверху — субтитри мовою відео, під ними — переклад вашою мовою."
+    ],
+    IntroSubtitles => [
+        "How the two lines of subtitles look over the video. While watching, {0} and {1} make them smaller and larger.",
+        "Как выглядят две строки субтитров поверх видео. Во время просмотра клавиши {0} и {1} уменьшают и увеличивают их.",
+        "Як виглядають два рядки субтитрів поверх відео. Під час перегляду клавіші {0} і {1} зменшують і збільшують їх."
+    ],
+    IntroTranslation => [
+        "Translates the subtitles into your language. Google Translate works without a key; DeepL, OpenAI and Claude need an API key.",
+        "Переводит субтитры на ваш язык. Google Translate работает без ключа; для DeepL, OpenAI и Claude нужен ключ API.",
+        "Перекладає субтитри вашою мовою. Google Translate працює без ключа; для DeepL, OpenAI і Claude потрібен ключ API."
+    ],
+    IntroSpeech => [
+        "Makes subtitles from the speech when a video has none. It runs on this computer after a one-time download. While watching: Subtitles menu → \"{0}\".",
+        "Делает субтитры из речи, если у видео их нет. Работает на этом компьютере после однократной загрузки. Во время просмотра: меню «Субтитры» → «{0}».",
+        "Робить субтитри з мовлення, якщо у відео їх немає. Працює на цьому комп’ютері після одноразового завантаження. Під час перегляду: меню «Субтитри» → «{0}»."
+    ],
+    IntroVoice => [
+        "Reads the translation aloud over the video and turns the original sound down. While watching: Subtitles menu → \"{0}\".",
+        "Читает перевод вслух поверх видео и приглушает оригинальный звук. Во время просмотра: меню «Субтитры» → «{0}».",
+        "Читає переклад уголос поверх відео і приглушує оригінальний звук. Під час перегляду: меню «Субтитри» → «{0}»."
+    ],
+    IntroWords => [
+        "Click a word in the subtitles to see its translation. Saved words are in the side panel ({0}); Anki, a flashcard app, can get them as cards.",
+        "Щёлкните слово в субтитрах, чтобы увидеть перевод. Сохранённые слова — на боковой панели ({0}); их можно отправить карточками в Anki — программу для запоминания слов.",
+        "Клацніть слово в субтитрах, щоб побачити переклад. Збережені слова — на бічній панелі ({0}); їх можна надіслати картками в Anki — програму для запам’ятовування слів."
+    ],
+    IntroPlayer => [
+        "The look of the window and how video is played. The defaults suit most computers.",
+        "Вид окна и воспроизведение видео. Значения по умолчанию подходят большинству компьютеров.",
+        "Вигляд вікна і відтворення відео. Типові значення підходять більшості комп’ютерів."
+    ],
+    RowVideoLang => ["Language of the videos", "Язык видео", "Мова відео"],
+    RowMyLang => ["My language", "Мой язык", "Моя мова"],
+    LangDetect => ["Detect from each video", "Определять по видео", "Визначати за відео"],
+    InfoLearn => [
+        "The language you are learning. It decides which subtitles go on top and which language speech recognition listens for.",
+        "Язык, который вы изучаете. От него зависит, какие субтитры будут сверху и какой язык слушает распознавание речи.",
+        "Мова, яку ви вивчаєте. Від неї залежить, які субтитри будуть зверху і яку мову слухає розпізнавання мовлення."
+    ],
+    InfoNative => [
+        "Translation, voice-over and word explanations are in this language.",
+        "На этом языке будут перевод, озвучка и объяснения слов.",
+        "Цією мовою будуть переклад, озвучення і пояснення слів."
+    ],
+    InfoInterface => [
+        "The language of menus and buttons.",
+        "Язык меню и кнопок.",
+        "Мова меню і кнопок."
+    ],
+    InfoAutoTranslate => [
+        "When a video has no subtitles in your language, the translation service makes them.",
+        "Если у видео нет субтитров на вашем языке, их сделает сервис перевода.",
+        "Якщо у відео немає субтитрів вашою мовою, їх зробить сервіс перекладу."
+    ],
+    InfoApiKey => [
+        "A key from the service's website. It stays in the settings file on this computer.",
+        "Ключ с сайта сервиса. Он хранится в файле настроек на этом компьютере.",
+        "Ключ із сайту сервісу. Він зберігається у файлі налаштувань на цьому комп’ютері."
+    ],
+    InfoAsrAuto => [
+        "Starts speech recognition by itself when a video has no subtitles at all.",
+        "Запускает распознавание речи само, если у видео совсем нет субтитров.",
+        "Запускає розпізнавання мовлення саме, якщо у відео зовсім немає субтитрів."
+    ],
+    InfoVolumes => [
+        "While the voice speaks: how loud the film's own sound stays and how loud the voice is, in percent. The same two sliders are in the Subtitles menu.",
+        "Пока звучит озвучка: насколько громким остаётся звук фильма и насколько громок голос, в процентах. Те же два ползунка есть в меню «Субтитры».",
+        "Поки звучить озвучення: наскільки гучним лишається звук фільму і наскільки гучний голос, у відсотках. Ті самі два повзунки є в меню «Субтитри»."
+    ],
+    InfoAnki => [
+        "Anki needs the AnkiConnect add-on and has to be running. Saved words go to this deck.",
+        "Нужны запущенная Anki и дополнение AnkiConnect. Сохранённые слова попадут в эту колоду.",
+        "Потрібні запущена Anki і доповнення AnkiConnect. Збережені слова потраплять у цю колоду."
+    ],
+    InfoHwdec => [
+        "Lets the graphics card decode the video. Leave it empty or \"auto\"; write \"no\" if the picture has glitches.",
+        "Декодирование видео видеокартой. Оставьте пустым или «auto»; напишите «no», если картинка с артефактами.",
+        "Декодування відео відеокартою. Залиште порожнім або «auto»; напишіть «no», якщо зображення з артефактами."
+    ],
+    InfoFfmpeg => [
+        "ffmpeg reads the subtitles inside video files and the sound for speech recognition.",
+        "ffmpeg читает субтитры внутри видеофайлов и звук для распознавания речи.",
+        "ffmpeg читає субтитри всередині відеофайлів і звук для розпізнавання мовлення."
+    ],
+    InfoScale => [
+        "Makes all text and buttons larger or smaller. It applies after a restart.",
+        "Делает весь текст и кнопки крупнее или мельче. Применяется после перезапуска.",
+        "Робить увесь текст і кнопки більшими або меншими. Застосовується після перезапуску."
+    ],
+    AsrListensFor => [
+        "Listens for: {0} (the language of the videos)",
+        "Слушает язык: {0} (язык видео)",
+        "Слухає мову: {0} (мова відео)"
+    ],
+    AsrListensAny => [
+        "Listens for any language and works out which one it is",
+        "Слушает любой язык и сам определяет, какой",
+        "Слухає будь-яку мову і сам визначає, яку"
+    ],
+    ChangeLanguage => ["Change…", "Изменить…", "Змінити…"],
+    TtsLangUnknown => [
+        "The voice engine may not know this language.",
+        "Движок озвучки может не знать этот язык.",
+        "Рушій озвучення може не знати цю мову."
+    ],
+    SettingsOf => ["Settings: {0}", "Настройки: {0}", "Налаштування: {0}"],
+
+    // The "How to use" window.
+    HelpTitle => ["How to use", "Как пользоваться", "Як користуватися"],
+    HelpHint => ["How to use Glossplay", "Как пользоваться Glossplay", "Як користуватися Glossplay"],
+    HelpMenu => ["How to use…", "Как пользоваться…", "Як користуватися…"],
+    HelpOpenTitle => ["Open a video", "Откройте видео", "Відкрийте відео"],
+    HelpOpenText => [
+        "Press \"{0}\", drop a file into the window, or paste a link to a video page into the field. Ctrl+V with a copied link works too.",
+        "Нажмите «{0}», перетащите файл в окно или вставьте в поле ссылку на страницу с видео. Ctrl+V со скопированной ссылкой тоже работает.",
+        "Натисніть «{0}», перетягніть файл у вікно або вставте в поле посилання на сторінку з відео. Ctrl+V зі скопійованим посиланням теж працює."
+    ],
+    HelpSubsTitle => ["Two lines of subtitles", "Две строки субтитров", "Два рядки субтитрів"],
+    HelpSubsText => [
+        "On top: the language of the video. Under it: the translation into your language. Set both languages once in Settings; other tracks are in the \"{0}\" menu.",
+        "Сверху — язык видео, под ним — перевод на ваш язык. Оба языка задаются один раз в настройках; другие дорожки — в меню «{0}».",
+        "Зверху — мова відео, під нею — переклад вашою мовою. Обидві мови задаються один раз у налаштуваннях; інші доріжки — в меню «{0}»."
+    ],
+    HelpAsrTitle => ["No subtitles?", "Нет субтитров?", "Немає субтитрів?"],
+    HelpAsrText => [
+        "\"{0}\" menu → \"{1}\": the player listens to the speech and writes it down. The first time it offers a one-time download.",
+        "Меню «{0}» → «{1}»: плеер слушает речь и записывает её. В первый раз он предложит однократную загрузку.",
+        "Меню «{0}» → «{1}»: плеєр слухає мовлення і записує його. Першого разу він запропонує одноразове завантаження."
+    ],
+    HelpVoiceTitle => ["Hear the translation", "Слушайте перевод", "Слухайте переклад"],
+    HelpVoiceText => [
+        "\"{0}\" menu → \"{1}\": the translation is read aloud over the video. Two sliders appear under it: \"{2}\" is the film's sound, \"{3}\" is the voice.",
+        "Меню «{0}» → «{1}»: перевод читается вслух поверх видео. Под этим пунктом появятся два ползунка: «{2}» — звук фильма, «{3}» — голос.",
+        "Меню «{0}» → «{1}»: переклад читається вголос поверх відео. Під цим пунктом з’являться два повзунки: «{2}» — звук фільму, «{3}» — голос."
+    ],
+    HelpWordsTitle => ["Look up words", "Смотрите слова", "Дивіться слова"],
+    HelpWordsText => [
+        "Click a word in the subtitles to see its translation. \"{0}\" keeps it in your list ({1}), and from there it can go to Anki.",
+        "Щёлкните слово в субтитрах, чтобы увидеть перевод. «{0}» добавит его в ваш список ({1}), а оттуда его можно отправить в Anki.",
+        "Клацніть слово в субтитрах, щоб побачити переклад. «{0}» додасть його до вашого списку ({1}), а звідти його можна надіслати в Anki."
+    ],
+    HelpKeysTitle => ["Keys", "Клавиши", "Клавіші"],
+    KeySpace => ["Space", "Пробел", "Пробіл"],
+    KeyPlayPause => ["Play or pause", "Пауза и продолжение", "Пауза і продовження"],
+    KeySeek => ["5 seconds back or forward", "На 5 секунд назад или вперёд", "На 5 секунд назад або вперед"],
+    KeyVolume => ["Louder or quieter", "Громче или тише", "Гучніше або тихіше"],
+    KeyLines => [
+        "Previous line, repeat it, next line",
+        "Предыдущая реплика, повтор, следующая",
+        "Попередня репліка, повтор, наступна"
+    ],
+    KeyToggleLines => [
+        "Hide or show the original or the translation",
+        "Скрыть или показать оригинал или перевод",
+        "Сховати або показати оригінал чи переклад"
+    ],
+    KeyAutoPause => [
+        "Pause after every line: on or off",
+        "Пауза после каждой реплики: вкл. или выкл.",
+        "Пауза після кожної репліки: увімк. або вимк."
+    ],
+    KeyFullscreen => ["Full screen", "Во весь экран", "На весь екран"],
+    KeySidebar => [
+        "Transcript and saved words",
+        "Транскрипт и сохранённые слова",
+        "Транскрипт і збережені слова"
+    ],
+    KeyMute => ["Sound off or on", "Выключить или включить звук", "Вимкнути або увімкнути звук"],
+    KeySpeed => ["Slower or faster", "Медленнее или быстрее", "Повільніше або швидше"],
+    KeySubSize => ["Smaller or larger subtitles", "Субтитры мельче или крупнее", "Субтитри менші або більші"],
+    KeyOpenFile => ["Open a file", "Открыть файл", "Відкрити файл"],
+    KeySearch => ["Search videos", "Поиск видео", "Пошук відео"],
+    KeyClose => ["Close a window", "Закрыть окно", "Закрити вікно"],
 }

@@ -33,10 +33,25 @@ impl TrackInfo {
         )
     }
 
+    /// "#2 · English · Commentary": the language by its name, then the title unless the
+    /// title only names the language again.
     pub fn label(&self) -> String {
         let mut parts = vec![format!("#{}", self.id)];
-        parts.extend(self.lang.clone());
-        parts.extend(self.title.clone());
+        let lang = self.lang.as_deref().filter(|l| !l.trim().is_empty());
+        let name = lang.map(crate::i18n::language_label);
+        let known = lang.and_then(|l| gp_core::lang::find(&gp_core::lang::normalize(l)));
+        let repeats = |title: &str| {
+            let title = title.trim();
+            name.as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(title))
+                || lang.is_some_and(|l| l.eq_ignore_ascii_case(title))
+                || known.is_some_and(|k| {
+                    k.english.eq_ignore_ascii_case(title) || k.native.eq_ignore_ascii_case(title)
+                })
+        };
+        let title = self.title.clone().filter(|t| !repeats(t));
+        parts.extend(name);
+        parts.extend(title);
         parts.join(" · ")
     }
 }

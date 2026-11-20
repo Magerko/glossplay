@@ -9,7 +9,7 @@ use crate::jobs::Msg;
 use crate::setup_text as text;
 use crate::theme;
 use crate::ui::dialog_height;
-use eframe::egui::{self, Align, Align2, RichText, vec2};
+use eframe::egui::{self, Align2, RichText, vec2};
 use gp_core::config::Config;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,8 +32,6 @@ pub struct AsrSetup {
     pub progress: Option<Progress>,
     outcome: Option<Outcome>,
     pub installed: Option<AsrInstall>,
-    /// Scroll the Settings window to this section on its next frame.
-    pub scroll_to: bool,
 }
 
 impl AsrSetup {
@@ -305,11 +303,6 @@ impl App {
 
 /// The Speech recognition part of the Settings window, above the manual paths.
 pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &AsrSetup) -> Option<Action> {
-    if s.scroll_to {
-        // A little above the cursor, so the section heading stays in view.
-        let at = egui::Rect::from_min_size(ui.cursor().min - vec2(0.0, 32.0), vec2(1.0, 1.0));
-        ui.scroll_to_rect(at, Some(Align::TOP));
-    }
     let mut action = None;
     let status = match &s.installed {
         Some(i) => i.status(),
@@ -401,6 +394,8 @@ fn model_name(id: &str) -> String {
 fn choices(ui: &mut egui::Ui, salt: &str, engine: &mut String, model: &mut String, hw: &Hardware) {
     let gpu = hw.gpu.as_ref();
     let recommended = asr_setup::recommend(gpu).engine;
+    // The label column takes about a hundred points; the rest is for the pickers.
+    let combo = (ui.available_width() - 110.0).clamp(180.0, 300.0);
     egui::Grid::new((salt, "choices"))
         .num_columns(2)
         .spacing([16.0, 6.0])
@@ -408,7 +403,8 @@ fn choices(ui: &mut egui::Ui, salt: &str, engine: &mut String, model: &mut Strin
             ui.label(t(Tr::RowEngine));
             if ENGINE_AVAILABLE {
                 egui::ComboBox::from_id_salt((salt, "engine"))
-                    .width(300.0)
+                    .width(combo)
+                    .truncate()
                     .selected_text(engine_name(engine, recommended))
                     .show_ui(ui, |ui| {
                         for key in ["auto", "nvidia", "cpu"] {
@@ -434,7 +430,8 @@ fn choices(ui: &mut egui::Ui, salt: &str, engine: &mut String, model: &mut Strin
                 auto.clone()
             };
             egui::ComboBox::from_id_salt((salt, "model"))
-                .width(300.0)
+                .width(combo)
+                .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     if ui

@@ -5,6 +5,7 @@ mod asr_setup;
 mod components;
 mod control;
 mod dub;
+mod help_ui;
 mod i18n;
 mod icon;
 mod jobs;
@@ -16,6 +17,7 @@ mod record;
 mod search_ui;
 mod selftest;
 mod session;
+mod settings_ui;
 mod setup_text;
 mod setup_ui;
 mod shell;
@@ -57,7 +59,7 @@ Usage: glossplay [FILE or URL] [options]
                                     subtitle look for this run (style: plate, outline, bold,
                                     yellow, light; scale 0.6 to 2.0)
       --empty                       (with --selftest) no file: the start screen; with
-                                    --settings the top of the settings window
+                                    --settings the first tab of the settings window
       --words-tab                   show the saved words in the sidebar
       --ui-lang auto|en|ru|uk       interface language (a self-test is in English unless
 
@@ -76,6 +78,11 @@ Usage: glossplay [FILE or URL] [options]
       --tts-dialog --settings-voice --subs-menu   what to show in the screenshot
       --search-dialog QUERY         (with --selftest) search your sources and show the results
       --settings-sources            (with --selftest) Settings at Sources, after pressing Check
+      --settings-tab ID             (with --selftest) Settings at a tab: languages, subtitles,
+                                    translation, speech_recognition, voice_over, words,
+                                    sources or player
+      --help-window                 (with --selftest) the How to use window
+      --open-picker learn-lang|native-lang   (with --settings-tab languages) open that list
       --keys LIST                   (with --selftest) press keys as a layout sends them, e.g.
                                     ru:s=repeat_line,focus:url,ru:ctrl+v; prints what each did
       --clipboard TEXT              what Ctrl+V pastes in --keys (the real clipboard is not used)
@@ -159,6 +166,12 @@ fn main() {
             "--dub-save" => plan.dub_save = Some(value().into()),
             "--tts-dialog" => plan.tts_dialog = true,
             "--settings-voice" => plan.settings_voice = true,
+            "--settings-tab" => {
+                plan.settings_tab = Some(value());
+                plan.settings = true;
+            }
+            "--help-window" => plan.help = true,
+            "--open-picker" => plan.open_picker = Some(value()),
             "--subs-menu" => plan.subs_menu = true,
             "--sub-style" => plan.sub_style = Some(value()),
             "--sub-scale" => plan.sub_scale = value().parse().ok(),
