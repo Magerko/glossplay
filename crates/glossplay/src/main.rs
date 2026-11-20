@@ -3,6 +3,7 @@
 mod app;
 mod asr_setup;
 mod components;
+mod control;
 mod dub;
 mod i18n;
 mod jobs;
@@ -71,6 +72,8 @@ Usage: glossplay [FILE or URL] [options]
   --shell-unregister                remove those entries
   --update-ytdlp                 download or update yt-dlp and print its version
   --size WxH                        window size
+  --mcp [--quiet]                   take commands from an AI agent over MCP on stdin and stdout
+                                    (docs/mcp.md); --quiet keeps both players silent
   --version, --help";
 
 fn main() {
@@ -144,6 +147,7 @@ fn main() {
             "--tts-status" => std::process::exit(tts_setup::cli_status()),
             "--translate-file" => translate_file = Some(value()),
             "--to" => to_lang = Some(value()),
+            "--mcp" | "--quiet" => {}
             "--size" => {
                 let v = value();
                 if let Some((w, h)) = v.split_once('x') {
@@ -166,6 +170,7 @@ fn main() {
         std::process::exit(translate_file_twice(&file, to_lang.as_deref()));
     }
 
+    control::launch(&mut media);
     if is_selftest {
         // Checks compare texts, so a self-test speaks English unless a language is asked for.
         let wanted = ui_lang.as_deref().unwrap_or("en");
@@ -209,6 +214,7 @@ fn main() {
             }
         }),
     );
+    control::finish();
     // `on_exit` has stopped the server already when the window closed normally; this also
     // covers leaving any other way, since `process::exit` runs no destructors.
     gp_media::tools::stop_all();

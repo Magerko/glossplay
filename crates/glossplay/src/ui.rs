@@ -65,6 +65,7 @@ impl eframe::App for App {
         self.tts_setup_dialog(&ctx);
         self.toast_ui(&ctx);
         crate::selftest::step(self, &ctx);
+        crate::control::step(self, &ctx);
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
@@ -239,6 +240,9 @@ impl App {
     }
 
     pub fn controls_visible(&self) -> bool {
+        if let Some(fixed) = crate::control::controls_override() {
+            return fixed;
+        }
         self.snap.paused
             || self.popup.is_some()
             || self.last_activity.elapsed() < HIDE_AFTER
@@ -468,6 +472,7 @@ impl App {
                         continue;
                     }
                     let word = &line.text[token.range.clone()];
+                    crate::control::word_drawn(track_index, line.cue, *i, word_rect);
                     let resp = words_live.then(|| {
                         ui.interact(
                             word_rect,
@@ -1518,6 +1523,9 @@ impl App {
         let Some((text, _, _)) = &self.status else {
             return;
         };
+        if crate::control::controls_override() == Some(false) {
+            return;
+        }
         egui::Area::new(Id::unique("toast"))
             .order(egui::Order::Tooltip)
             .anchor(Align2::CENTER_TOP, vec2(0.0, 56.0))
