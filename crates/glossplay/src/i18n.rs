@@ -67,6 +67,20 @@ pub fn t(key: Tr) -> &'static str {
     text_in(lang(), key)
 }
 
+/// A message that names a key chord: on a Mac the main modifier is Command, not Ctrl. I write
+/// "Cmd" rather than the ⌘ sign, which the fonts bundled with egui do not have.
+pub fn tk(key: Tr) -> std::borrow::Cow<'static, str> {
+    main_modifier(t(key), cfg!(target_os = "macos"))
+}
+
+fn main_modifier(text: &'static str, mac: bool) -> std::borrow::Cow<'static, str> {
+    if mac && text.contains("Ctrl+") {
+        text.replace("Ctrl+", "Cmd+").into()
+    } else {
+        text.into()
+    }
+}
+
 /// The name of a language by its two-letter code, for the few languages people learn most.
 pub fn language_name(code: &str) -> Option<Tr> {
     Some(match code {
@@ -185,6 +199,14 @@ pub fn apply_setting(setting: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_main_modifier_follows_the_platform() {
+        let hint = "press Ctrl+V or Ctrl+F";
+        assert_eq!(super::main_modifier(hint, false), hint);
+        assert_eq!(super::main_modifier(hint, true), "press Cmd+V or Cmd+F");
+        assert_eq!(super::main_modifier("Space pause", true), "Space pause");
+    }
+
     use super::*;
 
     const LANGS: [Lang; 3] = [Lang::En, Lang::Ru, Lang::Uk];

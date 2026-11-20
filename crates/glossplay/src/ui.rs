@@ -1,5 +1,5 @@
 use crate::app::{App, Async, SidebarTab};
-use crate::i18n::{Tr, t, tf};
+use crate::i18n::{Tr, t, tf, tk};
 use crate::keys;
 use crate::session::{Load, Origin, Secondary};
 use crate::theme::{
@@ -379,7 +379,11 @@ impl App {
         {
             self.open_dialog();
         }
-        ui.label(RichText::new(t(Tr::DropHint)).color(MUTED).small());
+        ui.label(
+            RichText::new(tk(Tr::DropHint).as_ref())
+                .color(MUTED)
+                .small(),
+        );
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             let field = egui::TextEdit::singleline(&mut self.url_input)
@@ -410,7 +414,11 @@ impl App {
         ui.add_space(18.0);
         ui.label(RichText::new(t(Tr::ShortcutsHelp)).color(MUTED).small());
         if self.search_available() {
-            ui.label(RichText::new(t(Tr::ShortcutsSearch)).color(MUTED).small());
+            ui.label(
+                RichText::new(tk(Tr::ShortcutsSearch).as_ref())
+                    .color(MUTED)
+                    .small(),
+            );
         }
         ui.add_space(8.0);
         if ui.link(t(Tr::SettingsLink)).clicked() {
@@ -648,7 +656,7 @@ impl App {
                 }
                 if fit.settings
                     && self.search_available()
-                    && icon_button(ui, "🔍", t(Tr::SearchVideosHint))
+                    && icon_button(ui, "🔍", &tk(Tr::SearchVideosHint))
                 {
                     self.open_search(None);
                 }
