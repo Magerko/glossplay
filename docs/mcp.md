@@ -129,8 +129,8 @@ All times are in seconds. Results are JSON text.
 | `toggle_sidebar` | `open?`, `tab?`: `transcript` / `words` | Sidebar with the transcript or saved words. |
 | `search_transcript` | `text` | Types into the sidebar search and returns the matching lines; `""` clears it. |
 | `show_controls` | `visible`: `true`, `false` or `"auto"` | `false` hides the control bar, the title strip and pop-up messages, leaving only the video and subtitles; `true` keeps them shown; `"auto"` is the usual behaviour. |
-| `open_settings` | `section?`: `top`, `speech_recognition`, `voice_over`, `speech_recognition_setup`, `voice_over_setup` | Settings window scrolled to a section, or a setup dialog. |
-| `close_dialogs` | — | Closes Settings and setup dialogs without saving. |
+| `open_settings` | `section?`: a tab — `languages`, `subtitles`, `translation`, `speech_recognition`, `voice_over`, `words`, `sources`, `player` (`top` is the first one) — or `help`, `speech_recognition_setup`, `voice_over_setup` | Settings window at that tab, the How to use window, or a setup dialog. `status` reports the open tab as `dialogs.settings_tab`. |
+| `close_dialogs` | — | Closes Settings, the How to use window and the setup dialogs without saving. |
 | `set_ui_language` | `lang`: `auto`, `en`, `ru`, `uk` | Interface language. |
 | `set_window` | `width?`, `height?`, `x?`, `y?`, `always_on_top?` | Drawing-area size and screen position in pixels (a 1080×1920 window may be taller than the screen), and whether the window stays on top. Answers with the geometry it got. |
 | `press_key` | `key`, `text?` | A player shortcut, judged like the keyboard: `space`, `left`, `right`, `up`, `down`, `a`, `s`, `d`, `p`, `f`, `t`, `m`, `1`, `2`, `[`, `]`, `-` and `=` (subtitle size, 10% steps), `escape`, `ctrl+f`, and `ctrl+v` with `text` standing for the clipboard (a link, magnet link or file path opens; anything else shows a message). Over a dialog only `escape` works. `ctrl+o` is refused: it opens the system file dialog, use `open`. On macOS `ctrl` means ⌘. |

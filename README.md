@@ -104,8 +104,17 @@ brew install mpv ffmpeg
 
 ## Setting up the extras
 
-Everything here is in **Settings** (the gear button). Nothing is required for plain dual
-subtitles: translation works out of the box through Google Translate.
+Everything here is in **Settings** (the gear button), one tab per topic: Languages, Subtitles,
+Translation, Speech recognition, Voice-over, Words and Anki, Sources, Player. Each tab says in a
+line what it is for, and the ⓘ signs explain the less obvious fields. The **ⓘ How to use** link
+(on the start screen, in the control bar and in Settings) opens a short guide with links to the
+tabs. Nothing is required for plain dual subtitles: translation works out of the box through
+Google Translate.
+
+**Languages.** On the Languages tab, pick the language of your videos and your own language from
+a list of twenty (English, Russian, Ukrainian, Chinese, Japanese, Spanish, German and others).
+The video language can also be left to each video to decide. A code you put into `config.toml`
+yourself (`learn_lang`, `native_lang`, for example `zh-TW`) is kept and shown as it is.
 
 **Translation.** Pick a service:
 
@@ -163,7 +172,7 @@ computer, so nothing is sent anywhere.
 | NVIDIA (CUDA) — a little faster, much bigger | about 2.21 GB |
 
 A graphics card is needed: on the processor alone the voice is 6–10 times slower than the video
-plays and cannot keep up. The voice speaks in the "Translate into" language. In the Subtitles menu
+plays and cannot keep up. The voice speaks in "My language" (Settings → Languages). In the Subtitles menu
 two sliders set the volume of the original sound (25% by default) and of the voice (100%);
 the first start on a graphics card can take up to half a minute.
 
@@ -200,7 +209,7 @@ the laws of your country.
 
 1. Install and set up a search server and TorrServer. If you already use them (for example with
    a TV app), there is nothing to install.
-2. In Settings, in the **Sources** section, enter the Torznab address (for Jackett it looks like
+2. In Settings, on the **Sources** tab, enter the Torznab address (for Jackett it looks like
    `http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab/api`), the API key and the
    TorrServer address (like `http://127.0.0.1:8090`). Press **Check**.
 3. The search field now appears on the start screen, and **Ctrl+F** works in the player.
