@@ -481,9 +481,11 @@ mod tests {
         assert_eq!(found.unwrap(), custom);
         let found = locate_in("ffmpeg", "", Some(&app), &path_var);
         assert_eq!(found.unwrap(), bundled);
-        let beside = app.join(exe_name());
+        // Without a suffix the file and the folder would share a name, so this one gets its own app.
+        let flat = root.join("flat");
+        let beside = flat.join(exe_name());
         touch(&beside);
-        let found = locate_in("ffmpeg", "", Some(&app), &path_var);
+        let found = locate_in("ffmpeg", "", Some(&flat), &path_var);
         assert_eq!(found.unwrap(), beside);
         let found = locate_in("ffmpeg", "", Some(&root.join("elsewhere")), &path_var);
         assert_eq!(found.unwrap(), system);
