@@ -1287,6 +1287,11 @@ impl App {
         }
     }
 
+    /// The moment the subtitles on screen belong to; see `Trainer::shown_at`.
+    pub fn subtitle_pos(&self) -> Ms {
+        self.trainer.shown_at(self.snap.pos, self.snap.paused)
+    }
+
     pub fn train(&mut self, action: Option<TrainAction>) {
         match action {
             Some(TrainAction::Pause) => self.player.set_paused(true),

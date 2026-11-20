@@ -859,17 +859,18 @@ fn words_of(
 fn current_lines(app: &mut App) -> Result<Value, String> {
     let s = session(app)?;
     let pos = app.snap.pos;
+    let shown = app.subtitle_pos();
     let track = s.primary.unwrap_or(0);
     let lang = s.primary_track().and_then(|tr| tr.track.lang.clone());
     let lines: Vec<(usize, Ms, Ms, String, Option<String>)> = s
-        .primary_lines(pos)
+        .primary_lines(shown)
         .into_iter()
         .map(|l| {
             let tr = s.translation_of(l.cue);
             (l.cue, l.start, l.end, l.text, tr)
         })
         .collect();
-    let secondary = s.secondary_lines(pos);
+    let secondary = s.secondary_lines(shown);
     let secondary_mode = secondary_json(s.secondary);
     let mut out = Vec::new();
     for (n, (cue, start, end, text, translation)) in lines.into_iter().enumerate() {
@@ -1134,7 +1135,7 @@ fn click_word(app: &mut App, ctx: &egui::Context, args: &Value) -> Result<Outcom
     let line_no = opt_index(args, "line")?.unwrap_or(0);
     let s = session(app)?;
     let pos = app.snap.pos;
-    let lines = s.primary_lines(pos);
+    let lines = s.primary_lines(app.subtitle_pos());
     if lines.is_empty() {
         return Err(format!(
             "no subtitle line is shown at {} s: seek to a line or wait_for line_shown",
@@ -1258,7 +1259,7 @@ fn check(app: &App, condition: &str, value: &Value) -> Result<bool, String> {
         }
         "line_shown" => {
             let needle = value.as_str().map(str::to_lowercase);
-            s.primary_lines(pos).iter().any(|l| {
+            s.primary_lines(app.subtitle_pos()).iter().any(|l| {
                 needle
                     .as_ref()
                     .is_none_or(|n| l.text.to_lowercase().contains(n))

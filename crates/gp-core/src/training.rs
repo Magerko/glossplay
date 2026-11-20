@@ -10,6 +10,8 @@ pub enum TrainAction {
 pub struct Trainer {
     pub autopause: bool,
     paused_at: Option<usize>,
+    /// The end of the line auto-pause stopped after, and where playback was when it did.
+    held: Option<(Ms, Ms)>,
 }
 
 // A jump of more than a second in one frame is a seek, not playback:
@@ -17,12 +19,16 @@ pub struct Trainer {
 const SEEK_JUMP: Ms = 1000;
 // Within the first half second of a line, "previous" goes one line further back.
 const PREV_GRACE: Ms = 500;
+// The pause lands a frame or two after the end of the line, and mpv takes a moment more to
+// stop; past this the position has moved on for some other reason.
+const HOLD_SLACK: Ms = 300;
 
 impl Trainer {
     pub fn new(autopause: bool) -> Self {
         Trainer {
             autopause,
             paused_at: None,
+            held: None,
         }
     }
 
@@ -30,7 +36,11 @@ impl Trainer {
     pub fn tick(&mut self, track: &Track, prev_pos: Ms, pos: Ms) -> Option<TrainAction> {
         if pos < prev_pos || pos - prev_pos > SEEK_JUMP {
             self.paused_at = None;
+            self.held = None;
             return None;
+        }
+        if self.held.is_some_and(|(_, at)| pos > at + HOLD_SLACK) {
+            self.held = None;
         }
         if !self.autopause {
             return None;
@@ -40,7 +50,18 @@ impl Trainer {
             return None;
         }
         self.paused_at = Some(idx);
+        self.held = Some((track.cues[idx].end, pos));
         Some(TrainAction::Pause)
+    }
+
+    /// The moment to show subtitles for. The pause comes only after the line has ended, so
+    /// while playback stands where auto-pause stopped it the line is kept on screen: that is
+    /// the line the pause is for.
+    pub fn shown_at(&self, pos: Ms, paused: bool) -> Ms {
+        match self.held {
+            Some((end, at)) if paused && pos >= end && pos <= at + HOLD_SLACK => end - 1,
+            _ => pos,
+        }
     }
 
     pub fn replay(&self, track: &Track, pos: Ms) -> Option<TrainAction> {
@@ -87,6 +108,44 @@ mod tests {
         assert_eq!(tr.tick(&t, 2010, 2010), None);
         assert_eq!(tr.tick(&t, 2010, 2030), None);
         assert_eq!(tr.tick(&t, 3990, 4005), Some(TrainAction::Pause));
+    }
+
+    #[test]
+    fn the_line_stays_on_screen_while_auto_pause_holds() {
+        let mut t = track();
+        // The next line starts right where this one ends, as speech recognition makes them.
+        t.cues[1].start = 2000;
+        let mut tr = Trainer::new(true);
+        assert_eq!(tr.tick(&t, 1990, 2016), Some(TrainAction::Pause));
+        // mpv is still playing for a frame after the pause was asked for.
+        assert_eq!(tr.tick(&t, 2016, 2040), None);
+        assert_eq!(tr.shown_at(2040, false), 2040, "not held before it stops");
+        let shown = tr.shown_at(2060, true);
+        assert!(
+            t.active_at(shown).contains(&0),
+            "the line paused for is shown"
+        );
+        assert!(!t.active_at(shown).contains(&1), "not the next one");
+        // Seeking away while paused, or playing on, lets go of it.
+        assert_eq!(tr.shown_at(1500, true), 1500);
+        assert_eq!(tr.shown_at(2900, true), 2900);
+        assert_eq!(tr.tick(&t, 2060, 2080), None);
+        assert_eq!(tr.tick(&t, 2080, 2400), None);
+        assert_eq!(
+            tr.shown_at(2400, true),
+            2400,
+            "a later manual pause shows its own moment"
+        );
+    }
+
+    #[test]
+    fn a_seek_drops_the_held_line() {
+        let t = track();
+        let mut tr = Trainer::new(true);
+        assert_eq!(tr.tick(&t, 1990, 2010), Some(TrainAction::Pause));
+        assert_eq!(tr.shown_at(2010, true), 1999);
+        assert_eq!(tr.tick(&t, 2010, 1200), None);
+        assert_eq!(tr.shown_at(2010, true), 2010);
     }
 
     #[test]

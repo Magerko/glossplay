@@ -602,11 +602,11 @@ fn step(c: &Config, cap: &mut Capture, app: &mut App, ctx: &egui::Context) {
     }
     let lines = app.session.as_ref().map_or((Vec::new(), Vec::new()), |s| {
         let primary = s
-            .primary_lines(app.snap.pos)
+            .primary_lines(app.subtitle_pos())
             .into_iter()
             .map(|l| l.text)
             .collect();
-        (primary, s.secondary_lines(app.snap.pos))
+        (primary, s.secondary_lines(app.subtitle_pos()))
     });
     if cap.lines.as_ref() != Some(&lines) {
         event(

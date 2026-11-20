@@ -650,7 +650,7 @@ impl App {
 
     fn subtitles(&mut self, ui: &mut egui::Ui, rect: Rect, edges: (f32, f32), scale: f32) {
         let Some(s) = &self.session else { return };
-        let pos = self.snap.pos;
+        let pos = self.subtitle_pos();
         let primary = if self.cfg.subtitles.show_primary {
             s.primary_lines(pos)
         } else {

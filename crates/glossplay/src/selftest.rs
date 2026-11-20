@@ -672,6 +672,16 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                             "auto-pause landed {delta} ms from the end of the line"
                         ));
                     }
+                    let shown = app.session.as_ref().is_some_and(|s| {
+                        s.primary_lines(app.subtitle_pos())
+                            .iter()
+                            .any(|l| l.end == cue_end)
+                    });
+                    println!("autopause_line_shown={shown}");
+                    if !shown {
+                        st.failures
+                            .push("the line auto-pause stopped after is not on screen".into());
+                    }
                     *paused_at = Some((app.snap.pos, Instant::now()));
                 }
                 None if waited > Duration::from_secs(8) => {
@@ -987,7 +997,7 @@ fn report_dub(st: &mut State, app: &App) {
 
 fn open_nth_word(app: &mut App, n: usize, ctx: &egui::Context) -> bool {
     let Some(s) = &app.session else { return false };
-    let Some(line) = s.primary_lines(app.snap.pos).into_iter().next() else {
+    let Some(line) = s.primary_lines(app.subtitle_pos()).into_iter().next() else {
         return false;
     };
     let lang = s.primary_track().and_then(|t| t.track.lang.clone());
