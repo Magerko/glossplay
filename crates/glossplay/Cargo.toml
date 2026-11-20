@@ -29,3 +29,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_SystemInformation",
     "Win32_UI_Shell",
 ] }
+
+# Host-only: it embeds the exe icon and version info, and does nothing for other hosts.
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "0.1", default-features = false }

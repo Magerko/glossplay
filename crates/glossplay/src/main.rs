@@ -5,6 +5,7 @@ mod asr_setup;
 mod components;
 mod dub;
 mod i18n;
+mod icon;
 mod jobs;
 mod paths;
 mod player;
@@ -192,12 +193,16 @@ fn main() {
         media,
         selftest: is_selftest.then_some(plan),
     };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Glossplay")
+        .with_inner_size(size)
+        .with_min_inner_size([640.0, 360.0])
+        .with_drag_and_drop(true);
+    if let Some(icon) = icon::window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Glossplay")
-            .with_inner_size(size)
-            .with_min_inner_size([640.0, 360.0])
-            .with_drag_and_drop(true),
+        viewport,
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
