@@ -685,6 +685,38 @@ pub fn layout(translation: &str, cues: &[Cue]) -> Vec<String> {
     if parts.len() == 2 && short && !ends_at_punctuation(&parts[0], &parts[1]) {
         return whole();
     }
+    fill_bare_parts(parts)
+}
+
+/// The other language may say a cue's words in the part before it, as "the success of |
+/// machine learning | is compute" becomes "успех машинного обучения, | — | это вычисления":
+/// the middle cue would show a lone dash. Such a part hands its punctuation to the part before
+/// and shows that part again, which already holds its words; the line stays as it was.
+fn fill_bare_parts(mut parts: Vec<String>) -> Vec<String> {
+    let wordy: Vec<bool> = parts
+        .iter()
+        .map(|p| p.chars().any(char::is_alphanumeric))
+        .collect();
+    if wordy.iter().all(|&w| w) || !wordy.iter().any(|&w| w) {
+        return parts;
+    }
+    let before = |i: usize| (0..i).rev().find(|&j| wordy[j]);
+    let after = |i: usize| (i + 1..wordy.len()).find(|&j| wordy[j]);
+    for i in (0..parts.len()).filter(|&i| !wordy[i]) {
+        let bare = std::mem::take(&mut parts[i]);
+        let bare = bare.trim();
+        // A leading dash would read as another speaker, so the mark goes to the end before.
+        if let Some(j) = before(i) {
+            parts[j] = format!("{} {bare}", parts[j]);
+        } else if let Some(j) = after(i) {
+            parts[j] = format!("{bare} {}", parts[j]);
+        }
+    }
+    for i in (0..parts.len()).filter(|&i| !wordy[i]) {
+        if let Some(j) = before(i).or_else(|| after(i)) {
+            parts[i] = parts[j].clone();
+        }
+    }
     parts
 }
 
@@ -1194,5 +1226,52 @@ mod tests {
         let p = cut(&cues, t);
         assert!(p[1].ends_with("крикнула:"), "{p:?}");
         assert_eq!(p[2], "«Садитесь все и слушайте меня».");
+    }
+
+    #[test]
+    fn no_cue_is_left_with_a_lone_dash() {
+        // Whisper's three lines of one sentence; Russian says "machine learning" in the first.
+        let cues = vec![
+            cue(
+                668_600,
+                673_500,
+                "And finally, the final factor that impacts the success of",
+            ),
+            cue(673_600, 674_900, "machine learning"),
+            cue(
+                675_000,
+                678_000,
+                "is really compute and scaling of compute.",
+            ),
+        ];
+        let t = "И, наконец, последний фактор, влияющий на успех машинного обучения, — это \
+                 вычисления и масштабирование вычислений.";
+        let texts: Vec<&str> = cues.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(distribute(t, &texts)[1], "—", "the cut this is about");
+        let p = layout(t, &cues);
+        assert_eq!(p.len(), 3);
+        assert!(
+            p.iter().all(|s| s.chars().any(char::is_alphanumeric)),
+            "{p:?}"
+        );
+        assert!(!p[2].starts_with('—'), "{p:?}");
+        assert!(p[1].contains("машинного обучения"), "{p:?}");
+        // Nothing is lost or said twice when the parts are read in order.
+        let mut said: Vec<&str> = Vec::new();
+        for s in &p {
+            if said.last() != Some(&s.as_str()) {
+                said.push(s);
+            }
+        }
+        assert_eq!(said.join(" "), t);
+    }
+
+    #[test]
+    fn bare_parts_borrow_from_the_nearest_words() {
+        let p = |v: &[&str]| fill_bare_parts(v.iter().map(|s| (*s).to_owned()).collect());
+        assert_eq!(p(&["Да,", "—", "конечно."]), ["Да, —", "Да, —", "конечно."]);
+        assert_eq!(p(&["…", "Нет."]), ["… Нет.", "… Нет."]);
+        assert_eq!(p(&["Раз", "два"]), ["Раз", "два"]);
+        assert_eq!(p(&["—", "…"]), ["—", "…"]);
     }
 }
