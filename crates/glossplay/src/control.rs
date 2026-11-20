@@ -469,7 +469,7 @@ fn run_tool(
             let lang = need_str(args, "lang")?.trim().to_ascii_lowercase();
             if lang != "auto" && i18n::Lang::parse(&lang).is_none() {
                 return Err(format!(
-                    "unknown interface language \"{lang}\": en, ru, uk or auto"
+                    "unknown interface language \"{lang}\": en, ru, uk, zh or auto"
                 ));
             }
             app.cfg.general.ui_lang.clone_from(&lang);
@@ -1854,7 +1854,7 @@ pub fn tool_list() -> Value {
             "set_ui_language",
             "Interface language",
             "Switches the interface language (saved like the Settings window does, except with --quiet).",
-            json!({"lang": {"type": "string", "enum": ["auto", "en", "ru", "uk"]}}),
+            json!({"lang": {"type": "string", "enum": ["auto", "en", "ru", "uk", "zh"]}}),
             &["lang"]
         ),
         tool(

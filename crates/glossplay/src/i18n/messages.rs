@@ -1,4 +1,5 @@
 //! The interface texts: one row per message, English first, then Russian and Ukrainian.
+//! The Chinese column lives in `messages_zh.rs`.
 //! `{0}`, `{1}`… mark values filled in at run time; a translation may reorder them.
 
 macro_rules! messages {
@@ -12,10 +13,11 @@ macro_rules! messages {
             #[cfg(test)]
             pub const ALL: &'static [Tr] = &[$(Tr::$key),*];
 
-            /// English, Russian, Ukrainian.
-            pub fn texts(self) -> [&'static str; 3] {
+            /// English, Russian, Ukrainian, Chinese.
+            pub fn texts(self) -> [&'static str; 4] {
+                let zh = super::messages_zh::text(self);
                 match self {
-                    $(Tr::$key => [$en, $ru, $uk]),*
+                    $(Tr::$key => [$en, $ru, $uk, zh]),*
                 }
             }
         }

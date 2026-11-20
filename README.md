@@ -39,7 +39,8 @@ and keeps the words you want to remember.
 - **Plays nearly everything.** Playback is done by [mpv](https://mpv.io), so anything FFmpeg
   can open works: MKV, MP4, WebM, AVI, MOV, TS; H.264, HEVC, AV1, VP9 and the rest, with
   hardware decoding. Paste a link to an online video and it plays: Glossplay downloads yt-dlp by itself and keeps it up to date. On the first launch it fetches yt-dlp (about 23 MB) into its own data folder.
-- **Interface** in English, Russian and Ukrainian. You choose in Settings; by default it follows
+- **Interface** in English, Russian, Ukrainian and Simplified Chinese (the Chinese one is a machine
+  translation not yet read by a native speaker). You choose in Settings; by default it follows
   the language of the system.
 - **Your own sources.** Search through your own search server and watch through your own
   TorrServer. The player contains no sources.
@@ -267,7 +268,7 @@ No dates are promised; this is the direction.
 - Tested builds and packages for Linux and macOS.
 - Dictionaries in the Yomitan format, and dictionary forms of words.
 - Voice-over in the voice of the original speaker — only with the consent of whoever owns that voice.
-- Chinese and other interface languages.
+- More interface languages, and a Chinese interface checked by a native speaker.
 - An installer for Windows, and an entry in the short context menu of Windows 11.
 
 ## Build from source

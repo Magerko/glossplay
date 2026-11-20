@@ -88,7 +88,7 @@ pub fn engine_auto_is(engine: &str) -> String {
     // Inside the brackets a Russian or Ukrainian name starts with a small letter.
     let mut chars = engine.chars();
     let engine = match (crate::i18n::lang(), chars.next()) {
-        (crate::i18n::Lang::En, _) | (_, None) => engine.to_owned(),
+        (crate::i18n::Lang::En | crate::i18n::Lang::Zh, _) | (_, None) => engine.to_owned(),
         (_, Some(first)) => first.to_lowercase().chain(chars).collect(),
     };
     tf(Tr::EngineAutoIs, &[&t(Tr::EngineAuto), &engine])

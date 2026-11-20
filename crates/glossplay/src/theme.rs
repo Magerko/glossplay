@@ -193,6 +193,7 @@ fn system_fonts() -> Scripts {
             zh: &[
                 Face("/System/Library/Fonts/PingFang.ttc", 0),
                 Face("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+                Face("/System/Library/Fonts/STHeiti Medium.ttc", 0),
             ],
             ja: &[Face("/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc", 0)],
             ko: &[Face("/System/Library/Fonts/AppleSDGothicNeo.ttc", 0)],
@@ -210,6 +211,15 @@ fn system_fonts() -> Scripts {
                     2,
                 ),
                 Face("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 2),
+                Face("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),
+                Face(
+                    "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+                    0,
+                ),
+                Face(
+                    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+                    0,
+                ),
             ],
             ja: &[
                 Face("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
@@ -235,8 +245,9 @@ fn system_fonts() -> Scripts {
 }
 
 /// The fonts bundled with egui have no CJK glyphs, so I add whatever the system offers
-/// as fallbacks. A missing file is simply skipped.
-pub fn install_fonts(ctx: &egui::Context) {
+/// as fallbacks. A missing file is simply skipped: such text then shows empty boxes, nothing
+/// worse. `chinese_first` is for the Chinese interface, where every line is Chinese.
+pub fn install_fonts(ctx: &egui::Context, chinese_first: bool) {
     let scripts = system_fonts();
     let mut fonts = FontDefinitions::default();
     let mut files: HashMap<&str, Arc<Vec<u8>>> = HashMap::new();
@@ -270,10 +281,16 @@ pub fn install_fonts(ctx: &egui::Context) {
     let ko = load_all(&mut fonts, scripts.ko);
     let symbols = load_all(&mut fonts, scripts.symbols);
 
-    // The general chain keeps the old order: Japanese first, since kana-only text is the
-    // most common reason to need a fallback at all.
-    let general: Vec<String> = [&ja, &zh, &ko, &symbols]
+    // Otherwise Japanese goes first, since kana-only text is the most common reason to need
+    // a fallback at all.
+    let cjk = if chinese_first {
+        [&zh, &ja]
+    } else {
+        [&ja, &zh]
+    };
+    let general: Vec<String> = cjk
         .into_iter()
+        .chain([&ko, &symbols])
         .flatten()
         .cloned()
         .collect();

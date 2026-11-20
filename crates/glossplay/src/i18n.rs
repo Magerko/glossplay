@@ -1,7 +1,8 @@
-//! Interface languages. The texts are compiled in (see `messages.rs`); English is the
-//! default and the fallback, so a missing translation shows the English line.
+//! Interface languages. The texts are compiled in (see `messages.rs` and `messages_zh.rs`);
+//! English is the default and the fallback, so a missing translation shows the English line.
 
 mod messages;
+mod messages_zh;
 
 pub use messages::Tr;
 use std::fmt::Display;
@@ -12,6 +13,8 @@ pub enum Lang {
     En,
     Ru,
     Uk,
+    /// Simplified Chinese.
+    Zh,
 }
 
 impl Lang {
@@ -23,6 +26,7 @@ impl Lang {
         match i {
             1 => Lang::Ru,
             2 => Lang::Uk,
+            3 => Lang::Zh,
             _ => Lang::En,
         }
     }
@@ -32,14 +36,19 @@ impl Lang {
             Lang::En => "en",
             Lang::Ru => "ru",
             Lang::Uk => "uk",
+            Lang::Zh => "zh",
         }
     }
 
+    /// "zh-CN", "zh_Hans" and other Chinese tags all mean the one Chinese interface there is.
     pub fn parse(code: &str) -> Option<Lang> {
-        match code.trim().to_ascii_lowercase().as_str() {
+        let code = code.trim().to_ascii_lowercase();
+        match code.as_str() {
             "en" => Some(Lang::En),
             "ru" => Some(Lang::Ru),
             "uk" => Some(Lang::Uk),
+            "zh" => Some(Lang::Zh),
+            _ if code.starts_with("zh-") || code.starts_with("zh_") => Some(Lang::Zh),
             _ => None,
         }
     }
@@ -157,7 +166,7 @@ pub fn fill(template: &str, args: &[&dyn Display]) -> String {
 /// A number written with a point, in the decimal separator of the interface language.
 pub fn decimal(number: String) -> String {
     match lang() {
-        Lang::En => number,
+        Lang::En | Lang::Zh => number,
         Lang::Ru | Lang::Uk => number.replace('.', ","),
     }
 }
@@ -167,6 +176,7 @@ pub fn from_langid(id: u16) -> Lang {
     match id & 0x3ff {
         0x19 => Lang::Ru,
         0x22 => Lang::Uk,
+        0x04 => Lang::Zh,
         _ => Lang::En,
     }
 }
@@ -232,7 +242,7 @@ mod tests {
 
     use super::*;
 
-    const LANGS: [Lang; 3] = [Lang::En, Lang::Ru, Lang::Uk];
+    const LANGS: [Lang; 4] = [Lang::En, Lang::Ru, Lang::Uk, Lang::Zh];
 
     fn placeholders(text: &str) -> Vec<usize> {
         let mut found = Vec::new();
@@ -293,6 +303,17 @@ mod tests {
     }
 
     #[test]
+    fn the_chinese_column_is_chinese_or_left_as_in_english() {
+        let han = |c: char| {
+            ('\u{3000}'..='\u{9fff}').contains(&c) || ('\u{ff00}'..='\u{ffef}').contains(&c)
+        };
+        for &key in Tr::ALL {
+            let [en, .., zh] = key.texts();
+            assert!(zh == en || zh.chars().any(han), "{key:?}: {zh:?}");
+        }
+    }
+
+    #[test]
     fn the_boson_notice_stays_in_english() {
         for lang in LANGS {
             let text = text_in(lang, Tr::TtsLicenceBoson);
@@ -339,6 +360,8 @@ mod tests {
         assert_eq!(from_langid(0x0422), Lang::Uk);
         assert_eq!(from_langid(0x0409), Lang::En);
         assert_eq!(from_langid(0x0407), Lang::En);
+        assert_eq!(from_langid(0x0804), Lang::Zh);
+        assert_eq!(from_langid(0x0404), Lang::Zh);
         assert_eq!(from_langid(0), Lang::En);
     }
 
@@ -349,6 +372,8 @@ mod tests {
         assert_eq!(from_locale("uk-UA"), Lang::Uk);
         assert_eq!(from_locale("ru"), Lang::Ru);
         assert_eq!(from_locale("de_DE.UTF-8"), Lang::En);
+        assert_eq!(from_locale("zh_CN.UTF-8"), Lang::Zh);
+        assert_eq!(from_locale("zh-Hans"), Lang::Zh);
         assert_eq!(from_locale("C"), Lang::En);
         assert_eq!(from_locale(""), Lang::En);
     }
@@ -387,6 +412,9 @@ mod tests {
         assert_eq!(resolve("ru", Lang::En), Lang::Ru);
         assert_eq!(resolve("uk", Lang::En), Lang::Uk);
         assert_eq!(resolve("UK", Lang::En), Lang::Uk);
+        assert_eq!(resolve("zh", Lang::En), Lang::Zh);
+        assert_eq!(resolve("zh-CN", Lang::Ru), Lang::Zh);
+        assert_eq!(resolve("auto", Lang::Zh), Lang::Zh);
         assert_eq!(
             resolve("de", Lang::Ru),
             Lang::En,

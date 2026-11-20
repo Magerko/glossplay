@@ -469,7 +469,7 @@ fn languages(ui: &mut egui::Ui, form: &Form, draft: &mut Config) {
                 .width(form.field)
                 .selected_text(ui_lang_name(&g.ui_lang))
                 .show_ui(ui, |ui| {
-                    for code in ["auto", "en", "ru", "uk"] {
+                    for code in ["auto", "en", "ru", "uk", "zh"] {
                         ui.selectable_value(&mut g.ui_lang, code.to_owned(), ui_lang_name(code));
                     }
                 });
@@ -480,6 +480,8 @@ fn languages(ui: &mut egui::Ui, form: &Form, draft: &mut Config) {
 /// Each interface language is named in itself, so it can be found whatever the interface says.
 fn ui_lang_name(code: &str) -> &'static str {
     match lang::find(code) {
+        // There is only one Chinese interface, so the script needs no mention here.
+        Some(_) if code == "zh" => "中文",
         Some(l) if code != "auto" => l.native,
         _ => t(Tr::LangAuto),
     }
@@ -544,7 +546,14 @@ pub fn language_text(ui: &egui::Ui, code: &str) -> egui::Atoms<'static> {
         return atoms;
     };
     let ours = i18n::language_name(l.code).map_or(l.english, t);
-    let family = theme::subs_family(Some(l.code), l.native);
+    // Japanese fonts lack simplified characters, and a name drawn half in one font and half
+    // in another looks broken, so "中文 (简体)" takes the Chinese font. "日本語" takes it too:
+    // its characters are there, and the Japanese fonts sit higher than the rest of the row.
+    let family = if matches!(l.code, "zh" | "ja") {
+        theme::subs_family(Some("zh"), l.native)
+    } else {
+        egui::FontFamily::Proportional
+    };
     let font = FontId::new(
         egui::TextStyle::Body.resolve(ui.style()).size,
         family.clone(),
@@ -552,7 +561,8 @@ pub fn language_text(ui: &egui::Ui, code: &str) -> egui::Atoms<'static> {
     let drawable = !l.shaped && ui.ctx().fonts_mut(|f| f.has_glyphs(&font, l.native));
     if drawable {
         atoms.push_right(RichText::new(l.native).family(family));
-        if !l.native.eq_ignore_ascii_case(ours) {
+        // "中文 (简体)" needs no "— 中文" after it.
+        if !l.native.to_lowercase().starts_with(&ours.to_lowercase()) {
             atoms.push_right(RichText::new(format!("— {ours}")).color(theme::muted()));
         }
     } else {

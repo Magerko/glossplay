@@ -89,6 +89,8 @@ pub struct App {
     pub help_open: bool,
     /// The theme setting changed; the next frame sets the colours again.
     pub restyle: bool,
+    /// The fonts are ordered for a Chinese interface.
+    pub fonts_chinese: bool,
     pub url_input: String,
     /// A link opened before yt-dlp finished downloading; played as soon as it is there.
     pending_url: Option<String>,
@@ -145,7 +147,8 @@ impl App {
         if launch.selftest.is_none() {
             i18n::apply_setting(&cfg.general.ui_lang);
         }
-        theme::install_fonts(&cc.egui_ctx);
+        let fonts_chinese = i18n::lang() == i18n::Lang::Zh;
+        theme::install_fonts(&cc.egui_ctx, fonts_chinese);
         theme::apply(&cc.egui_ctx, cfg.general.ui_scale, &cfg.general.theme);
 
         let player = Player::new(&cfg.player).map_err(|e| e.to_string())?;
@@ -224,6 +227,7 @@ impl App {
             settings_tab: Default::default(),
             help_open: false,
             restyle: false,
+            fonts_chinese,
             url_input: String::new(),
             status: None,
             config_broken: config_error.is_some(),

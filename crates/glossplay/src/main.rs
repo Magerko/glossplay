@@ -61,7 +61,7 @@ Usage: glossplay [FILE or URL] [options]
       --empty                       (with --selftest) no file: the start screen; with
                                     --settings the first tab of the settings window
       --words-tab                   show the saved words in the sidebar
-      --ui-lang auto|en|ru|uk       interface language (a self-test is in English unless
+      --ui-lang auto|en|ru|uk|zh    interface language (a self-test is in English unless
 
                                     told otherwise)
       --setup-dialog --settings     open the speech recognition setup or the settings

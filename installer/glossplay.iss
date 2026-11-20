@@ -185,7 +185,8 @@ begin
   Lang := '';
   if ActiveLanguage = 'english' then Lang := 'en'
   else if ActiveLanguage = 'russian' then Lang := 'ru'
-  else if ActiveLanguage = 'ukrainian' then Lang := 'uk';
+  else if ActiveLanguage = 'ukrainian' then Lang := 'uk'
+  else if ActiveLanguage = 'chinese' then Lang := 'zh';
   if Lang = '' then Exit;
   Dir := ExpandConstant('{userappdata}\Glossplay\data');
   if FileExists(Dir + '\config.toml') then Exit;
