@@ -1404,7 +1404,7 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "glossplay"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "directories",
  "eframe",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "gp-ai"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "gp-core",
  "roxmltree",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "gp-core"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "jieba-rs",
@@ -1526,7 +1526,7 @@ dependencies = [
 
 [[package]]
 name = "gp-media"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "gp-core",
  "libloading 0.9.1",
@@ -1535,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "gp-store"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "gp-core",
  "rusqlite",
