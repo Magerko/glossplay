@@ -584,6 +584,11 @@ fn drop_unclosed_tag_starts(line: &str) -> String {
     out
 }
 
+/// Text a player handed over, cleaned the way cues from a file are.
+pub fn plain_text(s: &str) -> String {
+    tidy(&decode_entities(&strip_markup(s)))
+}
+
 fn tidy(s: &str) -> String {
     s.lines()
         .map(drop_unclosed_tag_starts)

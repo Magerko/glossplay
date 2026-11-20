@@ -101,6 +101,11 @@ pub struct State {
     asr_first_cue: Option<Duration>,
     /// Launch to the first video frame mpv has, the cost of opening the media.
     first_frame: Option<Duration>,
+    /// Launch to the first subtitle line on screen.
+    first_line: Option<Duration>,
+    /// The seek to `--at`: when it was asked for, and how long until playback went on.
+    seek_from: Option<Instant>,
+    seek_took: Option<Duration>,
     asr_minute_ready: Option<Duration>,
     asr_done: Option<Duration>,
     capture: video::Capture,
@@ -147,6 +152,9 @@ impl State {
             drops_at_start: None,
             asr_first_cue: None,
             first_frame: None,
+            first_line: None,
+            seek_from: None,
+            seek_took: None,
             asr_minute_ready: None,
             asr_done: None,
             capture: Arc::default(),
@@ -166,6 +174,23 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
     ctx.request_repaint();
     if st.first_frame.is_none() && app.player.mpv.get_flag("vo-configured") == Some(true) {
         st.first_frame = Some(st.launched.elapsed());
+    }
+    if st.first_line.is_none()
+        && app
+            .session
+            .as_ref()
+            .is_some_and(|s| !s.primary_lines(app.snap.pos).is_empty())
+    {
+        st.first_line = Some(st.launched.elapsed());
+    }
+    if let (Some(from), None, Some(at)) = (st.seek_from, st.seek_took, st.plan.at) {
+        let mpv = &app.player.mpv;
+        let there = (app.snap.pos - (at * 1000.0) as Ms).abs() < 3_000;
+        let going = mpv.get_flag("seeking") == Some(false)
+            && mpv.get_flag("paused-for-cache") == Some(false);
+        if there && going && !app.snap.paused {
+            st.seek_took = Some(from.elapsed());
+        }
     }
     if st.plan.settings && !st.plan.empty {
         // The section is below the fold of the settings window; it has to be in the screenshot.
@@ -437,6 +462,7 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 println!("loaded_ms={}", st.launched.elapsed().as_millis());
                 if let Some(at) = st.plan.at {
                     app.player.seek((at * 1000.0) as Ms);
+                    st.seek_from = Some(Instant::now());
                 }
                 app.sidebar_open = st.plan.sidebar;
                 if st.plan.words_tab {
@@ -912,11 +938,12 @@ fn report(st: &mut State, app: &App) {
     let advanced = app.snap.pos - st.start_pos;
     println!("ui_lang={}", crate::i18n::lang().code());
     println!("duration_ms={}", app.snap.duration);
-    println!(
-        "first_frame_ms={}",
-        st.first_frame
-            .map_or("-".to_owned(), |d| d.as_millis().to_string())
-    );
+    let ms = |d: Option<Duration>| d.map_or("-".to_owned(), |d| d.as_millis().to_string());
+    println!("first_frame_ms={}", ms(st.first_frame));
+    println!("first_line_wall_ms={}", ms(st.first_line));
+    if st.plan.at.is_some() {
+        println!("seek_wall_ms={}", ms(st.seek_took));
+    }
 
     println!("video_size={width}x{height}");
     println!(

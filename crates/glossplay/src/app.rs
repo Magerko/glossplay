@@ -496,6 +496,14 @@ impl App {
         else {
             return;
         };
+        if matches!(t.origin, Origin::Embedded { .. }) && s.media.contains("://") {
+            // ffmpeg would have to download the whole file before giving the first line, and
+            // for a torrent stream make the server fetch all of it through a small cache.
+            t.live = true;
+            t.set_cues(Vec::new());
+            self.set_live_slots();
+            return;
+        }
         t.load = Load::Loading;
         match &t.origin {
             Origin::External { path } => self.jobs.load_external(s.generation, index, path.clone()),
@@ -516,6 +524,69 @@ impl App {
         }
         if let Secondary::Track(i) = choice {
             self.ensure_loaded(i);
+        }
+        self.set_live_slots();
+    }
+
+    /// The embedded tracks of a stream that are shown go to mpv's two subtitle slots, so it
+    /// decodes them as it plays; its own rendering of them stays off.
+    pub fn set_live_slots(&self) {
+        let Some(s) = &self.session else { return };
+        let live_id = |i: Option<usize>| match s.tracks.get(i?) {
+            Some(SubTrack {
+                live: true,
+                origin: Origin::Embedded { mpv_id, .. },
+                ..
+            }) => Some(*mpv_id),
+            _ => None,
+        };
+        let mpv = &self.player.mpv;
+        if let Some(id) = live_id(s.primary) {
+            mpv.set("sid", &id.to_string());
+            mpv.set_flag("sub-visibility", false);
+        }
+        let secondary = match s.secondary {
+            Secondary::Track(i) => live_id(Some(i)),
+            _ => None,
+        };
+        mpv.set_flag("secondary-sub-visibility", false);
+        mpv.set(
+            "secondary-sid",
+            &secondary.map_or("no".to_owned(), |id| id.to_string()),
+        );
+    }
+
+    /// Takes the lines mpv is showing in its subtitle slots into their live tracks.
+    fn read_live_subs(&mut self) {
+        let Some(s) = &mut self.session else { return };
+        let secondary = match s.secondary {
+            Secondary::Track(i) => Some(i),
+            _ => None,
+        };
+        let mpv = &self.player.mpv;
+        for (slot, current, index) in [
+            ("sub", "current-tracks/sub/id", s.primary),
+            ("secondary-sub", "current-tracks/sub2/id", secondary),
+        ] {
+            let Some(t) = index.and_then(|i| s.tracks.get_mut(i)).filter(|t| t.live) else {
+                continue;
+            };
+            // Right after a switch the slot may still hold the line of the track before.
+            let Origin::Embedded { mpv_id, .. } = t.origin else {
+                continue;
+            };
+            if mpv.get_i64(current) != Some(mpv_id) {
+                continue;
+            }
+            let cue = crate::session::live_cue(
+                mpv.get_string(&format!("{slot}-text")).as_deref(),
+                mpv.get_f64(&format!("{slot}-start")),
+                mpv.get_f64(&format!("{slot}-end")),
+            );
+            if cue.is_some_and(|c| t.absorb(c)) {
+                let track = index.unwrap_or_default();
+                self.tokens.retain(|(t, _), _| *t != track);
+            }
         }
     }
 
@@ -1124,6 +1195,7 @@ impl App {
             }
         }
         self.handle_messages();
+        self.read_live_subs();
         self.prev_pos = self.snap.pos;
         self.snap = self.player.snapshot();
         if self.quiet && !self.snap.muted {

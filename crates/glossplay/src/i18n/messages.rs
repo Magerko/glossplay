@@ -76,6 +76,7 @@ messages! {
     SubtitlesMenu => ["Subtitles", "Субтитры", "Субтитри"],
     Learning => ["I am learning", "Я изучаю", "Я вивчаю"],
     StateReading => ["reading…", "чтение…", "читання…"],
+    StateAsYouWatch => ["as you watch", "по мере просмотра", "під час перегляду"],
     StateFailed => ["failed", "ошибка", "помилка"],
     StateImage => ["image", "картинка", "зображення"],
     NoneChoice => ["None", "Нет", "Немає"],

@@ -834,6 +834,7 @@ impl App {
             ui.label(RichText::new(t(Tr::Learning)).color(MUTED).small());
             for (i, sub) in s.tracks.iter().enumerate() {
                 let state = match &sub.load {
+                    Load::Ready if sub.live => format!("  ({})", t(Tr::StateAsYouWatch)),
                     Load::NotLoaded | Load::Ready => String::new(),
                     Load::Loading => format!("  ({})", t(Tr::StateReading)),
                     Load::Failed(_) => format!("  ({})", t(Tr::StateFailed)),
@@ -1069,6 +1070,7 @@ impl App {
             _ => None,
         });
         self.mpv_draws(bitmap_id);
+        self.set_live_slots();
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {

@@ -81,6 +81,9 @@ pub struct SubTrack {
     pub style: sentences::Style,
     /// Speech recognition windows already transcribed, while the track is still growing.
     pub growing: Option<Vec<bool>>,
+    /// A track inside a stream: its lines are taken from mpv as they are played, because
+    /// reading the whole track first means downloading the whole file.
+    pub live: bool,
     /// Bumped whenever all translations are thrown away, so a late answer is not taken.
     pub epoch: u64,
 }
@@ -107,6 +110,7 @@ impl SubTrack {
             groups: Vec::new(),
             style: sentences::Style::default(),
             growing: None,
+            live: false,
             epoch: 0,
         }
     }
@@ -159,6 +163,23 @@ impl SubTrack {
         self.load = Load::Ready;
     }
 
+    /// Adds a line mpv has just shown; false when the track has it already.
+    pub fn absorb(&mut self, cue: Cue) -> bool {
+        let cues = &self.track.cues;
+        let at = cues.partition_point(|c| c.start < cue.start);
+        if cues[at..]
+            .iter()
+            .take_while(|c| c.start == cue.start)
+            .any(|c| c.text == cue.text)
+        {
+            return false;
+        }
+        let mut cues = cues.clone();
+        cues.insert(at, cue);
+        self.update_cues(cues);
+        true
+    }
+
     pub fn is_text(&self) -> bool {
         self.load != Load::Bitmap
     }
@@ -190,14 +211,18 @@ impl SubTrack {
     /// A sentence at the edge of what speech recognition has done so far, which its next
     /// window may still continue.
     pub fn may_grow(&self, group: usize) -> bool {
-        let Some(done) = &self.growing else {
-            return false;
-        };
         let g = &self.groups[group];
         let last = &self.track.cues[g.end - 1];
         if g.len() >= sentences::MAX_CUES || sentences::ends_firmly(&last.text) {
             return false;
         }
+        if self.live {
+            // Only the newest sentence can still get the line that comes next.
+            return g.end == self.track.cues.len();
+        }
+        let Some(done) = &self.growing else {
+            return false;
+        };
         let reach = last.end + sentences::LINKED_PAUSE;
         let reach = match self.track.cues.get(g.end) {
             // The next cue is close: both windows around the gap are done, so nothing can be
@@ -294,6 +319,22 @@ impl SubTrack {
             });
         same.then_some(range)
     }
+}
+
+/// The line mpv shows now, from `sub-text`, `sub-start` and `sub-end` (seconds). mpv does
+/// not know the end of some lines; those get a reading time.
+pub fn live_cue(text: Option<&str>, start: Option<f64>, end: Option<f64>) -> Option<Cue> {
+    let text = gp_core::subs::plain_text(text?);
+    let start = (start? * 1000.0).round() as Ms;
+    if text.is_empty() || start < 0 {
+        return None;
+    }
+    let reading = (text.chars().count() as Ms * 70).clamp(1_500, 6_000);
+    let end = end
+        .map(|e| (e * 1000.0).round() as Ms)
+        .filter(|&e| e > start)
+        .unwrap_or(start + reading);
+    Some(Cue { start, end, text })
 }
 
 /// Identifies a cue independently of its position in a track that is still growing.
@@ -976,6 +1017,71 @@ mod tests {
             default_tracks(&[], "en", "ru", true, true),
             (None, Secondary::Translate)
         );
+    }
+
+    /// The values of sub-text, sub-start and sub-end frame after frame.
+    fn play(t: &mut SubTrack, frames: &[(Option<&str>, Option<f64>, Option<f64>)]) -> usize {
+        frames
+            .iter()
+            .filter_map(|&(text, start, end)| live_cue(text, start, end))
+            .filter(|c| t.absorb(c.clone()))
+            .count()
+    }
+
+    #[test]
+    fn lines_of_a_stream_are_collected_as_they_play() {
+        let mut t = SubTrack::new(
+            "eng".into(),
+            Some("en".into()),
+            Origin::Embedded {
+                mpv_id: 3,
+                stream: 2,
+            },
+            Load::NotLoaded,
+        );
+        t.live = true;
+        t.set_cues(Vec::new());
+        let added = play(
+            &mut t,
+            &[
+                (Some(""), None, None),
+                (Some("They were indeed"), Some(2.0), Some(4.0)),
+                (Some("They were indeed"), Some(2.0), Some(4.0)),
+                (Some("They were indeed"), Some(2.0), Some(4.0)),
+                (None, None, None),
+                (Some("a queer-looking party."), Some(4.5), Some(6.0)),
+                // Seeked back: an earlier line comes after the later ones.
+                (Some("<i>Alice</i> &amp; the Lory"), Some(0.5), Some(1.5)),
+                (Some("They were indeed"), Some(2.0), Some(4.0)),
+                // No end known: the line stays up for a while.
+                (Some("The end."), Some(10.0), None),
+            ],
+        );
+        assert_eq!(added, 4, "a line shown for many frames is taken once");
+        assert_eq!(
+            t.track.cues,
+            [
+                cue(500, 1_500, "Alice & the Lory"),
+                cue(2_000, 4_000, "They were indeed"),
+                cue(4_500, 6_000, "a queer-looking party."),
+                cue(10_000, 11_500, "The end."),
+            ]
+        );
+        assert_eq!(t.groups, [0..3, 3..4]);
+        assert!(!t.may_grow(1), "the newest sentence has its full stop");
+        assert_eq!(t.load, Load::Ready);
+
+        // The second line of the sentence was missing while its first was translated.
+        let mut t = ready("en", vec![cue(2_000, 4_000, "They were indeed")]);
+        t.live = true;
+        assert!(t.may_grow(0), "the line after it may still come");
+        let asked = t.request_translations(&[0]);
+        t.apply_translations(&asked, Some(&["Они действительно".into()]), 0);
+        play(&mut t, &[(Some("a queer party."), Some(4.5), Some(6.0))]);
+        assert_eq!(t.groups.len(), 1);
+        assert_eq!(t.groups[0], 0..2);
+        assert_eq!(t.translation[0], Tr::Stale("Они действительно".into()));
+        assert!(t.needs_translation(0));
     }
 
     #[test]
