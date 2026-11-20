@@ -603,14 +603,14 @@ impl App {
             return self.toast(t(Tr::FfmpegRequired));
         };
         let duration = self.snap.duration.max(self.player.snapshot().duration);
-        // ffmpeg reads a window of sound from a TorrServer stream by seeking in it, as from a file.
-        let seekable = self
-            .session
-            .as_ref()
-            .is_some_and(|s| self.torrserver_stream(&s.media).is_some());
+        let ytdl = self.ytdl_binary();
         let Some(s) = &mut self.session else { return };
-        if s.is_url() && !seekable {
-            return self.toast(t(Tr::LocalFilesOnly));
+        // ffmpeg reads a window of sound from a link mpv opened itself (a file on a server, a
+        // TorrServer stream) by seeking in it, as from a file. A page yt-dlp opened is read
+        // from its separate sound stream, if the site has one.
+        let online = s.online.as_ref().and_then(|o| o.audio.clone());
+        if s.online.is_some() && online.is_none() {
+            return self.toast(t(Tr::StreamSoundUnreadable));
         }
         if duration <= 0 {
             return self.toast(t(Tr::NoDurationYet));
@@ -670,11 +670,13 @@ impl App {
                         .is_some_and(|n| n.to_string_lossy().starts_with("ggml-silero"))
                 })
         });
+        // The sound of an online video is a stream of its own, with nothing else in it.
         let audio_index = self
             .audio_tracks
             .iter()
             .find(|t| t.selected)
-            .and_then(|t| t.ff_index);
+            .and_then(|t| t.ff_index)
+            .filter(|_| online.is_none());
         let installed =
             crate::asr_setup::installed().filter(|i| i.server.as_ref() == Some(&server));
         let engine = installed.as_ref().and_then(|i| i.engine);
@@ -684,22 +686,40 @@ impl App {
             .filter(|i| i.engine == Some(crate::asr_setup::Engine::Nvidia) && !i.warmed_up)
             .map(|_| format!(" — {}", t(Tr::FirstRun)));
         s.asr_running = true;
-        s.asr = Some(self.jobs.start_asr(AsrParams {
-            generation: s.generation,
-            media: s.media.clone(),
-            media_key: s.media_key.clone(),
-            audio_index,
-            duration,
-            lang,
-            ffmpeg,
-            server,
-            model,
-            vad_model,
-            threads,
-            first_run_note,
-            done,
-            heard,
-        }));
+        s.asr = Some(
+            self.jobs.start_asr(AsrParams {
+                generation: s.generation,
+                media: online
+                    .as_ref()
+                    .map_or_else(|| s.media.clone(), |a| a.url.clone()),
+                input: online
+                    .as_ref()
+                    .map(|a| a.ffmpeg_input())
+                    .unwrap_or_default(),
+                refresh: online.as_ref().map(|_| {
+                    let page = s.media.clone();
+                    let refresh: crate::jobs::Refresh = Arc::new(move || {
+                        crate::online::fresh_audio(&ytdl, &page).map(|a| {
+                            let input = a.ffmpeg_input();
+                            (a.url, input)
+                        })
+                    });
+                    refresh
+                }),
+                media_key: s.media_key.clone(),
+                audio_index,
+                duration,
+                lang,
+                ffmpeg,
+                server,
+                model,
+                vad_model,
+                threads,
+                first_run_note,
+                done,
+                heard,
+            }),
+        );
     }
 
     pub fn stop_asr(&mut self) {
@@ -1061,17 +1081,34 @@ impl App {
             .then_some(image);
         let local = !entry.word.media_path.contains("://")
             || self.torrserver_stream(&entry.word.media_path).is_some();
+        // The address of an online video's sound is only known while it is open.
+        let online = self
+            .session
+            .as_ref()
+            .and_then(|s| s.online.as_ref()?.audio.clone())
+            .filter(|_| same_media);
         let stream = self
             .audio_tracks
             .iter()
             .find(|t| t.selected)
             .and_then(|t| t.ff_index)
-            .filter(|_| same_media);
+            .filter(|_| same_media && online.is_none());
         let audio = self
             .ffmpeg
             .clone()
-            .filter(|_| local)
-            .map(|f| (f, stream, dir.join(format!("glossplay_{vocab_id}.mp3"))));
+            .filter(|_| local || online.is_some())
+            .map(|ffmpeg| crate::jobs::ClipSource {
+                ffmpeg,
+                media: online
+                    .as_ref()
+                    .map_or_else(|| entry.word.media_path.clone(), |a| a.url.clone()),
+                input: online
+                    .as_ref()
+                    .map(|a| a.ffmpeg_input())
+                    .unwrap_or_default(),
+                stream,
+                out: dir.join(format!("glossplay_{vocab_id}.mp3")),
+            });
         self.toast(t(Tr::SendingToAnki));
         self.jobs.export_anki(
             vocab_id,
@@ -1294,6 +1331,17 @@ fn in_view(t: &SubTrack, cues: &[usize], limit: usize) -> Option<Vec<usize>> {
         }
     }
     (!wanted.is_empty()).then_some(wanted)
+}
+
+impl App {
+    /// The yt-dlp mpv uses: the one in the settings, or the copy I keep up to date.
+    fn ytdl_binary(&self) -> PathBuf {
+        if self.cfg.player.ytdl_path.is_empty() {
+            crate::ytdlp::binary_path()
+        } else {
+            PathBuf::from(&self.cfg.player.ytdl_path)
+        }
+    }
 }
 
 /// "English (auto)" in the interface language, or the site's own name of a language I have

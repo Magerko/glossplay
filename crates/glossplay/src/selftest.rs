@@ -103,6 +103,8 @@ pub struct State {
     first_frame: Option<Duration>,
     /// Launch to the first subtitle line on screen.
     first_line: Option<Duration>,
+    /// When recognition was started and how many windows the cache had by then.
+    asr_started: Option<(Instant, usize)>,
     /// The seek to `--at`: when it was asked for, and how long until playback went on.
     seek_from: Option<Instant>,
     seek_took: Option<Duration>,
@@ -153,6 +155,7 @@ impl State {
             asr_first_cue: None,
             first_frame: None,
             first_line: None,
+            asr_started: None,
             seek_from: None,
             seek_took: None,
             asr_minute_ready: None,
@@ -498,6 +501,7 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 if st.plan.asr {
                     app.snap = app.player.snapshot();
                     app.start_asr();
+                    st.asr_started = Some((Instant::now(), asr_windows_done(app)));
                 }
                 st.started = Instant::now();
                 st.phase = Phase::Tracks;
@@ -1072,6 +1076,19 @@ fn report(st: &mut State, app: &App) {
         println!("asr_first_cue_wall_ms={}", ms(st.asr_first_cue));
         println!("asr_minute_ready_wall_ms={}", ms(st.asr_minute_ready));
         println!("asr_done_wall_ms={}", ms(st.asr_done));
+        if let Some((since, cached)) = st.asr_started {
+            let done = asr_windows_done(app);
+            println!("asr_windows_cached={cached} asr_windows_done={done}");
+            // Wall time per second of sound, from the windows recognised in this run.
+            let new = done.saturating_sub(cached);
+            if new > 0 && st.asr_done.is_none() {
+                let heard = (new as Ms * gp_core::asr_plan::WINDOW) as f64 / 1000.0;
+                println!(
+                    "asr_rtf_windows={:.4}",
+                    since.elapsed().as_secs_f64() / heard
+                );
+            }
+        }
         if let Some(done) = st.asr_done {
             println!(
                 "asr_rtf={:.4}",
@@ -1083,6 +1100,19 @@ fn report(st: &mut State, app: &App) {
                 .push("speech recognition produced no lines".into());
         }
     }
+}
+
+/// Recognition windows transcribed so far, from the cache or in this run.
+fn asr_windows_done(app: &App) -> usize {
+    let Some(s) = &app.session else { return 0 };
+    s.tracks
+        .iter()
+        .find(|t| t.origin == Origin::Asr)
+        .map_or(0, |t| match &t.growing {
+            Some(done) => done.iter().filter(|d| **d).count(),
+            None if t.track.cues.is_empty() => 0,
+            None => gp_core::asr_plan::window_count(app.snap.duration),
+        })
 }
 
 /// The first translated lines from where playback started, so a run shows whether the

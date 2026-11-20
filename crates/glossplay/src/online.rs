@@ -1,6 +1,6 @@
 //! What yt-dlp told mpv about an online video. mpv's ytdl_hook keeps yt-dlp's whole answer in
 //! `user-data/mpv/ytdl/json-subprocess-result` until the file ends, so I read the automatic
-//! captions and the video's language from there instead of asking
+//! captions, the video's language and its direct audio address from there instead of asking
 //! yt-dlp a second time.
 
 use crate::session::normalize_lang;
@@ -35,6 +35,67 @@ pub struct OnlineInfo {
     /// The language spoken, as the site says.
     pub language: Option<String>,
     captions: BTreeMap<String, Vec<RawSub>>,
+    pub audio: Option<AudioStream>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioStream {
+    pub url: String,
+    /// Headers yt-dlp says the server wants (User-Agent, Referer…).
+    pub headers: Vec<(String, String)>,
+    /// The size of request yt-dlp downloads the stream in.
+    pub chunk: Option<u64>,
+}
+
+impl AudioStream {
+    /// What ffmpeg needs before `-i` to read a window of this stream. YouTube answers
+    /// without its headers with 403, and slows a request for the whole file down to about
+    /// real time: a 38 s window took 25 s from the start and minutes from the middle, while
+    /// in yt-dlp's 10 MB requests it takes under a second anywhere.
+    pub fn ffmpeg_input(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = String::new();
+        for (name, value) in &self.headers {
+            if name.eq_ignore_ascii_case("user-agent") {
+                out.extend(["-user_agent".to_owned(), value.clone()]);
+            } else if !value.contains(['\r', '\n']) {
+                rest.push_str(&format!("{name}: {value}\r\n"));
+            }
+        }
+        if !rest.is_empty() {
+            out.extend(["-headers".to_owned(), rest]);
+        }
+        if let Some(chunk) = self.chunk {
+            out.extend(["-request_size".to_owned(), chunk.to_string()]);
+        }
+        out
+    }
+}
+
+/// Asks yt-dlp again for the audio of a page: the addresses expire after some hours and are
+/// bound to the address that asked for them.
+pub fn fresh_audio(ytdl: &std::path::Path, page: &str) -> Result<AudioStream, String> {
+    let out = gp_media::tools::output_of(
+        ytdl,
+        &[
+            "--no-warnings",
+            "--no-playlist",
+            "-f",
+            "bestaudio/best",
+            "-J",
+            "--",
+            page,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    OnlineInfo::from_ytdlp_json(&String::from_utf8_lossy(&out))
+        .and_then(|i| i.audio)
+        .ok_or_else(|| "yt-dlp gave no audio address".to_owned())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DownloaderOptions {
+    http_chunk_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,6 +107,18 @@ struct RawSub {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawFormat {
+    url: Option<String>,
+    acodec: Option<String>,
+    vcodec: Option<String>,
+    protocol: Option<String>,
+    #[serde(default)]
+    http_headers: BTreeMap<String, String>,
+    #[serde(default)]
+    downloader_options: DownloaderOptions,
+}
+
+#[derive(Debug, Deserialize)]
 struct RawVideo {
     id: Option<String>,
     extractor_key: Option<String>,
@@ -53,6 +126,16 @@ struct RawVideo {
     language: Option<String>,
     #[serde(default)]
     automatic_captions: Option<BTreeMap<String, Vec<RawSub>>>,
+    #[serde(default)]
+    requested_formats: Option<Vec<RawFormat>>,
+    // A single-format video has its stream at the top level.
+    url: Option<String>,
+    acodec: Option<String>,
+    protocol: Option<String>,
+    #[serde(default)]
+    http_headers: BTreeMap<String, String>,
+    #[serde(default)]
+    downloader_options: DownloaderOptions,
 }
 
 #[derive(Deserialize)]
@@ -69,11 +152,38 @@ impl OnlineInfo {
 
     pub fn from_ytdlp_json(json: &str) -> Option<OnlineInfo> {
         let v: RawVideo = serde_json::from_str(json).ok()?;
+        let plain_http = |p: &Option<String>| p.as_deref().is_none_or(|p| p.starts_with("http"));
+        let headers = |h: BTreeMap<String, String>| h.into_iter().collect::<Vec<_>>();
+        let audio = match v.requested_formats {
+            Some(formats) => formats
+                .into_iter()
+                .find(|f| {
+                    f.acodec.as_deref().is_some_and(|a| a != "none")
+                        && f.vcodec.as_deref().is_none_or(|c| c == "none")
+                        && plain_http(&f.protocol)
+                })
+                .and_then(|f| {
+                    Some(AudioStream {
+                        url: f.url?,
+                        headers: headers(f.http_headers),
+                        chunk: f.downloader_options.http_chunk_size,
+                    })
+                }),
+            None => v
+                .url
+                .filter(|_| v.acodec.as_deref() != Some("none") && plain_http(&v.protocol))
+                .map(|url| AudioStream {
+                    url,
+                    headers: headers(v.http_headers),
+                    chunk: v.downloader_options.http_chunk_size,
+                }),
+        };
         Some(OnlineInfo {
             id: v.id?,
             extractor: v.extractor_key.or(v.extractor).unwrap_or_default(),
             language: v.language.filter(|l| !l.is_empty()),
             captions: v.automatic_captions.unwrap_or_default(),
+            audio,
         })
     }
 
@@ -221,20 +331,44 @@ mod tests {
             "requested_formats": [
                 {"format_id": "247", "url": "https://rr1.googlevideo.com/videoplayback?itag=247", "vcodec": "vp9", "acodec": "none", "protocol": "https"},
                 {"format_id": "251", "url": "https://rr1.googlevideo.com/videoplayback?itag=251", "vcodec": "none", "acodec": "opus", "protocol": "https",
-                 "http_headers": {"User-Agent": "Mozilla/5.0"}}
+                 "http_headers": {"User-Agent": "Mozilla/5.0", "Accept-Language": "en-us,en;q=0.5", "Sec-Fetch-Mode": "navigate"},
+                 "downloader_options": {"http_chunk_size": 10485760}}
             ]
         })
         .to_string()
     }
 
     #[test]
-    fn the_hook_result_gives_id_and_language() {
+    fn the_hook_result_gives_id_language_and_audio() {
         let hook = serde_json::json!({"status": 0, "stdout": lecture(), "stderr": ""}).to_string();
         let info = OnlineInfo::from_hook_result(&hook).unwrap();
         assert_eq!(info.media_key(), "o:youtube:ByAn0MC0iWk");
         assert_eq!(info.language.as_deref(), Some("en"));
+        let audio = info.audio.unwrap();
+        assert!(audio.url.ends_with("itag=251"), "{}", audio.url);
+        assert_eq!(audio.chunk, Some(10_485_760));
+        assert_eq!(
+            audio.ffmpeg_input(),
+            [
+                "-user_agent",
+                "Mozilla/5.0",
+                "-headers",
+                "Accept-Language: en-us,en;q=0.5\r\nSec-Fetch-Mode: navigate\r\n",
+                "-request_size",
+                "10485760",
+            ]
+        );
         assert!(OnlineInfo::from_hook_result("{\"status\":1,\"stdout\":\"\"}").is_none());
         assert!(OnlineInfo::from_hook_result("not json").is_none());
+    }
+
+    #[test]
+    fn a_single_format_video_has_its_audio_at_the_top() {
+        let json = r#"{"id":"1","extractor_key":"Generic","url":"https://cdn.test/a.mp4","acodec":"aac","protocol":"https"}"#;
+        let info = OnlineInfo::from_ytdlp_json(json).unwrap();
+        assert_eq!(info.audio.unwrap().url, "https://cdn.test/a.mp4");
+        let hls = r#"{"id":"1","extractor_key":"Generic","url":"https://cdn.test/a.m3u8","protocol":"m3u8_native"}"#;
+        assert!(OnlineInfo::from_ytdlp_json(hls).unwrap().audio.is_none());
     }
 
     #[test]

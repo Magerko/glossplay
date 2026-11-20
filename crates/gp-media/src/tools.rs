@@ -47,18 +47,33 @@ pub fn locate(tool: &str, configured: &str) -> Result<PathBuf, MediaError> {
 }
 
 fn run(ffmpeg: &Path, args: &[&str]) -> Result<Vec<u8>, MediaError> {
-    let mut cmd = quiet(Command::new(ffmpeg));
-    cmd.args(["-nostdin", "-v", "error"]).args(args);
-    let out = cmd.output()?;
+    let mut all = vec!["-nostdin", "-v", "error"];
+    all.extend_from_slice(args);
+    output_of(ffmpeg, &all)
+}
+
+/// Runs a helper without a console window and returns what it printed.
+pub fn output_of(program: &Path, args: &[&str]) -> Result<Vec<u8>, MediaError> {
+    let mut cmd = quiet(Command::new(program));
+    let out = cmd.args(args).output()?;
     if out.status.success() {
         Ok(out.stdout)
     } else {
         let stderr = String::from_utf8_lossy(&out.stderr);
         Err(MediaError::ToolFailed {
-            tool: "ffmpeg".into(),
+            tool: program
+                .file_stem()
+                .map_or("tool".into(), |s| s.to_string_lossy().into_owned()),
             stderr: stderr.chars().take(400).collect(),
         })
     }
+}
+
+/// Options that go before `-i`: the headers a site wants, the size of the requests.
+fn with_input<'a>(input: &'a [String], media: &'a str) -> Vec<&'a str> {
+    let mut args: Vec<&str> = input.iter().map(String::as_str).collect();
+    args.extend(["-i", media]);
+    args
 }
 
 /// Converts one text subtitle stream (container stream index) to SRT.
@@ -76,19 +91,19 @@ pub fn extract_subtitles(
 pub fn extract_pcm(
     ffmpeg: &Path,
     media: &str,
+    input: &[String],
     stream_index: Option<u32>,
     start: Ms,
     duration: Ms,
 ) -> Result<Vec<i16>, MediaError> {
     let (ss, t) = (secs(start), secs(duration));
     let map = stream_index.map_or("0:a:0".to_owned(), |i| format!("0:{i}"));
-    let bytes = run(
-        ffmpeg,
-        &[
-            "-ss", &ss, "-t", &t, "-i", media, "-map", &map, "-vn", "-ac", "1", "-ar", "16000",
-            "-f", "s16le", "-",
-        ],
-    )?;
+    let mut args = vec!["-ss", &ss, "-t", &t];
+    args.extend(with_input(input, media));
+    args.extend([
+        "-map", &map, "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-",
+    ]);
+    let bytes = run(ffmpeg, &args)?;
     Ok(bytes
         .as_chunks::<2>()
         .0
@@ -101,6 +116,7 @@ pub fn extract_pcm(
 pub fn extract_clip(
     ffmpeg: &Path,
     media: &str,
+    input: &[String],
     stream_index: Option<u32>,
     start: Ms,
     duration: Ms,
@@ -109,13 +125,10 @@ pub fn extract_clip(
     let (ss, t) = (secs(start), secs(duration));
     let map = stream_index.map_or("0:a:0".to_owned(), |i| format!("0:{i}"));
     let out = out.to_string_lossy();
-    run(
-        ffmpeg,
-        &[
-            "-y", "-ss", &ss, "-t", &t, "-i", media, "-map", &map, "-vn", "-ac", "1", "-b:a",
-            "64k", &out,
-        ],
-    )?;
+    let mut args = vec!["-y", "-ss", &ss, "-t", &t];
+    args.extend(with_input(input, media));
+    args.extend(["-map", &map, "-vn", "-ac", "1", "-b:a", "64k", &out]);
+    run(ffmpeg, &args)?;
     Ok(())
 }
 

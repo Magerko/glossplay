@@ -260,10 +260,10 @@ messages! {
         "Для распознавания речи нужен ffmpeg",
         "Для розпізнавання мовлення потрібен ffmpeg"
     ],
-    LocalFilesOnly => [
-        "Live transcription works with local files only for now",
-        "Распознавание речи пока работает только с локальными файлами",
-        "Розпізнавання мовлення поки працює лише з локальними файлами"
+    StreamSoundUnreadable => [
+        "Speech recognition cannot read the sound of this link",
+        "Распознавание речи не может прочитать звук по этой ссылке",
+        "Розпізнавання мовлення не може прочитати звук за цим посиланням"
     ],
     NoDurationYet => [
         "The file has no known duration yet — try again in a moment",

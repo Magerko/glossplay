@@ -155,9 +155,26 @@ pub fn translate_cached(
     Ok(TranslateOutcome { results, requests })
 }
 
+/// A new address and ffmpeg input options for media whose address has expired.
+pub type Refresh = Arc<dyn Fn() -> Result<(String, Vec<String>), String> + Send + Sync>;
+
+/// Where an Anki card's sound clip is cut from.
+pub struct ClipSource {
+    pub ffmpeg: PathBuf,
+    /// The file, or the direct address of an online video's sound.
+    pub media: String,
+    pub input: Vec<String>,
+    pub stream: Option<u32>,
+    pub out: PathBuf,
+}
+
 pub struct AsrParams {
     pub generation: u64,
+    /// The file, or the direct address of an online video's sound.
     pub media: String,
+    /// ffmpeg options before `-i` that `media` needs.
+    pub input: Vec<String>,
+    pub refresh: Option<Refresh>,
     pub media_key: String,
     pub audio_index: Option<u32>,
     pub duration: Ms,
@@ -364,22 +381,23 @@ impl Jobs {
         deck: String,
         word: gp_store::NewWord,
         image: Option<PathBuf>,
-        audio_job: Option<(PathBuf, Option<u32>, PathBuf)>,
+        audio_job: Option<ClipSource>,
     ) {
         self.spawn(move || {
             // The clip is optional: a card without audio is better than no card.
-            let audio = audio_job.and_then(|(ffmpeg, stream, out)| {
+            let audio = audio_job.and_then(|c| {
                 let len = (word.cue_end_ms - word.cue_start_ms).clamp(500, 20_000);
                 tools::extract_clip(
-                    &ffmpeg,
-                    &word.media_path,
-                    stream,
+                    &c.ffmpeg,
+                    &c.media,
+                    &c.input,
+                    c.stream,
                     word.cue_start_ms,
                     len,
-                    &out,
+                    &c.out,
                 )
                 .ok()
-                .map(|_| out)
+                .map(|_| c.out)
             });
             let anki = AnkiClient::new(&url);
             let source = format!(
@@ -586,8 +604,20 @@ fn run_asr(
             true,
         );
         let (start, len) = asr_plan::audio_range(k);
-        let pcm = tools::extract_pcm(&p.ffmpeg, &p.media, p.audio_index, start, len)
-            .map_err(|e| tf(Tr::CouldNotReadAudio, &[&e]))?;
+        let read = |p: &AsrParams| {
+            tools::extract_pcm(&p.ffmpeg, &p.media, &p.input, p.audio_index, start, len)
+        };
+        let pcm = match (read(&p), p.refresh.clone()) {
+            (Ok(pcm), _) => pcm,
+            // An online video's address expires after some hours; a new one is asked for.
+            (Err(e), Some(refresh)) => {
+                let (media, input) =
+                    refresh().map_err(|r| tf(Tr::CouldNotReadAudio, &[&format!("{e} ({r})")]))?;
+                (p.media, p.input) = (media, input);
+                read(&p).map_err(|e| tf(Tr::CouldNotReadAudio, &[&e]))?
+            }
+            (Err(e), None) => return Err(tf(Tr::CouldNotReadAudio, &[&e])),
+        };
         let mut language = None;
         let words = if pcm.is_empty() {
             Vec::new()
