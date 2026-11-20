@@ -179,7 +179,8 @@ Terms of use, which you accept before the download:
 `/v1/audio/speech`, put its address in Settings → Voice-over → Advanced. It is stored in the
 `[tts]` section of `config.toml`: `base_url` (for example `http://host:port/v1`; empty means the
 installed engine), `model`, `voice` (empty means the server's default), `original_volume` and
-`voice_volume` in percent, and `enabled` (off by default).
+`voice_volume` in percent of loudness as heard (50 sounds half as loud, which is −10 dB; the
+original is 35 by default, about −15 dB), and `enabled` (off by default).
 
 **Anki.** Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on and keep
 Anki running. The deck and the "Glossplay" note type are created on first use.

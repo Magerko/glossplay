@@ -893,7 +893,7 @@ fn report_dub(st: &mut State, app: &App) {
     let expected =
         gp_core::dub_plan::original_volume(app.volume, true, app.cfg.tts.original_volume);
     println!(
-        "volumes: user={:.0} original_percent={:.0} main_player={main:.0} voice_player={:.0}",
+        "volumes: user={:.0} original_percent={:.0} main_player={main:.1} voice_player={:.1}",
         app.volume,
         app.cfg.tts.original_volume,
         d.voice_volume()
@@ -910,12 +910,13 @@ fn report_dub(st: &mut State, app: &App) {
             "clips started outside 0…400 ms of their line: {bad:?}"
         ));
     }
-    if (main - expected).abs() > 0.5 {
+    if (main - expected).abs() > 0.05 {
         st.failures.push(format!(
-            "the original sound plays at {main:.0}, not {expected:.0}"
+            "the original sound plays at {main:.1}, not {expected:.1}"
         ));
     }
-    if (d.voice_volume() - app.cfg.tts.voice_volume).abs() > 0.5 {
+    let voice = gp_core::dub_plan::voice_volume(app.cfg.tts.voice_volume);
+    if (d.voice_volume() - voice).abs() > 0.05 {
         st.failures
             .push("the voice plays at the wrong volume".into());
     }

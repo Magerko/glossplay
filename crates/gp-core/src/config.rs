@@ -178,7 +178,8 @@ impl Default for Asr {
 #[serde(default)]
 pub struct Tts {
     pub enabled: bool,
-    /// Volume of the original sound while the voice-over plays, in percent of the normal one.
+    /// Volume of the original sound while the voice-over plays, in percent of the normal one as
+    /// heard (see `dub_plan::percent_gain`); the voice volume is in the same percents.
     pub original_volume: f64,
     pub voice_volume: f64,
     /// What the install button sets up: "vulkan" (any graphics card) or "nvidia".
@@ -193,7 +194,7 @@ impl Default for Tts {
     fn default() -> Self {
         Tts {
             enabled: false,
-            original_volume: 25.0,
+            original_volume: 35.0,
             voice_volume: 100.0,
             install_engine: "vulkan".into(),
             base_url: String::new(),
@@ -279,7 +280,7 @@ mod tests {
         assert!(on.general.shell_integration);
         assert_eq!(c.translation.provider, "google");
         assert!(!c.tts.enabled, "the voice-over stays off until asked for");
-        assert_eq!((c.tts.original_volume, c.tts.voice_volume), (25.0, 100.0));
+        assert_eq!((c.tts.original_volume, c.tts.voice_volume), (35.0, 100.0));
     }
 
     #[test]

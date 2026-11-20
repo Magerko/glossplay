@@ -179,7 +179,8 @@ OmniVoice (`omnivoice-q8_0`) з Hugging Face. Голос синтезуєтьс�
 OpenAI-сумісним `/v1/audio/speech`, вкажіть його адресу в Settings → Voice-over → Advanced. Вона
 зберігається в секції `[tts]` файлу `config.toml`: `base_url` (наприклад, `http://host:port/v1`;
 порожньо — встановлений рушій), `model`, `voice` (порожньо — голос сервера за замовчуванням),
-`original_volume` і `voice_volume` у відсотках, `enabled` (типово вимкнено).
+`original_volume` і `voice_volume` у відсотках гучності на слух (50 звучить удвічі тихіше, це
+−10 дБ; оригінал типово 35, близько −15 дБ), `enabled` (типово вимкнено).
 
 **Anki.** Встановіть доповнення [AnkiConnect](https://ankiweb.net/shared/info/2055492159) і тримайте
 Anki запущеним. Колода й тип запису «Glossplay» створюються під час першого експорту.

@@ -260,7 +260,7 @@ fn step(c: &Config, cap: &mut Capture, app: &mut App, ctx: &egui::Context) {
     }
     let volumes = (
         app.player.mpv.get_f64("volume").unwrap_or(-1.0),
-        app.dub.as_ref().map_or(-1.0, |_| app.cfg.tts.voice_volume),
+        app.dub.as_ref().map_or(-1.0, |d| d.voice_volume()),
     );
     if volumes != cap.volumes {
         cap.volumes = volumes;

@@ -104,7 +104,7 @@ All times are in seconds. Results are JSON text.
 | `current_lines` | — | Lines at the playhead with timings, translation, the line under them, and every word with its `index` and rectangle. |
 | `transcript` | `from?`, `to?`, `limit?` (100) | Lines of the primary subtitles with translations where they exist (they are made around the playhead and the sidebar view). |
 | `transcribe` | `start?` | Starts (`true`) or stops (`false`) speech recognition of a local file; without `start` reports its state. |
-| `voice_over` | `enabled?`, `original_volume?`, `voice_volume?` | Spoken translation on/off and its volumes in percent. Fails with a hint when the engine is not installed. |
+| `voice_over` | `enabled?`, `original_volume?`, `voice_volume?` | Spoken translation on/off and its volumes in percent of loudness as heard (50 sounds half as loud, −10 dB). Fails with a hint when the engine is not installed. |
 
 ### Waiting
 

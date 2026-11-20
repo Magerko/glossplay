@@ -1701,8 +1701,8 @@ pub fn tool_list() -> Value {
             "Turns the spoken translation on or off and sets its volumes (percent).",
             json!({
                 "enabled": {"type": "boolean"},
-                "original_volume": {"type": "number", "minimum": 0, "maximum": 150, "description": "The film's sound while the voice-over is on, in percent of the player volume."},
-                "voice_volume": {"type": "number", "minimum": 0, "maximum": 150},
+                "original_volume": {"type": "number", "minimum": 0, "maximum": 150, "description": "The film's sound while the voice-over is on, in percent of the player volume as heard: 50 sounds half as loud (-10 dB), the default 35 is about -15 dB."},
+                "voice_volume": {"type": "number", "minimum": 0, "maximum": 150, "description": "In the same percents as heard; 100 plays the voice as it was spoken."},
             }),
             &[]
         ),

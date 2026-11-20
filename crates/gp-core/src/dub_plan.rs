@@ -211,13 +211,31 @@ pub fn schedule(free_at: Ms, items: &[Item]) -> Vec<Decision> {
     }
 }
 
+/// The voice-over volumes are percents of loudness as heard: every 10 dB down sounds about
+/// half as loud, so 50 % is −10 dB, 25 % is −20 dB and 35 % about −15 dB, where a voice-over
+/// usually keeps the original. Amplitude is (p/100)^(log2(10)/2).
+pub fn percent_gain(percent: f64) -> f64 {
+    (percent.clamp(0.0, 150.0) / 100.0).powf(std::f64::consts::LOG2_10 / 2.0)
+}
+
+/// mpv's `volume` that plays `base` scaled by `percent`. mpv cubes its volume into the gain,
+/// so feeding it the percent itself made 25 % a gain of 0.016 (−36 dB), all but silence.
+pub fn scaled_volume(base: f64, percent: f64) -> f64 {
+    (base * percent_gain(percent).cbrt()).clamp(0.0, 150.0)
+}
+
 /// Volume of the original sound: the user's volume, turned down while the voice-over is on.
 pub fn original_volume(volume: f64, dubbing: bool, original_percent: f64) -> f64 {
     if dubbing {
-        (volume * original_percent.clamp(0.0, 150.0) / 100.0).clamp(0.0, 150.0)
+        scaled_volume(volume, original_percent)
     } else {
         volume
     }
+}
+
+/// mpv's `volume` of the voice player for the voice volume in percent.
+pub fn voice_volume(percent: f64) -> f64 {
+    scaled_volume(100.0, percent)
 }
 
 #[cfg(test)]
@@ -438,9 +456,25 @@ mod tests {
 
     #[test]
     fn volumes() {
-        assert_eq!(original_volume(80.0, true, 25.0), 20.0);
+        // What mpv makes of its volume.
+        let mpv_db = |v: f64| 60.0 * (v / 100.0).log10();
+        let near = |a: f64, b: f64| (a - b).abs() < 0.05;
+        for (percent, db) in [(100.0, 0.0), (50.0, -10.0), (25.0, -20.0), (10.0, -33.2)] {
+            assert!(near(20.0 * percent_gain(percent).log10(), db), "{percent}");
+            assert!(near(mpv_db(voice_volume(percent)), db), "{percent}");
+        }
+        // The default sits where a voice-over keeps the original.
+        let default = mpv_db(original_volume(100.0, true, 35.0));
+        assert!((-16.0..=-14.0).contains(&default), "{default}");
+        // The user's volume and the percent multiply as gains.
+        let both = mpv_db(original_volume(80.0, true, 50.0));
+        assert!(near(both, mpv_db(80.0) - 10.0), "{both}");
         assert_eq!(original_volume(80.0, false, 25.0), 80.0);
-        assert_eq!(original_volume(100.0, true, 150.0), 150.0);
+        assert_eq!(original_volume(0.0, true, 25.0), 0.0);
+        assert_eq!(original_volume(100.0, true, 0.0), 0.0);
         assert_eq!(original_volume(100.0, true, -5.0), 0.0);
+        assert!(near(mpv_db(voice_volume(150.0)), 10.0 * 1.5f64.log2()));
+        assert_eq!(original_volume(150.0, true, 150.0), 150.0);
+        assert_eq!(voice_volume(100.0), 100.0);
     }
 }

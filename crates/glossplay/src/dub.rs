@@ -137,7 +137,7 @@ pub struct Dub {
 
 impl Dub {
     pub fn start(cfg: DubConfig, main: Arc<Mpv>, ctx: egui::Context) -> Result<Dub, String> {
-        let volume = format!("{:.0}", cfg.voice_volume.clamp(0.0, 150.0));
+        let volume = format!("{:.3}", dub_plan::voice_volume(cfg.voice_volume));
         let record = crate::record::voice_options();
         let mut options = vec![
             ("vid", "no"),
@@ -219,10 +219,13 @@ impl Dub {
         }
     }
 
-    pub fn set_voice_volume(&self, volume: f64) {
-        self.voice.set_f64("volume", volume.clamp(0.0, 150.0));
+    /// The voice volume in percent, as the settings have it.
+    pub fn set_voice_volume(&self, percent: f64) {
+        self.voice
+            .set_f64("volume", dub_plan::voice_volume(percent));
     }
 
+    /// mpv's volume of the voice player.
     pub fn voice_volume(&self) -> f64 {
         self.voice.get_f64("volume").unwrap_or(0.0)
     }
