@@ -87,9 +87,8 @@ Known limits of this version:
 
 1. Download `glossplay-setup-x64.exe` from [Releases](../../releases) and run it. It installs for the current user and needs no administrator rights. The installer is not code-signed, so Windows SmartScreen may warn about an unknown publisher: click "More info", then "Run anyway".
    Or download `glossplay-windows-x64.zip` and unpack it instead.
-2. Install FFmpeg — it is used to read subtitle tracks and audio:
-   `winget install Gyan.FFmpeg`
-3. Run `glossplay.exe`, drop a video on the window.
+   FFmpeg is included (it is in the `ffmpeg` folder next to `glossplay.exe`); you do not need to install it.
+2. Run `glossplay.exe`, drop a video on the window.
 
 Speech recognition and voice-over need the Microsoft Visual C++ Redistributable 2015–2022 (x64).
 Most computers already have it. If speech recognition does not start, install it:
@@ -298,9 +297,11 @@ The player loads mpv's library at run time, so nothing has to be linked:
 - **Windows:** run `scripts/fetch-mpv.ps1` — it downloads `libmpv-2.dll` next to the built
   program. Or put the DLL from an [mpv dev build](https://github.com/shinchiro/mpv-winbuild-cmake/releases)
   there yourself.
+  Run `scripts/fetch-ffmpeg.ps1` too, which puts FFmpeg into an `ffmpeg` folder next to it (or
+  keep `ffmpeg` on your PATH).
 - **Linux / macOS:** the system `libmpv` is found automatically.
 
-To build a release for distribution on Windows, use `scripts/build-release.ps1`: it strips the paths of your machine (home folder, user name) out of the executable. `scripts/package.ps1` then packs the zip with `glossplay.exe`, `libmpv-2.dll` and the licence files.
+To build a release for distribution on Windows, use `scripts/build-release.ps1`: it strips the paths of your machine (home folder, user name) out of the executable. `scripts/package.ps1` then packs the zip with `glossplay.exe`, `libmpv-2.dll`, `ffmpeg\ffmpeg.exe` and the licence files.
 
 Run the tests with `cargo test --workspace`. The player can also test itself on a real file:
 
@@ -346,5 +347,7 @@ The Windows release bundles `libmpv-2.dll` from
 [shinchiro's mpv builds](https://github.com/shinchiro/mpv-winbuild-cmake) (GPL; the source is
 available there). The archive also contains `THIRD-PARTY.txt` and `THIRD-PARTY-RUST.txt` with the
 versions, sources and licences of all third-party components.
+The Windows release also bundles `ffmpeg.exe` from [Gyan Doshi's FFmpeg builds](https://www.gyan.dev/ffmpeg/builds/)
+(GPL v3; the source of the exact build is linked in `THIRD-PARTY.txt`).
 
 Screenshots show the trailer of *Sintel* — © Blender Foundation, [durian.blender.org](https://durian.blender.org), CC BY 3.0.

@@ -89,9 +89,8 @@
 
 1. Завантажте `glossplay-setup-x64.exe` зі сторінки [Releases](../../releases) і запустіть. Він встановлює програму для поточного користувача й не потребує прав адміністратора. Установник не підписаний цифровим підписом, тому Windows SmartScreen може попередити про невідомого видавця: натисніть «Докладніше», потім «Все одно виконати».
    Або завантажте `glossplay-windows-x64.zip` і розпакуйте.
-2. Встановіть FFmpeg — ним читаються доріжки субтитрів і звук:
-   `winget install Gyan.FFmpeg`
-3. Запустіть `glossplay.exe` і перетягніть відео у вікно.
+   FFmpeg уже входить до пакета (тека `ffmpeg` поруч із `glossplay.exe`), встановлювати його окремо не потрібно.
+2. Запустіть `glossplay.exe` і перетягніть відео у вікно.
 
 Для розпізнавання мовлення й озвучення потрібен Microsoft Visual C++ Redistributable 2015–2022 (x64).
 На більшості комп'ютерів він уже є. Якщо розпізнавання не запускається, встановіть його:
@@ -298,9 +297,11 @@ cargo build --release
 - **Windows:** запустіть `scripts/fetch-mpv.ps1` — він завантажить `libmpv-2.dll` і покладе поруч
   із зібраною програмою. Або візьміть DLL із
   [dev-збірки mpv](https://github.com/shinchiro/mpv-winbuild-cmake/releases) самостійно.
+  Запустіть і `scripts/fetch-ffmpeg.ps1`: він покладе FFmpeg у теку `ffmpeg` поруч (або тримайте
+  `ffmpeg` у PATH).
 - **Linux / macOS:** системна `libmpv` знаходиться автоматично.
 
-Щоб зібрати реліз для поширення у Windows, використовуйте `scripts/build-release.ps1`: він прибирає з exe шляхи вашого комп’ютера (домашню теку, імʼя користувача). Потім `scripts/package.ps1` пакує zip із `glossplay.exe`, `libmpv-2.dll` і файлами ліцензій.
+Щоб зібрати реліз для поширення у Windows, використовуйте `scripts/build-release.ps1`: він прибирає з exe шляхи вашого комп’ютера (домашню теку, імʼя користувача). Потім `scripts/package.ps1` пакує zip із `glossplay.exe`, `libmpv-2.dll`, `ffmpeg\ffmpeg.exe` і файлами ліцензій.
 
 Тести: `cargo test --workspace`. Плеєр уміє перевіряти себе й на справжньому файлі:
 
@@ -346,5 +347,7 @@ Glossplay — вільна програма під ліцензією [GNU GPL v
 [збірок mpv від shinchiro](https://github.com/shinchiro/mpv-winbuild-cmake) (GPL; вихідний код
 доступний там само). В архіві також лежать `THIRD-PARTY.txt` і `THIRD-PARTY-RUST.txt` з версіями,
 джерелами та ліцензіями всіх сторонніх компонентів.
+Також до випуску входить `ffmpeg.exe` зі [збірок FFmpeg Gyan Doshi](https://www.gyan.dev/ffmpeg/builds/)
+(GPL v3; посилання на вихідний код цієї збірки є в `THIRD-PARTY.txt`).
 
 На знімках екрана — трейлер фільму *Sintel*, © Blender Foundation, [durian.blender.org](https://durian.blender.org), CC BY 3.0.

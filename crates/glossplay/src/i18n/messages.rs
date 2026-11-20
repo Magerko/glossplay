@@ -269,9 +269,9 @@ messages! {
 
     // Messages from the app.
     NoFfmpegToast => [
-        "ffmpeg was not found — subtitles are shown without word lookup. Install ffmpeg or set its path in Settings.",
-        "ffmpeg не найден — субтитры показываются без поиска слов. Установите ffmpeg или укажите путь к нему в настройках.",
-        "ffmpeg не знайдено — субтитри показуються без пошуку слів. Встановіть ffmpeg або вкажіть шлях до нього в налаштуваннях."
+        "ffmpeg was not found — subtitles are shown without word lookup. It is included in the Windows package; otherwise install ffmpeg or set its path in Settings.",
+        "ffmpeg не найден — субтитры показываются без поиска слов. В пакете для Windows он есть; иначе установите ffmpeg или укажите путь к нему в настройках.",
+        "ffmpeg не знайдено — субтитри показуються без пошуку слів. У пакеті для Windows він є; інакше встановіть ffmpeg або вкажіть шлях до нього в налаштуваннях."
     ],
     ConfigUsingDefaults => [
         "{0}; using default settings",

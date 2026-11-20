@@ -19,7 +19,7 @@ if (-not $Version) {
 }
 
 $SourceDir = (Resolve-Path $SourceDir).Path
-foreach ($f in 'glossplay.exe', 'libmpv-2.dll', 'LICENSE') {
+foreach ($f in 'glossplay.exe', 'libmpv-2.dll', 'ffmpeg\ffmpeg.exe', 'LICENSE') {
     if (-not (Test-Path (Join-Path $SourceDir $f))) { throw "$f not found in $SourceDir" }
 }
 New-Item -ItemType Directory -Force $OutDir | Out-Null

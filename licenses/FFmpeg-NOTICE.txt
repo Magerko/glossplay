@@ -1,0 +1,20 @@
+This is the licence notice for ffmpeg.exe, which Glossplay runs as a separate program to
+read subtitles and sound, cut audio clips and record. It is not linked into glossplay.exe.
+
+FFmpeg 8.1.1, "essentials" build for Windows x64 by Gyan Doshi (www.gyan.dev).
+Copyright (c) 2000-2026 the FFmpeg developers.
+
+This build is configured with --enable-gpl --enable-version3, so the program as a whole is
+licensed under the GNU General Public License, version 3. The text is in the next section.
+It links, among others, libx264 (GPL), libx265 (GPL), libass (ISC), libmp3lame (LGPL),
+libopus (BSD), libvpx (BSD), libaom (BSD), libwebp (BSD) and GnuTLS (LGPL); the complete
+list with versions is in the build's own README, https://www.gyan.dev/ffmpeg/builds/ .
+
+Source code of FFmpeg at the commit this build was made from:
+  https://github.com/FFmpeg/FFmpeg/commit/239f2c733d
+The release the build is published as, with the archive Glossplay ships a file of:
+  https://github.com/GyanD/codexffmpeg/releases/tag/8.1.1
+The sources of the libraries in it come from their own projects; the build page above links
+the scripts that fetched them.
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.

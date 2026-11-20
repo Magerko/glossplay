@@ -89,9 +89,8 @@
 
 1. Скачайте `glossplay-setup-x64.exe` со страницы [Releases](../../releases) и запустите. Он ставит программу для текущего пользователя и не требует прав администратора. Установщик не подписан цифровой подписью, поэтому Windows SmartScreen может предупредить о неизвестном издателе: нажмите «Подробнее», затем «Выполнить в любом случае».
    Либо скачайте `glossplay-windows-x64.zip` и распакуйте.
-2. Установите FFmpeg — им читаются дорожки субтитров и звук:
-   `winget install Gyan.FFmpeg`
-3. Запустите `glossplay.exe` и перетащите видео в окно.
+   FFmpeg уже входит в пакет (папка `ffmpeg` рядом с `glossplay.exe`), ставить его отдельно не нужно.
+2. Запустите `glossplay.exe` и перетащите видео в окно.
 
 Для распознавания речи и озвучки нужен Microsoft Visual C++ Redistributable 2015–2022 (x64).
 На большинстве компьютеров он уже есть. Если распознавание не запускается, установите его:
@@ -298,9 +297,11 @@ cargo build --release
 - **Windows:** запустите `scripts/fetch-mpv.ps1` — он скачает `libmpv-2.dll` и положит рядом
   с собранной программой. Либо возьмите DLL из
   [dev-сборки mpv](https://github.com/shinchiro/mpv-winbuild-cmake/releases) сами.
+  Запустите и `scripts/fetch-ffmpeg.ps1`: он положит FFmpeg в папку `ffmpeg` рядом (либо держите
+  `ffmpeg` в PATH).
 - **Linux / macOS:** системная `libmpv` находится автоматически.
 
-Чтобы собрать релиз для распространения в Windows, используйте `scripts/build-release.ps1`: он убирает из exe пути вашего компьютера (домашнюю папку, имя пользователя). Затем `scripts/package.ps1` упаковывает zip с `glossplay.exe`, `libmpv-2.dll` и файлами лицензий.
+Чтобы собрать релиз для распространения в Windows, используйте `scripts/build-release.ps1`: он убирает из exe пути вашего компьютера (домашнюю папку, имя пользователя). Затем `scripts/package.ps1` упаковывает zip с `glossplay.exe`, `libmpv-2.dll`, `ffmpeg\ffmpeg.exe` и файлами лицензий.
 
 Тесты: `cargo test --workspace`. Плеер умеет проверять себя и на настоящем файле:
 
@@ -346,5 +347,7 @@ Glossplay — свободная программа под лицензией [G
 [сборок mpv от shinchiro](https://github.com/shinchiro/mpv-winbuild-cmake) (GPL; исходный код
 доступен там же). В архиве также лежат `THIRD-PARTY.txt` и `THIRD-PARTY-RUST.txt` с версиями,
 источниками и лицензиями всех сторонних компонентов.
+Также в выпуск входит `ffmpeg.exe` из [сборок FFmpeg Gyan Doshi](https://www.gyan.dev/ffmpeg/builds/)
+(GPL v3; ссылка на исходный код этой сборки есть в `THIRD-PARTY.txt`).
 
 На скриншотах — трейлер фильма *Sintel*, © Blender Foundation, [durian.blender.org](https://durian.blender.org), CC BY 3.0.

@@ -69,9 +69,8 @@
 
 1. 从 [Releases](../../releases) 页面下载 `glossplay-setup-x64.exe` 并运行。它只为当前用户安装，不需要管理员权限。安装程序没有代码签名，因此 Windows SmartScreen 可能提示“未知发布者”：点击“更多信息”，再点击“仍要运行”。
    或者下载 `glossplay-windows-x64.zip` 并解压。
-2. 安装 FFmpeg（用于读取字幕轨和音频）：
-   `winget install Gyan.FFmpeg`
-3. 运行 `glossplay.exe`，把视频拖进窗口。
+   FFmpeg 已包含在内（位于 `glossplay.exe` 旁的 `ffmpeg` 文件夹），无需另行安装。
+2. 运行 `glossplay.exe`，把视频拖进窗口。
 
 语音识别和配音需要 Microsoft Visual C++ Redistributable 2015–2022 (x64)。
 大多数电脑上已经装有它。如果语音识别无法启动，请安装：
@@ -251,9 +250,10 @@ cargo build --release
 
 - **Windows：** 运行 `scripts/fetch-mpv.ps1`，它会下载 `libmpv-2.dll` 并放到构建出的程序旁边。
   也可以自己从 [mpv 开发版构建](https://github.com/shinchiro/mpv-winbuild-cmake/releases) 中取出该 DLL。
+  同时运行 `scripts/fetch-ffmpeg.ps1`，它会把 FFmpeg 放进旁边的 `ffmpeg` 文件夹（或让 `ffmpeg` 在 PATH 中）。
 - **Linux / macOS：** 会自动找到系统中的 `libmpv`。
 
-要在 Windows 上构建用于分发的发布版，请使用 `scripts/build-release.ps1`：它会从 exe 中去除本机路径（主目录、用户名）。随后用 `scripts/package.ps1` 把 `glossplay.exe`、`libmpv-2.dll` 和许可证文件打包成 zip。
+要在 Windows 上构建用于分发的发布版，请使用 `scripts/build-release.ps1`：它会从 exe 中去除本机路径（主目录、用户名）。随后用 `scripts/package.ps1` 把 `glossplay.exe`、`libmpv-2.dll`、`ffmpeg\ffmpeg.exe` 和许可证文件打包成 zip。
 
 运行测试：`cargo test --workspace`。播放器还可以用真实文件自检：
 
@@ -295,5 +295,6 @@ Glossplay 是自由软件，以 [GNU GPL v3](LICENSE) 或更高版本发布。
 Windows 发布包中附带的 `libmpv-2.dll` 来自
 [shinchiro 的 mpv 构建](https://github.com/shinchiro/mpv-winbuild-cmake)（GPL，源码可在该处获取）。
 压缩包中还附有 `THIRD-PARTY.txt` 和 `THIRD-PARTY-RUST.txt`，列出所有第三方组件的版本、来源和许可证。
+发布包还附带来自 [Gyan Doshi 的 FFmpeg 构建](https://www.gyan.dev/ffmpeg/builds/) 的 `ffmpeg.exe`（GPL v3；该构建的源码链接见 `THIRD-PARTY.txt`）。
 
 截图中的影片是 *Sintel* 预告片，© Blender Foundation，[durian.blender.org](https://durian.blender.org)，CC BY 3.0。

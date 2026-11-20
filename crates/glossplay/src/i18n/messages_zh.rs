@@ -131,7 +131,7 @@ pub fn text(key: Tr) -> &'static str {
 
         // Messages from the app.
         Tr::NoFfmpegToast => {
-            "未找到 ffmpeg —— 字幕可以显示，但不能点词查询。请安装 ffmpeg 或在设置中填写它的路径。"
+            "未找到 ffmpeg —— 字幕可以显示，但不能点词查询。Windows 版安装包和压缩包已包含 ffmpeg；否则请安装 ffmpeg 或在设置中填写它的路径。"
         }
         Tr::ConfigUsingDefaults => "{0}；使用默认设置",
         Tr::DownloadingYtdlp => "正在下载 yt-dlp，视频马上开始…",

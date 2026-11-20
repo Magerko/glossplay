@@ -1,12 +1,15 @@
-# Packs a Windows release zip: glossplay.exe, libmpv-2.dll, licences and READMEs.
+# Packs a Windows release zip: glossplay.exe, libmpv-2.dll, ffmpeg\ffmpeg.exe, licences and READMEs.
 param(
     [string]$Exe,
     [string]$Mpv,
+    [string]$Ffmpeg,
     [string]$OutDir,
-    [switch]$AllowOtherMpv
+    [switch]$AllowOtherMpv,
+    [switch]$AllowOtherFfmpeg
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'mpv-version.ps1')
+. (Join-Path $PSScriptRoot 'ffmpeg-version.ps1')
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $Exe) {
@@ -22,6 +25,14 @@ if (-not (Test-Path $Mpv)) {
 $dllHash = (Get-FileHash $Mpv -Algorithm SHA256).Hash
 if ($dllHash -ne $MpvDllSha256 -and -not $AllowOtherMpv) {
     throw "libmpv-2.dll ($Mpv) has SHA-256 $dllHash, not the pinned $MpvDllSha256. Run scripts/fetch-mpv.ps1, or pass -AllowOtherMpv to pack it anyway."
+}
+if (-not $Ffmpeg) { $Ffmpeg = Join-Path (Split-Path $Exe -Parent) 'ffmpeg\ffmpeg.exe' }
+if (-not (Test-Path $Ffmpeg)) {
+    throw "ffmpeg.exe not found: $Ffmpeg. Run scripts/fetch-ffmpeg.ps1 first (or pass -Ffmpeg)."
+}
+$ffmpegHash = (Get-FileHash $Ffmpeg -Algorithm SHA256).Hash
+if ($ffmpegHash -ne $FfmpegExeSha256 -and -not $AllowOtherFfmpeg) {
+    throw "ffmpeg.exe ($Ffmpeg) has SHA-256 $ffmpegHash, not the pinned $FfmpegExeSha256. Run scripts/fetch-ffmpeg.ps1, or pass -AllowOtherFfmpeg to pack it anyway."
 }
 $rustNotices = Join-Path $repo 'THIRD-PARTY-RUST.txt'
 if (-not (Test-Path $rustNotices)) {
@@ -39,6 +50,8 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 try {
     Copy-Item $Exe (Join-Path $stage 'glossplay.exe')
     Copy-Item $Mpv (Join-Path $stage 'libmpv-2.dll')
+    New-Item -ItemType Directory -Force (Join-Path $stage 'ffmpeg') | Out-Null
+    Copy-Item $Ffmpeg (Join-Path $stage 'ffmpeg\ffmpeg.exe')
     Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $stage 'LICENSE')
     Copy-Item $rustNotices (Join-Path $stage 'THIRD-PARTY-RUST.txt')
 
@@ -72,6 +85,25 @@ libmpv-2.dll
   FFmpeg - https://ffmpeg.org (source at the version pinned by that tag's scripts).
 "@
     }
+    $ffmpegText = if ($ffmpegHash -ne $FfmpegExeSha256) {
+@"
+ffmpeg\ffmpeg.exe
+  A build of FFmpeg that is NOT the pinned one (SHA-256 $ffmpegHash). This archive was
+  packed with -AllowOtherFfmpeg, so the exact source of the program is not documented here.
+"@
+    }
+    else {
+@"
+ffmpeg\ffmpeg.exe
+  FFmpeg $FfmpegVersion "essentials" build by Gyan Doshi (www.gyan.dev), a separate program
+  that Glossplay runs for subtitles, sound, audio clips and recording.
+  SHA-256 of the program: $FfmpegExeSha256
+  License: GPL v3 (the build enables GPL libraries such as x264); the texts follow below.
+  Build release: https://github.com/GyanD/codexffmpeg/releases/tag/$FfmpegVersion
+  Source of FFmpeg at the commit it was built from:
+  https://github.com/FFmpeg/FFmpeg/commit/$FfmpegSourceCommit
+"@
+    }
     $notice = {
         param($name)
         [IO.File]::ReadAllText((Join-Path $repo "licenses\$name"), [Text.Encoding]::UTF8).TrimEnd()
@@ -85,6 +117,8 @@ Glossplay
   License: GPL-3.0-or-later (see LICENSE).
 
 $mpvText
+
+$ffmpegText
 
 Rust crates
   Every crate linked into glossplay.exe, with its licence and copyright notices, is
@@ -120,6 +154,16 @@ SIL Open Font License 1.1 (Noto Emoji, not compiled in)
 $rule
 $(& $notice 'OFL.txt')
 
+$rule
+FFmpeg notice
+$rule
+$(& $notice 'FFmpeg-NOTICE.txt')
+
+$rule
+GNU General Public License 3 (as shipped with the FFmpeg build)
+$rule
+$(& $notice 'FFmpeg-LICENSE-GPL-3.0.txt')
+
 Dictionary for Japanese word splitting (crate lindera-ipadic 6.2.0)
   The IPADIC dictionary built into the program is mecab-ipadic-2.7.0-20070801 from NAIST
   and ICOT. The notice that comes with it in the lindera-ipadic crate follows.
@@ -139,9 +183,10 @@ $(& $notice 'mecab-ipadic-NOTICE.txt')
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
     try {
-        foreach ($file in Get-ChildItem $stage -File) {
+        foreach ($file in Get-ChildItem $stage -File -Recurse) {
+            $relative = $file.FullName.Substring($stage.Length + 1).Replace('\', '/')
             [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-                $archive, $file.FullName, "glossplay/$($file.Name)", [IO.Compression.CompressionLevel]::Optimal)
+                $archive, $file.FullName, "glossplay/$relative", [IO.Compression.CompressionLevel]::Optimal)
         }
     }
     finally {
