@@ -701,7 +701,8 @@ fn run_asr(
                 }
             };
             language = out.language;
-            asr_plan::words(start, &out.segments)
+            let sound = asr_plan::Loudness::new(&pcm, gp_ai::asr::SAMPLE_RATE);
+            asr_plan::words_in(start, &out.segments, Some(&sound))
         };
         if p.first_run_note.take().is_some() {
             crate::asr_setup::mark_warmed_up();

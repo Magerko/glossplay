@@ -14,7 +14,7 @@ pub const POST_ROLL: Ms = 8_000;
 
 /// Cached transcripts are keyed by this as well as by the engine, so cues saved by a build
 /// that cut windows another way are never mixed with words.
-pub const CACHE_FORMAT: &str = "words2";
+pub const CACHE_FORMAT: &str = "words3";
 
 /// A longer silence between two words always starts a new cue.
 const MAX_GAP: Ms = 1_500;
@@ -94,6 +94,13 @@ impl Word {
 /// The words of one window's answer, in media time. Whisper cuts segments and even words
 /// into pieces ("pol" / "itely."), so pieces are glued back into whole words first.
 pub fn words(audio_start: Ms, segments: &[Segment]) -> Vec<Word> {
+    words_in(audio_start, segments, None)
+}
+
+/// [`words`], with the window's own sound to find where each segment's speech starts.
+pub fn words_in(audio_start: Ms, segments: &[Segment], sound: Option<&Loudness>) -> Vec<Word> {
+    let trimmed: Vec<Segment> = segments.iter().map(|s| trim_lead(s, sound)).collect();
+    let segments = trimmed.as_slice();
     let heard: Vec<Option<(Ms, Ms)>> = segments.iter().map(heard).collect();
     let mut out: Vec<Word> = Vec::new();
     for (i, seg) in segments.iter().enumerate() {
@@ -132,7 +139,97 @@ pub fn words(audio_start: Ms, segments: &[Segment]) -> Vec<Word> {
             }
         }
     }
+    // Where the sound could be judged it has already placed the segments; it knows better than
+    // a guess from the length of a word.
+    let judged = sound.is_some_and(|s| s.threshold.is_some());
+    for w in out.iter_mut().filter(|w| w.opens && !judged) {
+        // Whisper hangs the pause before a segment on its first word; nobody says "So" for a
+        // second and a half, so the word starts as late as it plausibly could.
+        let typical = typical_ms(&w.text);
+        if w.end - w.start > typical.saturating_mul(3).max(1_000) {
+            w.start = w.end - typical;
+        }
+    }
     out
+}
+
+/// About how long a word takes to say, by its letters.
+fn typical_ms(text: &str) -> Ms {
+    100 + 70 * text.chars().filter(|c| c.is_alphanumeric()).count() as Ms
+}
+
+/// Whisper starts a segment where the one before it ended, so the pause in between belongs
+/// to the later segment and its words, spread over it, come early: on a lecture "So speech
+/// recognition…" was put 2.4 s before the lecturer said it. Where the window's sound shows
+/// the speech starting later, inside the time the words can spare, the segment starts there.
+fn trim_lead(seg: &Segment, sound: Option<&Loudness>) -> Segment {
+    let mut seg = seg.clone();
+    let Some(sound) = sound else { return seg };
+    let said = heard(&seg).map_or_else(
+        || seg.text.split_whitespace().map(typical_ms).sum(),
+        |(from, to)| to - from,
+    );
+    let latest = seg.end - said;
+    if latest <= seg.start {
+        return seg;
+    }
+    if let Some(at) = sound.onset(seg.start, latest) {
+        seg.start = at;
+    } else if sound.onset(latest, seg.end).is_some() {
+        seg.start = latest;
+    }
+    seg
+}
+
+/// How loud a window's audio is, 20 ms at a time, for telling speech from the pauses.
+#[derive(Debug, Clone)]
+pub struct Loudness {
+    db: Vec<f32>,
+    /// `None` when the audio has no quiet to speak of (music, noise): nothing can be told then.
+    threshold: Option<f32>,
+}
+
+const FRAME: Ms = 20;
+
+impl Loudness {
+    /// `pcm` is mono at `rate` samples a second.
+    pub fn new(pcm: &[i16], rate: u32) -> Loudness {
+        let n = (rate as usize * FRAME as usize / 1000).max(1);
+        let db: Vec<f32> = pcm
+            .chunks_exact(n)
+            .map(|c| {
+                let power = c.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>() / n as f64;
+                (10.0 * (power / 32768.0f64.powi(2)).max(1e-12).log10()) as f32
+            })
+            .collect();
+        let mut sorted = db.clone();
+        sorted.sort_by(f32::total_cmp);
+        let pct = |p: f32| sorted[((sorted.len() - 1) as f32 * p) as usize];
+        // Speech lies well above the quiet between words; 12 dB less than that is no pause.
+        let threshold = (sorted.len() >= 50)
+            .then(|| (pct(0.1), pct(0.9)))
+            .filter(|(quiet, loud)| loud - quiet >= 12.0)
+            .map(|(quiet, loud)| quiet + 0.4 * (loud - quiet));
+        Loudness { db, threshold }
+    }
+
+    /// The first moment in `from..to` (relative to the audio) where sound rises above the
+    /// pauses and mostly stays there for 0.2 s: a click or a breath does not.
+    fn onset(&self, from: Ms, to: Ms) -> Option<Ms> {
+        let threshold = self.threshold?;
+        let loud = |i: usize| self.db[i] > threshold;
+        let first = (from.max(0) / FRAME) as usize;
+        let last = ((to.max(0) / FRAME) as usize).min(self.db.len());
+        (first..last)
+            .find(|&i| {
+                loud(i)
+                    && (i..(i + 10).min(self.db.len()))
+                        .filter(|&j| loud(j))
+                        .count()
+                        >= 6
+            })
+            .map(|i| (i as Ms * FRAME).max(from))
+    }
 }
 
 /// The time the words of a segment take on the timeline Whisper heard, if it reported them.
@@ -140,7 +237,14 @@ fn heard(seg: &Segment) -> Option<(Ms, Ms)> {
     if !seg.pieces.iter().any(|p| !p.text.trim().is_empty()) {
         return None;
     }
-    let from = seg.pieces.iter().map(|p| p.start).min()?;
+    // ", please visit…": a comma that ends the word before is not where the words begin.
+    let from = seg
+        .pieces
+        .iter()
+        .filter(|p| p.text.chars().any(char::is_alphanumeric))
+        .map(|p| p.start)
+        .min()
+        .or_else(|| seg.pieces.iter().map(|p| p.start).min())?;
     let to = seg.pieces.iter().map(|p| p.end).max()?;
     Some((from, to))
 }
@@ -575,6 +679,109 @@ mod tests {
             w.iter().map(|w| (w.start, w.end)).collect::<Vec<_>>(),
             [(1_000, 1_500), (1_500, 2_000)]
         );
+    }
+
+    /// 16 kHz audio: a faint hiss, loud where `loud` says, from ms to ms.
+    fn audio(len: Ms, loud: &[(Ms, Ms, i16)]) -> Vec<i16> {
+        let mut seed = 1u32;
+        (0..len * 16)
+            .map(|i| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let sign = if seed >> 31 == 0 { 1 } else { -1 };
+                let level = loud
+                    .iter()
+                    .find(|(a, b, _)| (*a * 16..*b * 16).contains(&i))
+                    .map_or(30, |l| l.2);
+                sign * level
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_segment_starts_where_its_speech_does() {
+        // Window 40 of a lecture (audio from 1197 s): whisper started "So speech recognition…"
+        // right where "…of it." ended, 18.33 s in; the lecturer starts at 20.48 s, after a
+        // breath at 19.14 s.
+        let segs = [
+            Segment {
+                start: 17_070,
+                end: 18_330,
+                text: "off the top of it.".into(),
+                pieces: vec![
+                    piece(12_790, 13_400, " off the top"),
+                    piece(13_400, 13_710, " of it."),
+                ],
+            },
+            Segment {
+                start: 18_330,
+                end: 24_620,
+                text: "So speech recognition is this interesting case where".into(),
+                pieces: vec![
+                    piece(14_080, 14_140, " So"),
+                    piece(14_140, 14_560, " speech"),
+                    piece(14_560, 15_340, " recognition"),
+                    piece(15_340, 16_530, " is this interesting"),
+                    piece(16_540, 16_560, " case"),
+                    piece(16_920, 17_250, " where"),
+                ],
+            },
+        ];
+        let pcm = audio(
+            41_000,
+            &[
+                (2_000, 8_000, 2_000),
+                (15_000, 18_300, 2_000),
+                (19_140, 19_220, 600),
+                (20_480, 21_300, 2_500),
+                (22_200, 24_600, 1_800),
+            ],
+        );
+        let sound = Loudness::new(&pcm, 16_000);
+        let start =
+            |w: &[Word], text: &str| w.iter().find(|w| w.text.starts_with(text)).unwrap().start;
+        let before = words(1_197_000, &segs);
+        assert_eq!(start(&before, "So"), 1_215_330);
+        let after = words_in(1_197_000, &segs, Some(&sound));
+        assert_eq!(start(&after, "So"), 1_217_480);
+        assert_eq!(
+            start(&after, "off"),
+            1_214_070,
+            "speech at the start stays put"
+        );
+        assert_eq!(after.last().unwrap().end, 1_221_620);
+
+        // The words need their time: the start never moves past what they leave over.
+        let quiet = audio(41_000, &[(2_000, 8_000, 2_000), (24_000, 24_600, 2_000)]);
+        let w = words_in(1_197_000, &segs, Some(&Loudness::new(&quiet, 16_000)));
+        assert_eq!(start(&w, "So"), 1_197_000 + 24_620 - (17_250 - 14_080));
+
+        // Without pauses to tell speech by (music under it all), nothing moves.
+        let music = audio(41_000, &[(0, 41_000, 2_000)]);
+        let w = words_in(1_197_000, &segs, Some(&Loudness::new(&music, 16_000)));
+        assert_eq!(start(&w, "So"), 1_215_330);
+    }
+
+    #[test]
+    fn a_first_word_holding_a_pause_starts_late() {
+        let segs = [Segment {
+            start: 10_000,
+            end: 13_000,
+            text: "So what.".into(),
+            pieces: vec![
+                piece(10_000, 12_000, " So"),
+                piece(12_000, 13_000, " what."),
+            ],
+        }];
+        let w = words(0, &segs);
+        assert_eq!((w[0].start, w[0].end), (12_000 - typical_ms("So"), 12_000));
+        // A long word said slowly is left alone.
+        let segs = [Segment {
+            start: 0,
+            end: 1_400,
+            text: "Unbelievable".into(),
+            pieces: vec![piece(0, 1_400, " Unbelievable")],
+        }];
+        assert_eq!(words(0, &segs)[0].start, 0);
     }
 
     /// Words one after another from `at`, `step` apart, the first opening a segment.
