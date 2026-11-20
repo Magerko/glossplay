@@ -63,6 +63,16 @@ pub enum Msg {
         id: String,
         event: crate::components::Event,
     },
+    SearchDone {
+        request: u64,
+        result: Result<Vec<gp_ai::torznab::Release>, String>,
+    },
+    FilesListed {
+        request: u64,
+        result: Result<gp_ai::torrserver::Torrent, String>,
+    },
+    /// The result of the Check button: one line per server.
+    SourcesChecked(Vec<Result<String, String>>),
 }
 
 pub struct TranslateJob {
@@ -300,6 +310,9 @@ impl Jobs {
     pub fn load_external(&self, generation: u64, track: usize, path: String) {
         self.spawn(move || {
             let hint = path
+                .split('?')
+                .next()
+                .unwrap_or(&path)
                 .rsplit('.')
                 .next()
                 .and_then(gp_core::SubFormat::from_extension);

@@ -60,6 +60,7 @@ impl eframe::App for App {
             .frame(egui::Frame::NONE.fill(BG))
             .show(ui, |ui| self.stage(ui));
         self.word_popup(&ctx);
+        self.search_window(&ctx);
         self.settings_window(&ctx);
         self.asr_setup_dialog(&ctx);
         self.tts_setup_dialog(&ctx);
@@ -70,6 +71,7 @@ impl eframe::App for App {
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         self.stop_asr();
         self.dub = None;
+        self.forget_added_torrent();
         self.jobs.shutdown();
         self.video.destroy(gl);
     }
@@ -148,6 +150,9 @@ impl App {
         if ctx.input(|i| i.modifiers.command && i.key_pressed(Key::O)) {
             self.open_dialog();
         }
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(Key::F)) && !self.modal_open() {
+            self.open_search(None);
+        }
         // The top window first: the setup dialogs open over Settings, and all of them over
         // the word card.
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
@@ -157,6 +162,8 @@ impl App {
                 self.close_tts_setup();
             } else if self.settings_draft.is_some() {
                 self.settings_draft = None;
+            } else if self.search_ui.open {
+                self.close_search();
             } else if self.popup.is_some() {
                 self.close_popup();
             } else if self.fullscreen {
@@ -235,7 +242,10 @@ impl App {
 
     /// A dialog or Settings is open: the player under it takes no clicks and no shortcuts.
     pub fn modal_open(&self) -> bool {
-        self.settings_draft.is_some() || self.asr_setup.dialog_open || self.tts_setup.dialog_open
+        self.settings_draft.is_some()
+            || self.asr_setup.dialog_open
+            || self.tts_setup.dialog_open
+            || self.search_ui.open
     }
 
     pub fn controls_visible(&self) -> bool {
@@ -321,8 +331,24 @@ impl App {
                 self.open(&url);
             }
         });
+        if self.search_available() {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let field = egui::TextEdit::singleline(&mut self.search_ui.query)
+                    .hint_text(t(Tr::SearchField))
+                    .desired_width(340.0);
+                let entered = ui.add(field).lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                if ui.button(t(Tr::SearchButton)).clicked() || entered {
+                    let query = self.search_ui.query.clone();
+                    self.open_search(Some(query));
+                }
+            });
+        }
         ui.add_space(18.0);
         ui.label(RichText::new(t(Tr::ShortcutsHelp)).color(MUTED).small());
+        if self.search_available() {
+            ui.label(RichText::new(t(Tr::ShortcutsSearch)).color(MUTED).small());
+        }
         ui.add_space(8.0);
         if ui.link(t(Tr::SettingsLink)).clicked() {
             self.settings_draft = Some(self.cfg.clone());
@@ -556,6 +582,12 @@ impl App {
                 if fit.settings && icon_button(ui, "⚙", t(Tr::SettingsHint)) {
                     self.settings_draft = Some(self.cfg.clone());
                 }
+                if fit.settings
+                    && self.search_available()
+                    && icon_button(ui, "🔍", t(Tr::SearchVideosHint))
+                {
+                    self.open_search(None);
+                }
                 if fit.sidebar && icon_button(ui, "☰", t(Tr::SidebarHint)) {
                     self.sidebar_open = !self.sidebar_open;
                 }
@@ -633,6 +665,7 @@ impl App {
         let speed_w = chip_w("0.00×");
         let autopause_w = chip_w(t(Tr::AutoPause));
         let subtitles_w = chip_w(t(Tr::SubtitlesMenu));
+        let search = self.search_available();
         let needed = |f: &ControlsFit| {
             let mut right = vec![icon, subtitles_w];
             for (on, w) in [
@@ -640,6 +673,7 @@ impl App {
                 (f.speed, speed_w),
                 (f.autopause, autopause_w),
                 (f.settings, icon),
+                (f.settings && search, icon),
                 (f.sidebar, icon),
                 (f.fullscreen, icon),
             ] {
@@ -725,6 +759,7 @@ impl App {
         let mut pick_audio = None;
         let mut toggle_autopause = false;
         let mut open_settings = false;
+        let mut open_search = false;
         let dub_on = self.dub.is_some();
         let (mut toggle_dub, mut volumes_changed, mut volumes_done) = (false, false, false);
         let mut original = self.cfg.tts.original_volume as f32;
@@ -861,6 +896,9 @@ impl App {
             if !fit.settings && ui.button(t(Tr::SettingsMenu)).clicked() {
                 open_settings = true;
             }
+            if !fit.settings && self.search_available() && ui.button(t(Tr::SearchMenu)).clicked() {
+                open_search = true;
+            }
         });
         if self.selftest.as_ref().is_some_and(|s| s.plan.subs_menu) {
             egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&menu.response));
@@ -884,6 +922,9 @@ impl App {
         }
         if open_settings {
             self.settings_draft = Some(self.cfg.clone());
+        }
+        if open_search {
+            self.open_search(None);
         }
         if let Some(choice) = pick_primary {
             self.select_primary(choice);
@@ -1294,6 +1335,7 @@ impl App {
         let (mut open, mut save, mut cancel) = (true, false, false);
         let (asr_setup, mut asr_action) = (&self.asr_setup, None);
         let (tts_setup, mut tts_action) = (&self.tts_setup, None);
+        let (search_ui, mut check_sources) = (&self.search_ui, false);
         egui::Window::new(t(Tr::SettingsTitle))
             .open(&mut open)
             .collapsible(false)
@@ -1458,6 +1500,9 @@ impl App {
                                 );
                                 ui.end_row();
                             });
+                        section(ui, t(Tr::SectionSources));
+                        check_sources =
+                            crate::search_ui::sources_section(ui, &mut draft, search_ui, wide);
                         section(ui, t(Tr::SectionPlayer));
                         egui::Grid::new("player")
                             .num_columns(2)
@@ -1501,6 +1546,10 @@ impl App {
             });
         self.asr_setup.scroll_to = false;
         self.tts_setup.scroll_to = false;
+        self.search_ui.scroll_to = false;
+        if check_sources {
+            self.check_sources(draft.sources.clone());
+        }
         if let Some(action) = asr_action {
             self.asr_settings_action(action, &draft);
         }

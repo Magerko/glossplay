@@ -326,6 +326,18 @@ pub struct Session {
     /// The user was told why machine translation cannot run; once per file and settings.
     pub translator_warned: bool,
     pub tracks_discovered: bool,
+    /// The title was given when the media was opened; the one mpv reads must not replace it.
+    pub title_fixed: bool,
+    /// Subtitle files that came with a stream, added once its tracks are known.
+    pub stream_subs: Vec<StreamSub>,
+}
+
+/// A subtitle file of a torrent, next to the video being streamed from it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamSub {
+    pub url: String,
+    pub name: String,
+    pub lang: Option<String>,
 }
 
 pub struct Line {
@@ -359,6 +371,8 @@ impl Session {
             translate_failed_at: None,
             translator_warned: false,
             tracks_discovered: false,
+            title_fixed: false,
+            stream_subs: Vec::new(),
         }
     }
 
@@ -520,21 +534,27 @@ pub fn sidecar_subtitles(media: &str) -> Vec<(String, Option<String>)> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let (base, ext) = name.rsplit_once('.')?;
-            gp_core::SubFormat::from_extension(ext)?;
-            let rest = base.strip_prefix(stem.as_str())?;
-            let lang = match rest.strip_prefix('.') {
-                Some(tag) if !tag.is_empty() => {
-                    Some(normalize_lang(tag.rsplit('.').next().unwrap_or(tag)))
-                }
-                None if rest.is_empty() => None,
-                _ => return None,
-            };
+            let lang = sidecar_lang(&stem, &name)?;
             Some((e.path().to_string_lossy().into_owned(), lang))
         })
         .collect();
     found.sort();
     found
+}
+
+/// Whether `name` is a subtitle file for a video named `stem` (`stem.srt`, `stem.en.srt`),
+/// and the language its name gives.
+pub fn sidecar_lang(stem: &str, name: &str) -> Option<Option<String>> {
+    let (base, ext) = name.rsplit_once('.')?;
+    gp_core::SubFormat::from_extension(ext)?;
+    let rest = base.strip_prefix(stem)?;
+    match rest.strip_prefix('.') {
+        Some(tag) if !tag.is_empty() => {
+            Some(Some(normalize_lang(tag.rsplit('.').next().unwrap_or(tag))))
+        }
+        None if rest.is_empty() => Some(None),
+        _ => None,
+    }
 }
 
 /// mpv hands over the subtitles of online videos as an EDL entry:

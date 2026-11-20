@@ -8,6 +8,7 @@ mod i18n;
 mod jobs;
 mod paths;
 mod player;
+mod search_ui;
 mod selftest;
 mod session;
 mod setup_text;
@@ -63,6 +64,11 @@ Usage: glossplay [FILE or URL] [options]
                                     pause once in the middle, turn it off at the end
       --dub-save DIR                copy every voice-over clip played into DIR
       --tts-dialog --settings-voice --subs-menu   what to show in the screenshot
+      --search-dialog QUERY         (with --selftest) search your sources and show the results
+      --settings-sources            (with --selftest) Settings at Sources, after pressing Check
+  --search QUERY                    search the server set in [sources], print the first results
+  --stream-url LINK                 add a magnet link or info hash to TorrServer and print its
+                                    files and stream URLs (the torrent stays on the server)
   --install-tts                     download and install the voice-over engine, then exit
       --tts-variant vulkan|nvidia   engine build (default vulkan: any graphics card)
   --tts-status                      show what is installed for the voice-over
@@ -139,6 +145,17 @@ fn main() {
             "--tts-dialog" => plan.tts_dialog = true,
             "--settings-voice" => plan.settings_voice = true,
             "--subs-menu" => plan.subs_menu = true,
+            "--search-dialog" => {
+                plan.search_dialog = Some(value());
+                plan.empty = true;
+            }
+            "--settings-sources" => {
+                plan.settings_sources = true;
+                plan.settings = true;
+                plan.empty = true;
+            }
+            "--search" => std::process::exit(search_ui::cli_search(&value())),
+            "--stream-url" => std::process::exit(search_ui::cli_stream_url(&value())),
             "--install-tts" => install_tts = true,
             "--tts-variant" => tts_variant = Some(value()),
             "--tts-status" => std::process::exit(tts_setup::cli_status()),

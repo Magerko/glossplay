@@ -44,6 +44,10 @@ pub struct Plan {
     pub empty: bool,
     /// Show the saved words in the sidebar.
     pub words_tab: bool,
+    /// Open the search window and search for this.
+    pub search_dialog: Option<String>,
+    /// Settings scrolled to Sources, with the Check button pressed.
+    pub settings_sources: bool,
 }
 
 /// The pause in the middle of a voice-over run: the clip must stop with the video.
@@ -141,6 +145,9 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
     if st.plan.settings_voice {
         app.tts_setup.scroll_to = true;
     }
+    if st.plan.settings_sources {
+        app.search_ui.scroll_to = true;
+    }
     advance(&mut st, app, ctx);
     app.selftest = Some(st);
 }
@@ -177,8 +184,21 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                 if st.plan.tts_dialog {
                     app.open_tts_setup(false);
                 }
+                if st.plan.settings_sources {
+                    app.check_sources(app.cfg.sources.clone());
+                }
+                if let Some(q) = st.plan.search_dialog.clone() {
+                    app.open_search(Some(q));
+                }
             }
-            if st.launched.elapsed().as_secs_f64() >= st.plan.seconds {
+            // Searching and checking take as long as the servers do; the run waits for them.
+            let waiting = (app.search_ui.busy()
+                || matches!(app.search_ui.check, crate::search_ui::Check::Running))
+                && st.launched.elapsed() < Duration::from_secs(120);
+            if !waiting && st.launched.elapsed().as_secs_f64() >= st.plan.seconds {
+                if st.plan.search_dialog.is_some() {
+                    report_search(st, app);
+                }
                 println!("ui_lang={}", crate::i18n::lang().code());
                 st.phase = Phase::Capture;
 
@@ -196,6 +216,7 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
         Phase::Loading => {
             let ready = app.session.as_ref().is_some_and(|s| s.tracks_discovered);
             if ready {
+                println!("loaded_ms={}", st.launched.elapsed().as_millis());
                 if let Some(at) = st.plan.at {
                     app.player.seek((at * 1000.0) as Ms);
                 }
@@ -892,6 +913,18 @@ fn export_translation(st: &mut State, app: &App) {
                 .failures
                 .push(format!("could not write {}: {e}", tr_path.display())),
         }
+    }
+}
+
+fn report_search(st: &mut State, app: &App) {
+    let s = &app.search_ui;
+    println!("search_open={}", s.open);
+    println!("search_results={}", s.results.len());
+    if let crate::search_ui::View::Failed(e) = &s.view {
+        println!("search_error={e}");
+        st.failures.push(format!("the search failed: {e}"));
+    } else if !s.open {
+        st.failures.push("the search window is not open".into());
     }
 }
 

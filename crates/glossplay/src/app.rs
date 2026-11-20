@@ -101,6 +101,7 @@ pub struct App {
     pub selftest: Option<selftest::State>,
     pub asr_setup: crate::setup_ui::AsrSetup,
     pub tts_setup: crate::tts_ui::TtsSetup,
+    pub search_ui: crate::search_ui::SearchUi,
     /// The voice-over, while it is on.
     pub dub: Option<crate::dub::Dub>,
     /// The volume the user set; the player plays quieter while the voice-over is on.
@@ -206,6 +207,7 @@ impl App {
             selftest: launch.selftest.map(selftest::State::new),
             asr_setup: crate::setup_ui::AsrSetup::new(),
             tts_setup: crate::tts_ui::TtsSetup::new(),
+            search_ui: crate::search_ui::SearchUi::new(),
             dub: None,
             volume: cfg.player.volume,
             quiet,
@@ -242,6 +244,16 @@ impl App {
     }
 
     pub fn open(&mut self, media: &str) {
+        self.open_with(media, None, None);
+    }
+
+    /// Opens media under a title of its own, with subtitle files that came with a stream.
+    pub fn open_with(
+        &mut self,
+        media: &str,
+        title: Option<String>,
+        stream_subs: Option<Vec<crate::session::StreamSub>>,
+    ) {
         let is_subtitle = media
             .rsplit('.')
             .next()
@@ -251,7 +263,9 @@ impl App {
             self.add_external_subtitle(media.to_owned(), None, true);
             return;
         }
+        let stream = self.torrserver_stream(media);
         let needs_ytdlp = media.starts_with("http")
+            && stream.is_none()
             && self.cfg.player.ytdl_path.is_empty()
             && !crate::ytdlp::binary_path().is_file();
         if needs_ytdlp {
@@ -274,7 +288,19 @@ impl App {
         self.tokens.clear();
         self.popup = None;
         self.scrolled_to = None;
-        self.session = Some(Session::new(self.generation, media.to_owned()));
+        let mut session = Session::new(self.generation, media.to_owned());
+        if let Some((hash, index)) = stream {
+            // The server address and file name in the URL may change; the torrent file stays.
+            session.media_key = gp_core::media_key::torrent_key(&hash, index);
+            session.title = stream_title(media);
+            session.title_fixed = true;
+        }
+        if let Some(title) = title.filter(|t| !t.trim().is_empty()) {
+            session.title = title;
+            session.title_fixed = true;
+        }
+        session.stream_subs = stream_subs.unwrap_or_default();
+        self.session = Some(session);
         self.player.mpv.set("sid", "no");
         self.player.mpv.set_flag("sub-visibility", false);
         if let Err(e) = self.player.load(media) {
@@ -323,7 +349,7 @@ impl App {
             .player
             .mpv
             .get_string("media-title")
-            .filter(|_| s.is_url())
+            .filter(|_| s.is_url() && !s.title_fixed)
         {
             s.title = title;
         }
@@ -355,6 +381,18 @@ impl App {
             };
             let _ = index;
             s.tracks.push(SubTrack::new(t.label(), lang, origin, load));
+        }
+        for sub in std::mem::take(&mut s.stream_subs) {
+            let index = s.tracks.len();
+            s.tracks.push(SubTrack::new(
+                sub.name,
+                sub.lang,
+                Origin::External {
+                    path: sub.url.clone(),
+                },
+                Load::Loading,
+            ));
+            self.jobs.load_external(s.generation, index, sub.url);
         }
         if !s.is_url() {
             for (path, lang) in sidecar_subtitles(&s.media) {
@@ -482,8 +520,13 @@ impl App {
             return self.toast(t(Tr::FfmpegRequired));
         };
         let duration = self.snap.duration.max(self.player.snapshot().duration);
+        // ffmpeg reads a window of sound from a TorrServer stream by seeking in it, as from a file.
+        let seekable = self
+            .session
+            .as_ref()
+            .is_some_and(|s| self.torrserver_stream(&s.media).is_some());
         let Some(s) = &mut self.session else { return };
-        if s.is_url() {
+        if s.is_url() && !seekable {
             return self.toast(t(Tr::LocalFilesOnly));
         }
         if duration <= 0 {
@@ -586,6 +629,9 @@ impl App {
 
     fn handle_messages(&mut self) {
         while let Ok(msg) = self.jobs.rx.try_recv() {
+            let Some(msg) = self.on_search_msg(msg) else {
+                continue;
+            };
             let current = self.session.as_ref().map(|s| s.generation);
             // Also for a file closed meanwhile, or the sidebar would never ask again.
             if let Msg::Translated {
@@ -930,7 +976,8 @@ impl App {
         let image = dir.join(format!("glossplay_{vocab_id}.jpg"));
         let image = (image.is_file() || (on_screen && self.player.screenshot(&image).is_ok()))
             .then_some(image);
-        let local = !entry.word.media_path.contains("://");
+        let local = !entry.word.media_path.contains("://")
+            || self.torrserver_stream(&entry.word.media_path).is_some();
         let stream = self
             .audio_tracks
             .iter()
@@ -1165,6 +1212,40 @@ fn in_view(t: &SubTrack, cues: &[usize], limit: usize) -> Option<Vec<usize>> {
     (!wanted.is_empty()).then_some(wanted)
 }
 
+/// The file name a TorrServer stream URL carries, without its extension.
+fn stream_title(url: &str) -> String {
+    let path = url.split('?').next().unwrap_or(url);
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = percent_decode(name);
+    match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem.to_owned(),
+        _ => name,
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn make_translator(cfg: &Config) -> Result<Arc<dyn Translator>, String> {
     build_translator(&cfg.translation)
         .map(Arc::from)
@@ -1189,6 +1270,20 @@ mod tests {
                 .collect(),
         );
         t
+    }
+
+    #[test]
+    fn a_stream_is_titled_by_its_file_name() {
+        assert_eq!(
+            stream_title(
+                "http://ts.test:8090/stream/Sintel%20%282010%29.mp4?link=abc&index=6&play"
+            ),
+            "Sintel (2010)"
+        );
+        assert_eq!(
+            stream_title("http://ts.test/stream/video?link=abc"),
+            "video"
+        );
     }
 
     #[test]

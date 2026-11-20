@@ -931,4 +931,103 @@ messages! {
         "не удалось открыть второй аудиоплеер для голоса",
         "не вдалося відкрити другий аудіоплеєр для голосу"
     ],
+
+    // Search in the user's own sources.
+    SearchVideosHint => ["Search videos (Ctrl+F)", "Поиск видео (Ctrl+F)", "Пошук відео (Ctrl+F)"],
+    SearchMenu => ["Search…", "Поиск…", "Пошук…"],
+    SearchField => ["Search for a video", "Поиск видео", "Пошук відео"],
+    SearchButton => ["Search", "Найти", "Знайти"],
+    SearchTitle => ["Search your sources", "Поиск по своим источникам", "Пошук у своїх джерелах"],
+    ShortcutsSearch => [
+        "Ctrl+F search your sources",
+        "Ctrl+F — поиск по своим источникам",
+        "Ctrl+F — пошук у своїх джерелах"
+    ],
+    Searching => ["Searching…", "Ищу…", "Шукаю…"],
+    NothingFound => ["Nothing found", "Ничего не найдено", "Нічого не знайдено"],
+    FoundCount => [
+        "Found: {0} · double-click or Enter to play",
+        "Найдено: {0} · двойной щелчок или Enter — смотреть",
+        "Знайдено: {0} · подвійне клацання або Enter — дивитися"
+    ],
+    ColTitle => ["Title", "Название", "Назва"],
+    ColSize => ["Size", "Размер", "Розмір"],
+    ColPeers => ["Seeds / peers", "Сиды / пиры", "Сиди / піри"],
+    ColDate => ["Date", "Дата", "Дата"],
+    ColSource => ["Source", "Источник", "Джерело"],
+    GettingFiles => [
+        "Getting the list of files…",
+        "Получаю список файлов…",
+        "Отримую список файлів…"
+    ],
+    ChooseFile => [
+        "Video files: {0} · double-click or Enter to play",
+        "Видеофайлов: {0} · двойной щелчок или Enter — смотреть",
+        "Відеофайлів: {0} · подвійне клацання або Enter — дивитися"
+    ],
+    BackToResults => ["← Results", "← К результатам", "← До результатів"],
+    NoVideoFiles => [
+        "There are no video files in this torrent",
+        "В этой раздаче нет видеофайлов",
+        "У цій роздачі немає відеофайлів"
+    ],
+    SearchUnreachable => [
+        "The search server does not answer. Is it running, and is the address right? ({0})",
+        "Сервер поиска не отвечает. Он запущен, адрес верный? ({0})",
+        "Сервер пошуку не відповідає. Він запущений, адреса правильна? ({0})"
+    ],
+    SearchBadKey => [
+        "The search server did not accept the API key; check it in Settings → Sources",
+        "Сервер поиска не принял ключ API; проверьте его в Настройках → Источники",
+        "Сервер пошуку не прийняв ключ API; перевірте його в Налаштуваннях → Джерела"
+    ],
+    SearchWrongAddress => [
+        "There is no search server at this address (HTTP {0}); check it in Settings → Sources",
+        "По этому адресу нет сервера поиска (HTTP {0}); проверьте его в Настройках → Источники",
+        "За цією адресою немає сервера пошуку (HTTP {0}); перевірте її в Налаштуваннях → Джерела"
+    ],
+    SearchFailed => [
+        "The search server answered with an error: {0}",
+        "Сервер поиска ответил ошибкой: {0}",
+        "Сервер пошуку відповів помилкою: {0}"
+    ],
+    LinkFailed => [
+        "Could not get the torrent from the search server: {0}",
+        "Не удалось получить торрент от сервера поиска: {0}",
+        "Не вдалося отримати торент від сервера пошуку: {0}"
+    ],
+    TorrServerUnreachable => [
+        "TorrServer does not answer. Is it running, and is the address right? ({0})",
+        "TorrServer не отвечает. Он запущен, адрес верный? ({0})",
+        "TorrServer не відповідає. Він запущений, адреса правильна? ({0})"
+    ],
+    NoMetadata => [
+        "No peer sent the list of files within 30 seconds: the torrent may have no seeders",
+        "За 30 секунд никто не прислал список файлов: возможно, у раздачи нет сидов",
+        "За 30 секунд ніхто не надіслав список файлів: можливо, у роздачі немає сидів"
+    ],
+    TorrServerFailed => [
+        "TorrServer answered with an error: {0}",
+        "TorrServer ответил ошибкой: {0}",
+        "TorrServer відповів помилкою: {0}"
+    ],
+    SectionSources => ["Sources", "Источники", "Джерела"],
+    SourcesNote => [
+        "Glossplay contains no sources. Enter the address of your own search server (Jackett, Prowlarr — the Torznab protocol) and of your TorrServer.",
+        "Glossplay не содержит источников. Укажите адрес своего сервера поиска (Jackett, Prowlarr — протокол Torznab) и своего TorrServer.",
+        "Glossplay не містить джерел. Вкажіть адресу свого сервера пошуку (Jackett, Prowlarr — протокол Torznab) і свого TorrServer."
+    ],
+    SearchServerRow => ["Search server (Torznab)", "Сервер поиска (Torznab)", "Сервер пошуку (Torznab)"],
+    TorrServerRow => ["TorrServer", "TorrServer", "TorrServer"],
+    CheckButton => ["Check", "Проверить", "Перевірити"],
+    Checking => ["Checking…", "Проверяю…", "Перевіряю…"],
+    CheckSearchOk => [
+        "Search server: {0} sources found",
+        "Сервер поиска: найдено источников — {0}",
+        "Сервер пошуку: знайдено джерел — {0}"
+    ],
+    CheckSearchFailed => ["Search server: {0}", "Сервер поиска: {0}", "Сервер пошуку: {0}"],
+    CheckTorrServerOk => ["TorrServer {0}", "TorrServer {0}", "TorrServer {0}"],
+    CheckTorrServerFailed => ["TorrServer: {0}", "TorrServer: {0}", "TorrServer: {0}"],
+    CheckNotSet => ["the address is empty", "адрес не указан", "адресу не вказано"],
 }
