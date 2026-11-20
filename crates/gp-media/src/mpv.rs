@@ -25,6 +25,13 @@ struct RawEndFile {
 }
 
 #[repr(C)]
+struct RawEventProperty {
+    name: *const c_char,
+    format: c_int,
+    data: *mut c_void,
+}
+
+#[repr(C)]
 struct RenderParam {
     kind: c_int,
     data: *mut c_void,
@@ -44,6 +51,7 @@ struct OpenGlFbo {
     internal_format: c_int,
 }
 
+const FORMAT_STRING: c_int = 1;
 const FORMAT_FLAG: c_int = 3;
 const FORMAT_INT64: c_int = 4;
 const FORMAT_DOUBLE: c_int = 5;
@@ -84,6 +92,8 @@ api! {
     set_property: fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int;
     command: fn(*mut c_void, *const *const c_char) -> c_int;
     command_async: fn(*mut c_void, u64, *const *const c_char) -> c_int;
+    observe_property: fn(*mut c_void, u64, *const c_char, c_int) -> c_int;
+    unobserve_property: fn(*mut c_void, u64) -> c_int;
     wait_event: fn(*mut c_void, c_double) -> *mut RawEvent;
     error_string: fn(c_int) -> *const c_char;
     free: fn(*mut c_void);
@@ -95,15 +105,90 @@ api! {
     render_context_free: fn(*mut c_void);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     FileLoaded,
     /// Playback of the file ended; `error` is true when it failed to open or decode.
     EndFile {
         error: bool,
     },
+    /// A property given to [`Mpv::observe`] changed; `id` is the one it was observed with.
+    Property {
+        id: u64,
+        value: Value,
+    },
     Shutdown,
     Other,
+}
+
+/// How an observed property is delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Flag,
+    Int,
+    Double,
+    /// Any property as text; a structured one comes as JSON.
+    Text,
+}
+
+/// The value of an observed property; `None` while the property is unavailable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    None,
+    Flag(bool),
+    Int(i64),
+    Double(f64),
+    Text(String),
+}
+
+impl Value {
+    pub fn flag(&self) -> Option<bool> {
+        match self {
+            Value::Flag(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn number(&self) -> Option<f64> {
+        match self {
+            Value::Int(i) => Some(*i as f64),
+            Value::Double(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Value::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// Reads the value of a property-change event.
+///
+/// # Safety
+/// `p` must point to a live `mpv_event_property`.
+unsafe fn property_value(p: &RawEventProperty) -> Value {
+    if p.data.is_null() {
+        return Value::None;
+    }
+    unsafe {
+        match p.format {
+            FORMAT_FLAG => Value::Flag(*p.data.cast::<c_int>() != 0),
+            FORMAT_INT64 => Value::Int(*p.data.cast::<i64>()),
+            FORMAT_DOUBLE => Value::Double(*p.data.cast::<c_double>()),
+            FORMAT_STRING => {
+                let s = *p.data.cast::<*const c_char>();
+                if s.is_null() {
+                    Value::None
+                } else {
+                    Value::Text(CStr::from_ptr(s).to_string_lossy().into_owned())
+                }
+            }
+            _ => Value::None,
+        }
+    }
 }
 
 pub struct Mpv {
@@ -334,8 +419,32 @@ impl Mpv {
                 Some(Event::EndFile { error })
             }
             8 => Some(Event::FileLoaded),
+            // MPV_EVENT_PROPERTY_CHANGE; the value is copied out before the next wait_event.
+            22 if !ev.data.is_null() => Some(Event::Property {
+                id: ev.reply_userdata,
+                value: unsafe { property_value(&*ev.data.cast::<RawEventProperty>()) },
+            }),
             _ => Some(Event::Other),
         }
+    }
+
+    /// Asks mpv to send an [`Event::Property`] with `id` whenever `name` changes, and once
+    /// right away with its current value.
+    pub fn observe(&self, id: u64, name: &str, format: Format) -> Result<(), MediaError> {
+        let format = match format {
+            Format::Flag => FORMAT_FLAG,
+            Format::Int => FORMAT_INT64,
+            Format::Double => FORMAT_DOUBLE,
+            Format::Text => FORMAT_STRING,
+        };
+        let code =
+            unsafe { (self.api.observe_property)(self.handle, id, cstr(name).as_ptr(), format) };
+        self.check(code, &format!("observe {name}"))
+    }
+
+    /// Stops every observation made with `id`.
+    pub fn unobserve(&self, id: u64) {
+        unsafe { (self.api.unobserve_property)(self.handle, id) };
     }
 }
 
