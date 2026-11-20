@@ -436,8 +436,7 @@ mod tests {
 
     #[test]
     fn version_one_database_is_migrated() {
-        let dir = std::env::temp_dir().join(format!("gp-store-v1-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = gp_core::scratch::TempDir::new("gp-store-v1");
         let path = dir.join("v1.db");
         {
             let conn = Connection::open(&path).unwrap();
@@ -458,8 +457,6 @@ mod tests {
             s.load_transcript("f:3", "w", "en").unwrap().unwrap().done,
             [false, true]
         );
-        drop(s);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -499,8 +496,7 @@ mod tests {
 
     #[test]
     fn data_survives_reopen() {
-        let dir = std::env::temp_dir().join(format!("gp-store-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = gp_core::scratch::TempDir::new("gp-store-test");
         let path = dir.join("t.db");
         {
             let s = Store::open(&path).unwrap();
@@ -510,7 +506,5 @@ mod tests {
         let list = s.list_words().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].word.sentence, "A sentence.");
-        drop(s);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

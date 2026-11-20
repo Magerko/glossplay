@@ -869,8 +869,7 @@ mod tests {
 
     #[test]
     fn sidecar_files_are_found_with_languages() {
-        let dir = std::env::temp_dir().join(format!("gp-sidecar-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = gp_core::scratch::TempDir::new("gp-sidecar");
         for name in [
             "My Film.mkv",
             "My Film.srt",
@@ -887,6 +886,5 @@ mod tests {
         assert!(
             langs.contains(&None) && langs.contains(&Some("en")) && langs.contains(&Some("ru"))
         );
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

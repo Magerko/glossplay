@@ -958,13 +958,6 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gp-comp-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     fn hex(bytes: &[u8]) -> String {
         to_hex(&Sha256::digest(bytes))
     }
@@ -983,14 +976,19 @@ mod tests {
     struct Fixture {
         root: PathBuf,
         mirror: PathBuf,
+        _base: gp_core::scratch::TempDir,
     }
 
     impl Fixture {
         fn new(name: &str) -> Fixture {
-            let base = temp(name);
+            let base = gp_core::scratch::TempDir::new(&format!("gp-comp-{name}"));
             let (root, mirror) = (base.join("components"), base.join("mirror"));
             std::fs::create_dir_all(&mirror).unwrap();
-            Fixture { root, mirror }
+            Fixture {
+                root,
+                mirror,
+                _base: base,
+            }
         }
 
         fn put(&self, name: &str, data: &[u8]) -> FileSpec {

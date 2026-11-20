@@ -207,11 +207,11 @@ mod tests {
         (0..100_000u32).map(|i| (i % 251) as u8).collect()
     }
 
-    fn temp(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("gp-dl-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("file.part")
+    /// Where a test downloads to; the directory goes when the first value is dropped.
+    fn temp(name: &str) -> (gp_core::scratch::TempDir, std::path::PathBuf) {
+        let dir = gp_core::scratch::TempDir::new(&format!("gp-dl-{name}"));
+        let part = dir.join("file.part");
+        (dir, part)
     }
 
     #[test]
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn plain_http_is_refused() {
-        let part = temp("http");
+        let (_dir, part) = temp("http");
         let no = AtomicBool::new(false);
         let e = download_to_file("http://example.com/x", &part, None, &no, &mut |_| {});
         assert!(matches!(e, Err(DownloadError::Insecure(_))), "{e:?}");
@@ -234,7 +234,7 @@ mod tests {
     fn streams_the_whole_file() {
         let data = body();
         let srv = TestServer::start_ranged(data.clone(), true, None);
-        let part = temp("whole");
+        let (_dir, part) = temp("whole");
         let no = AtomicBool::new(false);
         let mut seen = Vec::new();
         let n = download(
@@ -256,7 +256,7 @@ mod tests {
     fn resumes_after_a_broken_connection() {
         let data = body();
         let srv = TestServer::start_ranged(data.clone(), true, Some(30_000));
-        let part = temp("resume");
+        let (_dir, part) = temp("resume");
         let no = AtomicBool::new(false);
         let size = Some(data.len() as u64);
         let first = download(&srv.url, &part, size, &no, &mut |_| {}, true);
@@ -292,7 +292,7 @@ mod tests {
     fn starts_over_when_the_server_ignores_ranges() {
         let data = body();
         let srv = TestServer::start_ranged(data.clone(), false, None);
-        let part = temp("norange");
+        let (_dir, part) = temp("norange");
         std::fs::write(&part, b"stale bytes from somewhere else").unwrap();
         let no = AtomicBool::new(false);
         download(
@@ -311,7 +311,7 @@ mod tests {
     fn cancel_keeps_the_part() {
         let data = body();
         let srv = TestServer::start_ranged(data.clone(), true, None);
-        let part = temp("cancel");
+        let (_dir, part) = temp("cancel");
         let cancel = AtomicBool::new(false);
         let e = download(
             &srv.url,
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn a_larger_file_than_announced_is_rejected() {
         let srv = TestServer::start_ranged(body(), true, None);
-        let part = temp("large");
+        let (_dir, part) = temp("large");
         let no = AtomicBool::new(false);
         let e = download(&srv.url, &part, Some(1_000), &no, &mut |_| {}, true);
         assert!(matches!(e, Err(DownloadError::BadResponse(_))), "{e:?}");
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn missing_file_is_an_http_error() {
         let srv = TestServer::start(vec![(404, "nope".into())]);
-        let part = temp("404");
+        let (_dir, part) = temp("404");
         let no = AtomicBool::new(false);
         let e = download(&srv.url, &part, None, &no, &mut |_| {}, true);
         assert!(matches!(e, Err(DownloadError::Http(404))), "{e:?}");

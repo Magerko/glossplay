@@ -818,8 +818,7 @@ mod tests {
 
     #[test]
     fn paths_set_by_hand_win() {
-        let dir = std::env::temp_dir().join(format!("gp-asr-paths-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = gp_core::scratch::TempDir::new("gp-asr-paths");
         let (server, model, mine) = (
             dir.join("whisper-server.exe"),
             dir.join("ggml-base.bin"),
@@ -835,7 +834,7 @@ mod tests {
             model_id: "base".into(),
             warmed_up: true,
             size: 2,
-            dir: dir.clone(),
+            dir: dir.to_path_buf(),
         };
         let mut cfg = gp_core::config::Asr::default();
         assert_eq!(

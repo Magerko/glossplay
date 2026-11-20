@@ -1002,9 +1002,7 @@ mod tests {
 
     #[test]
     fn the_cache_drops_its_oldest_clips_past_the_limit() {
-        let dir = std::env::temp_dir().join(format!("gp-dub-cache-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = gp_core::scratch::TempDir::new("gp-dub-cache");
         let old = SystemTime::now() - Duration::from_secs(3600);
         for (i, name) in ["a.wav", "b.wav", "c.wav", "d.wav"].iter().enumerate() {
             let path = dir.join(name);
@@ -1026,7 +1024,6 @@ mod tests {
             .collect();
         left.sort();
         assert_eq!(left, ["c.wav", "d.wav"]);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
