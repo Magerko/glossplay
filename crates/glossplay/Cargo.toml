@@ -13,7 +13,7 @@ gp-media.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
-eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "clipboard"] }
 directories = "6"
 rfd = "0.15"
 png = "0.18"
