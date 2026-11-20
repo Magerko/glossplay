@@ -365,7 +365,24 @@ impl Form {
         )
     }
 
+    /// A folder field with a Browse button; `hint` shows what an empty field means.
+    pub fn folder(&self, ui: &mut egui::Ui, value: &mut String, hint: &str) {
+        self.browse(ui, value, hint, || rfd::FileDialog::new().pick_folder());
+    }
+
     pub fn path(&self, ui: &mut egui::Ui, value: &mut String) {
+        self.browse(ui, value, t(Tr::PathAutoHint), || {
+            rfd::FileDialog::new().pick_file()
+        });
+    }
+
+    fn browse(
+        &self,
+        ui: &mut egui::Ui,
+        value: &mut String,
+        hint: &str,
+        pick: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) {
         ui.horizontal(|ui| {
             let browse = t(Tr::BrowseButton);
             let font = egui::TextStyle::Button.resolve(ui.style());
@@ -377,11 +394,11 @@ impl Form {
                 + 2.0 * ui.spacing().button_padding.x;
             ui.add(
                 egui::TextEdit::singleline(value)
-                    .hint_text(t(Tr::PathAutoHint))
+                    .hint_text(hint)
                     .desired_width(self.field - button - ui.spacing().item_spacing.x),
             );
             if ui.button(browse).clicked()
-                && let Some(path) = rfd::FileDialog::new().pick_file()
+                && let Some(path) = pick()
             {
                 *value = path.to_string_lossy().into_owned();
             }
@@ -742,6 +759,15 @@ fn player(ui: &mut egui::Ui, form: &Form, draft: &mut Config) {
     form.row(ui, "ffmpeg", Some(t(Tr::InfoFfmpeg)), |ui| {
         form.path(ui, &mut draft.player.ffmpeg_path)
     });
+    form.row(
+        ui,
+        t(Tr::FramesFolderRow),
+        Some(t(Tr::InfoFramesFolder)),
+        |ui| {
+            let default = crate::frame::default_folder();
+            form.folder(ui, &mut draft.player.frames_dir, &default.to_string_lossy());
+        },
+    );
     form.row(ui, t(Tr::InterfaceScaleRow), Some(t(Tr::InfoScale)), |ui| {
         form.slider(
             ui,

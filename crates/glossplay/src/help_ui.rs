@@ -10,7 +10,7 @@ use crate::ui::dialog_height;
 use eframe::egui::{self, Align2, Id, RichText, vec2};
 
 /// The keys worth knowing, grouped the way people use them.
-const KEYS: [(&[Command], Tr); 14] = [
+const KEYS: [(&[Command], Tr); 15] = [
     (&[Command::PlayPause], Tr::KeyPlayPause),
     (&[Command::Back, Command::Forward], Tr::KeySeek),
     (&[Command::VolumeUp, Command::VolumeDown], Tr::KeyVolume),
@@ -35,6 +35,7 @@ const KEYS: [(&[Command], Tr); 14] = [
     (&[Command::Sidebar], Tr::KeySidebar),
     (&[Command::Fullscreen], Tr::KeyFullscreen),
     (&[Command::Mute], Tr::KeyMute),
+    (&[Command::VideoInfo], Tr::KeyVideoInfo),
     (&[Command::OpenFile], Tr::KeyOpenFile),
     (&[Command::Search], Tr::KeySearch),
     (&[Command::Escape], Tr::KeyClose),

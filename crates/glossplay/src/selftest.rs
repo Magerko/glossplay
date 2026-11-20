@@ -68,6 +68,14 @@ pub struct Plan {
     pub keys: Vec<String>,
     /// Stands in for the system clipboard, which a test must not read or change.
     pub clipboard: String,
+    /// Open the menu of a right click on the picture once playback starts.
+    pub context_menu: bool,
+    /// And hover this submenu of it: speed, audio, subtitles, video or frame.
+    pub context_submenu: Option<String>,
+    /// And click this item of it once, such as save_frame or video_info.
+    pub context_click: Option<String>,
+    /// Open the Video info window.
+    pub video_info: bool,
 }
 
 /// The pause in the middle of a voice-over run: the clip must stop with the video.
@@ -130,6 +138,8 @@ pub struct State {
     dub_started: Option<Instant>,
     dub_ready_at_start: Option<usize>,
     /// The voice player's audio output and mute, read while a clip plays.
+    /// How far the click on a menu item went: moved over it, pressed, released.
+    context_click_step: u8,
     voice_output: Option<(String, bool)>,
     script: KeyScript,
 }
@@ -179,6 +189,7 @@ impl State {
             pause_check: PauseCheck::Waiting,
             dub_started: None,
             dub_ready_at_start: None,
+            context_click_step: 0,
             voice_output: None,
         }
     }
@@ -230,6 +241,11 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
         let id = egui::Id::unique(crate::settings_ui::OPEN_PICKER);
         ctx.data_mut(|d| d.insert_temp(id, salt.clone()));
     }
+    let playing = matches!(st.phase, Phase::Play | Phase::Capture);
+    if st.plan.context_menu && st.context_click_step < 3 && playing && app.menu_at.is_none() {
+        let c = ctx.content_rect().center();
+        app.open_context_menu(ctx, egui::pos2(c.x - 260.0, c.y - 250.0));
+    }
     if st.plan.keys.is_empty() {
         advance(&mut st, app, ctx);
     } else {
@@ -249,6 +265,36 @@ pub fn inject(app: &mut App, ctx: &egui::Context, raw: &mut egui::RawInput) {
 }
 
 fn inject_step(st: &mut State, app: &mut App, ctx: &egui::Context, raw: &mut egui::RawInput) {
+    let place = |name: Option<&str>| {
+        let name = name?;
+        app.menu_rects
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, r)| *r)
+    };
+    // A click is spread over three frames, as a hand would make it: egui decides what is
+    // under the pointer from the frame before.
+    // I wait for the first line on screen, so a frame saved with subtitles has one.
+    let click = place(st.plan.context_click.as_deref()).filter(|_| st.first_line.is_some());
+    if let Some(rect) = click.filter(|_| st.context_click_step < 3) {
+        let at = rect.center();
+        raw.events.push(egui::Event::PointerMoved(at));
+        if st.context_click_step > 0 {
+            raw.events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: st.context_click_step == 1,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        st.context_click_step += 1;
+        return;
+    }
+    if let Some(rect) =
+        place(st.plan.context_submenu.as_deref()).filter(|_| st.context_click_step == 0)
+    {
+        raw.events.push(egui::Event::PointerMoved(rect.center()));
+    }
     if st.plan.keys.is_empty() || matches!(st.phase, Phase::Done) {
         return;
     }
@@ -504,6 +550,7 @@ fn advance(st: &mut State, app: &mut App, ctx: &egui::Context) {
                     app.open_settings(Some(settings_tab(&st.plan)));
                 }
                 app.help_open |= st.plan.help;
+                app.info_open |= st.plan.video_info;
                 if st.plan.tts_dialog {
                     app.open_tts_setup(false);
                 }
@@ -1041,6 +1088,12 @@ fn report(st: &mut State, app: &App) {
     }
     report_vocab(st, app);
     println!("toast={}", app.last_toast);
+    if let Some((_, done)) = &app.frame_done {
+        match done {
+            Ok(path) => println!("frame_saved={}", path.display()),
+            Err(e) => println!("frame_saved=error: {e}"),
+        }
+    }
     println!("translate_jobs={}", app.translate_jobs);
     let Some(s) = &app.session else { return };
     for (i, t) in s.tracks.iter().enumerate() {

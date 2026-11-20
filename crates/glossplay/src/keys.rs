@@ -28,6 +28,7 @@ pub enum Command {
     SubtitlesLarger,
     OpenFile,
     Search,
+    VideoInfo,
     Escape,
 }
 
@@ -54,6 +55,7 @@ impl Command {
             Command::SubtitlesLarger => "subtitles_larger",
             Command::OpenFile => "open_file",
             Command::Search => "search",
+            Command::VideoInfo => "video_info",
             Command::Escape => "escape",
         }
     }
@@ -67,7 +69,7 @@ enum Chord {
     Any,
 }
 
-const BINDINGS: [(Key, Chord, Command); 22] = [
+const BINDINGS: [(Key, Chord, Command); 23] = [
     (Key::Space, Chord::Plain, Command::PlayPause),
     (Key::ArrowLeft, Chord::Plain, Command::Back),
     (Key::ArrowRight, Chord::Plain, Command::Forward),
@@ -89,6 +91,7 @@ const BINDINGS: [(Key, Chord, Command); 22] = [
     (Key::Plus, Chord::Plain, Command::SubtitlesLarger),
     (Key::O, Chord::Ctrl, Command::OpenFile),
     (Key::F, Chord::Ctrl, Command::Search),
+    (Key::I, Chord::Plain, Command::VideoInfo),
     (Key::Escape, Chord::Any, Command::Escape),
 ];
 
@@ -637,6 +640,7 @@ mod tests {
                 ("shift+s", Command::RepeatLine),
                 ("ctrl+o", Command::OpenFile),
                 ("ctrl+f", Command::Search),
+                ("i", Command::VideoInfo),
                 ("escape", Command::Escape),
             ];
             for layout in [Layout::En, Layout::Ru] {

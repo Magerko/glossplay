@@ -73,6 +73,12 @@ pub enum Msg {
     },
     /// The result of the Check button: one line per server.
     SourcesChecked(Vec<Result<String, String>>),
+    FrameSaved {
+        request: u64,
+        result: Result<std::path::PathBuf, String>,
+    },
+    /// A frame read for the clipboard: width, height and RGBA rows from the top.
+    FrameCopied(Result<(u32, u32, Vec<u8>), String>),
 }
 
 pub struct TranslateJob {

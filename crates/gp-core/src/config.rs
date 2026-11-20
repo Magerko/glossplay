@@ -72,6 +72,8 @@ pub struct Player {
     pub mpv_path: String,
     pub ffmpeg_path: String,
     pub ytdl_path: String,
+    /// Where saved frames go; empty means "Pictures/Glossplay".
+    pub frames_dir: String,
 }
 
 impl Default for Player {
@@ -82,6 +84,7 @@ impl Default for Player {
             mpv_path: String::new(),
             ffmpeg_path: String::new(),
             ytdl_path: String::new(),
+            frames_dir: String::new(),
         }
     }
 }

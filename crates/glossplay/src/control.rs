@@ -454,6 +454,7 @@ fn run_tool(
             let closed = json!({
                 "settings": app.settings_draft.take().is_some(),
                 "help": std::mem::take(&mut app.help_open),
+                "video_info": std::mem::take(&mut app.info_open),
                 "speech_recognition_setup": app.asr_setup.dialog_open,
                 "voice_over_setup": app.tts_setup.dialog_open,
             });
@@ -480,6 +481,12 @@ fn run_tool(
         "set_window" => set_window(app, ctx, args),
         "press_key" => press_key(app, ctx, args),
         "screenshot" => screenshot(app, args),
+        "save_frame" => save_frame(app, args),
+        "video_info" => {
+            session(app)?;
+            let sections = app.video_info(i18n::Lang::En);
+            now(crate::info::as_json(&sections))
+        }
         "pointer" => pointer(ctx, args),
         _ => Err(format!("{name} is not implemented")),
     }
@@ -1054,7 +1061,12 @@ fn search_transcript(app: &mut App, args: &Value) -> Result<Outcome, String> {
 fn settings_sections() -> Vec<&'static str> {
     let mut all = vec!["top"];
     all.extend(SettingsTab::ALL.iter().map(|tab| tab.id()));
-    all.extend(["help", "speech_recognition_setup", "voice_over_setup"]);
+    all.extend([
+        "help",
+        "video_info",
+        "speech_recognition_setup",
+        "voice_over_setup",
+    ]);
     all
 }
 
@@ -1063,6 +1075,10 @@ fn open_settings(app: &mut App, args: &Value) -> Result<Outcome, String> {
     match section {
         "top" => app.open_settings(Some(SettingsTab::Languages)),
         "help" => app.help_open = true,
+        "video_info" => {
+            session(app)?;
+            app.info_open = true;
+        }
         "speech_recognition_setup" => app.open_asr_setup(false),
         "voice_over_setup" => app.open_tts_setup(false),
         other => match SettingsTab::parse(other) {
@@ -1440,7 +1456,7 @@ fn press_key(app: &mut App, ctx: &egui::Context, args: &Value) -> Result<Outcome
     Ok(Outcome::Now(Ok(json!({"key": name, "action": did}))))
 }
 
-const KEYS: &str = "keys: space, left, right, up, down, a, s, d, p, f, t, m, 1, 2, [, ], -, =, escape, \
+const KEYS: &str = "keys: space, left, right, up, down, a, s, d, p, f, t, m, i, 1, 2, [, ], -, =, escape, \
                     ctrl+f, ctrl+v (with text)";
 
 /// A path the agent asked to write: absolute, in an existing folder, with the extension the
@@ -1559,6 +1575,33 @@ fn screenshot(_app: &mut App, args: &Value) -> Result<Outcome, String> {
     later("screenshot", args, wait)
 }
 
+fn save_frame(app: &mut App, args: &Value) -> Result<Outcome, String> {
+    session(app)?;
+    let subtitles = opt_bool(args, "subtitles")?.unwrap_or(false);
+    let overwrite = opt_bool(args, "overwrite")?.unwrap_or(false);
+    let path = match opt_str(args, "path")? {
+        Some(p) => Some(output_path(p, "png", overwrite)?),
+        None => None,
+    };
+    let request = app.save_frame(subtitles, path)?;
+    let wait: Wait = Box::new(move |app, _, late| {
+        match app.frame_done.as_ref().filter(|(r, _)| *r == request) {
+            Some((_, Ok(path))) => {
+                let size = crate::frame::read_png(path).ok().map(|(w, h, _)| (w, h));
+                Some(Ok(json!({
+                    "path": path,
+                    "subtitles": subtitles,
+                    "width": size.map(|s| s.0),
+                    "height": size.map(|s| s.1),
+                })))
+            }
+            Some((_, Err(e))) => Some(Err(format!("could not save the frame: {e}"))),
+            None => late.then(|| Err("the frame was not saved in time".into())),
+        }
+    });
+    later("save_frame", args, wait)
+}
+
 fn status(app: &App, ctx: &egui::Context) -> Value {
     let snap = app.player.snapshot();
     let mpv = &app.player.mpv;
@@ -1601,6 +1644,8 @@ fn status(app: &App, ctx: &egui::Context) -> Value {
             "voice_over_setup": app.tts_setup.dialog_open,
         },
         "auto_pause": app.trainer.autopause,
+        "buffering": app.buffering_shown,
+        "video_info_open": app.info_open,
         "voice_over": dub_json(app),
         "speech_recognition": asr_json(app),
         "message": app.last_toast,
@@ -1893,7 +1938,7 @@ pub fn tool_list() -> Value {
             "Press a key",
             "Does what a player shortcut does: space (play/pause), left/right (5 s), up/down \
              (volume), a/s/d (previous, repeat, next line), p (auto-pause), f (fullscreen), \
-             t (sidebar), m (mute), 1/2 (show the original or the translation line), [ and ] \
+             t (sidebar), m (mute), i (the video info window), 1/2 (show the original or the translation line), [ and ] \
              (speed), escape, ctrl+f (search the sources), ctrl+v with text (open the link, \
              magnet link or file path in it, as pasting does). Like the keyboard, it does \
              nothing but escape while a dialog is open, and only ctrl chords and escape while \
@@ -1915,6 +1960,32 @@ pub fn tool_list() -> Value {
             }),
             &["path"]
         ),
+        tool(
+            "save_frame",
+            "Save the frame",
+            "Saves the frame on screen to a PNG file, as \"Save the frame\" in the menu on the \
+             picture does: without subtitles at the video's own size, or with subtitles as the \
+             window shows the picture (the control bar and anything else over it left out). \
+             Without a path it goes to the frames folder of the settings (Pictures/Glossplay by \
+             default). Answers with the file once it is written.",
+            json!({
+                "subtitles": {"type": "boolean", "description": "Include the subtitles drawn by the player (default false)."},
+                "path": {"type": "string", "description": "Where to write the .png; its folder must exist."},
+                "overwrite": {"type": "boolean", "description": "Replace an existing file (default false)."},
+            }),
+            &[]
+        ),
+        read_only(tool(
+            "video_info",
+            "Video info",
+            "What the Video info window shows, by section: file (title, source by its host only, \
+             format, duration, size), video (codec, resolution, frame rate, bitrate, pixel \
+             format, colour and HDR, hardware decoding), sound, subtitles, playback (dropped and \
+             late frames, output frame rate) and, for a stream, network (cache state, seconds \
+             and bytes buffered ahead, download speed).",
+            none.clone(),
+            &[]
+        )),
     ])
 }
 
@@ -1923,7 +1994,7 @@ mod tests {
     use super::*;
 
     /// Every name `run_tool` handles; kept here so a tool cannot be listed but not run.
-    const RUN: [&str; 28] = [
+    const RUN: [&str; 30] = [
         "open",
         "play",
         "pause",
@@ -1952,6 +2023,8 @@ mod tests {
         "press_key",
         "screenshot",
         "pointer",
+        "save_frame",
+        "video_info",
     ];
 
     fn check_schema(path: &str, s: &Value) {
@@ -2044,7 +2117,7 @@ mod tests {
         let Some(Action::Send(r)) = actions.into_iter().next() else {
             panic!("no answer");
         };
-        assert_eq!(r["result"]["tools"].as_array().unwrap().len(), 28);
+        assert_eq!(r["result"]["tools"].as_array().unwrap().len(), 30);
         let actions = p.handle(
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"click_word","arguments":{"index":3}}}"#,
         );

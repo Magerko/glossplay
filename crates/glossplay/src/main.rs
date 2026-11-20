@@ -2,12 +2,16 @@
 
 mod app;
 mod asr_setup;
+mod buffering;
 mod components;
+mod context_menu;
 mod control;
 mod dub;
+mod frame;
 mod help_ui;
 mod i18n;
 mod icon;
+mod info;
 mod jobs;
 mod keys;
 mod online;
@@ -76,6 +80,12 @@ Usage: glossplay [FILE or URL] [options]
                                     pause once in the middle, turn it off at the end
       --dub-save DIR                copy every voice-over clip played into DIR
       --tts-dialog --settings-voice --subs-menu   what to show in the screenshot
+      --context-menu                (with --selftest) the menu of a right click on the picture
+      --context-submenu NAME        the same with a submenu open: speed, audio, subtitles,
+                                    video or frame
+      --context-click NAME          and click its item once: play, rotate, fill, 16:9, 4:3,
+                                    save_frame, save_frame_subtitles, copy_time, video_info
+      --video-info                  (with --selftest) the Video info window
       --search-dialog QUERY         (with --selftest) search your sources and show the results
       --settings-sources            (with --selftest) Settings at Sources, after pressing Check
       --settings-tab ID             (with --selftest) Settings at a tab: languages, subtitles,
@@ -173,6 +183,16 @@ fn main() {
             "--help-window" => plan.help = true,
             "--open-picker" => plan.open_picker = Some(value()),
             "--subs-menu" => plan.subs_menu = true,
+            "--context-menu" => plan.context_menu = true,
+            "--context-submenu" => {
+                plan.context_menu = true;
+                plan.context_submenu = Some(value());
+            }
+            "--context-click" => {
+                plan.context_menu = true;
+                plan.context_click = Some(value());
+            }
+            "--video-info" => plan.video_info = true,
             "--sub-style" => plan.sub_style = Some(value()),
             "--sub-scale" => plan.sub_scale = value().parse().ok(),
             "--sub-position" => plan.sub_position = Some(value()),

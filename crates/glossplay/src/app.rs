@@ -120,6 +120,28 @@ pub struct App {
     pub dub_save: Option<std::path::PathBuf>,
     /// What the shortcuts of this frame did, for the self-test.
     pub key_log: Vec<String>,
+    /// What mpv says about the cache of a network stream.
+    pub cache: crate::buffering::Cache,
+    /// The "Buffering" overlay is up.
+    pub buffering_shown: bool,
+    /// Where the video area was drawn in the last frame.
+    pub stage_rect: egui::Rect,
+    /// The context menu is open there.
+    pub menu_at: Option<egui::Pos2>,
+    /// A right click asked for the context menu at this point.
+    pub menu_request: Option<egui::Pos2>,
+    /// Where the context menu drew its submenus, for the self-test.
+    pub menu_rects: Vec<(&'static str, egui::Rect)>,
+    pub on_top: bool,
+    /// The "Video info" window is open.
+    pub info_open: bool,
+    pub info_view: Option<crate::info::InfoView>,
+    pub window_shot: Option<crate::frame::WindowShot>,
+    pub frame_requests: u64,
+    /// The last frame saved: its request and the file, or why it failed.
+    pub frame_done: Option<(u64, Result<PathBuf, String>)>,
+    /// The message on screen names a file that can be shown in its folder.
+    pub toast_reveal: Option<PathBuf>,
 }
 
 impl App {
@@ -247,6 +269,19 @@ impl App {
             quiet,
             dub_save,
             key_log: Vec::new(),
+            cache: Default::default(),
+            buffering_shown: false,
+            stage_rect: egui::Rect::NOTHING,
+            menu_at: None,
+            menu_request: None,
+            menu_rects: Vec::new(),
+            on_top: false,
+            info_open: false,
+            info_view: None,
+            window_shot: None,
+            frame_requests: 0,
+            frame_done: None,
+            toast_reveal: None,
             cfg,
         };
         if app.cfg.tts.enabled && !app.quiet && app.dub_ready() {
@@ -294,6 +329,7 @@ impl App {
             return;
         }
         self.last_toast.clone_from(&text);
+        self.toast_reveal = None;
         self.status = Some((text, Instant::now(), shown_for));
     }
 
@@ -355,6 +391,10 @@ impl App {
         }
         session.stream_subs = stream_subs.unwrap_or_default();
         self.session = Some(session);
+        self.cache
+            .follow(&self.player.mpv, crate::buffering::is_network(media));
+        crate::context_menu::reset_picture(&self.player.mpv);
+        self.info_view = None;
         self.player.mpv.set("sid", "no");
         self.player.mpv.set_flag("sub-visibility", false);
         if let Err(e) = self.player.load(media) {
@@ -938,6 +978,8 @@ impl App {
                     self.on_tts_event(event)
                 }
                 Msg::Component { id, event } => self.on_component_event(&id, event),
+                Msg::FrameSaved { request, result } => self.on_frame_saved(request, result),
+                Msg::FrameCopied(result) => self.on_frame_copied(result),
                 _ => {}
             }
         }
@@ -1290,7 +1332,9 @@ impl App {
             match event {
                 Event::FileLoaded => self.discover_tracks(),
                 Event::EndFile { error: true } => self.toast(t(Tr::CouldNotPlay)),
-
+                Event::Property { id, value } => {
+                    self.cache.on_property(id, &value);
+                }
                 _ => {}
             }
         }
@@ -1315,6 +1359,11 @@ impl App {
         }
         self.request_translations();
         self.update_dub();
+        let waiting = self.cache.waiting(self.snap.paused);
+        self.buffering_shown = self.cache.shown(waiting, Instant::now());
+        if waiting {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
         if !self.snap.paused && !self.snap.idle {
             ctx.request_repaint_after(Duration::from_millis(100));
         }

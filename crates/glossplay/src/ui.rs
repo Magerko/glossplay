@@ -20,8 +20,57 @@ const VOLUME_WIDTH: f32 = 80.0;
 pub const URL_FIELD: &str = "url-field";
 pub const TRANSCRIPT_FIELD: &str = "transcript-search";
 
+/// What was chosen in the Subtitles menu during a frame, done once the menu is drawn.
+pub struct SubtitlePicks {
+    pick_primary: Option<Option<usize>>,
+    pick_secondary: Option<Secondary>,
+    toggle_asr: bool,
+    add_file: bool,
+    save_srt: Option<bool>,
+    pick_audio: Option<i64>,
+    toggle_autopause: bool,
+    open_settings: Option<Option<SettingsTab>>,
+    open_help: bool,
+    open_search: bool,
+    pick_style: Option<SubStyle>,
+    size_step: Option<bool>,
+    toggle_dub: bool,
+    volumes_changed: bool,
+    volumes_done: bool,
+    original: f32,
+    voice: f32,
+    voice_source: String,
+    voice_source_changed: bool,
+}
+
+impl SubtitlePicks {
+    pub fn new(cfg: &gp_core::config::Config) -> SubtitlePicks {
+        SubtitlePicks {
+            pick_primary: None,
+            pick_secondary: None,
+            toggle_asr: false,
+            add_file: false,
+            save_srt: None,
+            pick_audio: None,
+            toggle_autopause: false,
+            open_settings: None,
+            open_help: false,
+            open_search: false,
+            pick_style: None,
+            size_step: None,
+            toggle_dub: false,
+            volumes_changed: false,
+            volumes_done: false,
+            original: cfg.tts.original_volume as f32,
+            voice: cfg.tts.voice_volume as f32,
+            voice_source: cfg.tts.voice_source.clone(),
+            voice_source_changed: false,
+        }
+    }
+}
+
 /// Which items of the control bar are drawn at the current width.
-struct ControlsFit {
+pub struct ControlsFit {
     volume: bool,
     speed: bool,
     autopause: bool,
@@ -32,7 +81,7 @@ struct ControlsFit {
 }
 
 impl ControlsFit {
-    fn all() -> Self {
+    pub fn all() -> Self {
         ControlsFit {
             volume: true,
             speed: true,
@@ -80,9 +129,11 @@ impl eframe::App for App {
         self.search_window(&ctx);
         self.settings_window(&ctx);
         self.help_window(&ctx);
+        self.info_window(&ctx);
         self.asr_setup_dialog(&ctx);
         self.tts_setup_dialog(&ctx);
         self.toast_ui(&ctx);
+        crate::frame::step(self, &ctx);
         crate::selftest::step(self, &ctx);
         crate::control::step(self, &ctx);
         crate::record::frame(self, &ctx);
@@ -297,15 +348,20 @@ impl App {
             }
             C::OpenFile => self.open_dialog(),
             C::Search => self.open_search(None),
+            C::VideoInfo => self.toggle_info(),
             // The top window first: the setup dialogs open over Settings, and all of them
             // over the word card.
             C::Escape => {
-                if self.asr_setup.dialog_open {
+                if egui::Popup::is_id_open(ctx, crate::context_menu::id()) {
+                    // The menu closes itself on Esc.
+                } else if self.asr_setup.dialog_open {
                     self.close_asr_setup();
                 } else if self.tts_setup.dialog_open {
                     self.close_tts_setup();
                 } else if self.help_open {
                     self.help_open = false;
+                } else if self.info_open {
+                    self.info_open = false;
                 } else if self.settings_draft.is_some() {
                     self.settings_draft = None;
                 } else if self.search_ui.open {
@@ -383,12 +439,14 @@ impl App {
         }
         self.snap.paused
             || self.popup.is_some()
+            || self.menu_at.is_some()
             || self.last_activity.elapsed() < HIDE_AFTER
             || self.selftest.as_ref().is_some_and(|s| s.plan.show_controls)
     }
 
     fn stage(&mut self, ui: &mut egui::Ui) {
         let rect = ui.max_rect();
+        self.stage_rect = rect;
         if self.session.is_none() {
             return self.empty_state(ui, rect);
         }
@@ -397,19 +455,26 @@ impl App {
         } else {
             Sense::click()
         };
+        // A click that only closes the context menu must not also pause.
+        let menu_was_open = egui::Popup::is_id_open(ui.ctx(), crate::context_menu::id());
         let response = ui.interact(rect, Id::unique("video"), sense);
         if response.double_clicked() {
             self.toggle_fullscreen(ui.ctx());
-        } else if response.clicked() {
+        } else if response.clicked() && !menu_was_open {
             if self.popup.is_some() {
                 self.close_popup();
             } else {
                 self.player.set_paused(!self.snap.paused);
             }
         }
+        if response.secondary_clicked() {
+            self.menu_request = response.interact_pointer_pos();
+        }
         self.video.paint(ui, rect);
 
-        let visible = self.controls_visible();
+        // A frame being saved shows the picture and the subtitles alone.
+        let shooting = self.window_shot.is_some();
+        let visible = self.controls_visible() && !shooting;
         if !visible {
             ui.ctx().set_cursor_icon(egui::CursorIcon::None);
             ui.ctx().request_repaint_after(Duration::from_millis(300));
@@ -432,6 +497,36 @@ impl App {
             self.header(ui, rect);
             self.controls(ui, rect);
         }
+        if !shooting {
+            self.buffering_overlay(ui, rect);
+        }
+        self.context_menu(ui, &response);
+    }
+
+    /// A spinner with what is known of the wait, in the middle of the picture.
+    fn buffering_overlay(&self, ui: &egui::Ui, rect: Rect) {
+        if !self.buffering_shown {
+            return;
+        }
+        let text = crate::buffering::label_in(crate::i18n::lang(), &self.cache);
+        let galley =
+            ui.painter()
+                .layout_no_wrap(text, FontId::proportional(15.0), theme::DARK.text);
+        let spinner = 20.0;
+        let size = vec2(14.0 + spinner + 10.0 + galley.size().x + 16.0, 42.0);
+        let plate = Rect::from_center_size(rect.center(), size);
+        ui.painter()
+            .rect_filled(plate, 10.0, Color32::from_black_alpha(150));
+        let at = pos2(plate.left() + 14.0, plate.center().y - spinner / 2.0);
+        egui::Spinner::new()
+            .size(spinner)
+            .color(theme::DARK.text)
+            .paint_at(ui, Rect::from_min_size(at, vec2(spinner, spinner)));
+        let text_at = pos2(
+            at.x + spinner + 10.0,
+            plate.center().y - galley.size().y / 2.0,
+        );
+        ui.painter().galley(text_at, galley, theme::DARK.text);
     }
 
     fn empty_state(&mut self, ui: &mut egui::Ui, rect: Rect) {
@@ -740,8 +835,14 @@ impl App {
                             Stroke::new(2.0 * scale, look.saved),
                         );
                     }
-                    if resp.is_some_and(|r| r.clicked()) {
-                        clicked = Some((word.to_owned(), line.cue, *i, word_rect.center_top()));
+                    if let Some(r) = resp {
+                        if r.clicked() {
+                            clicked = Some((word.to_owned(), line.cue, *i, word_rect.center_top()));
+                        }
+                        // The word sits on the picture, so it opens the picture's menu.
+                        if r.secondary_clicked() {
+                            self.menu_request = r.interact_pointer_pos();
+                        }
                     }
                 }
             }
@@ -939,6 +1040,16 @@ impl App {
         ui.painter()
             .rect_filled(track, 3.0, Color32::from_white_alpha(50));
         let x_of = |ms: Ms| track.left() + track.width() * (ms as f32 / duration).clamp(0.0, 1.0);
+        // What a stream has loaded already, lighter, under the played part.
+        for &(from, to) in &self.cache.state.ranges {
+            let ms = |s: f64| (s * 1000.0) as Ms;
+            let loaded = Rect::from_min_max(
+                pos2(x_of(ms(from)), track.top()),
+                pos2(x_of(ms(to)), track.bottom()),
+            );
+            ui.painter()
+                .rect_filled(loaded, 3.0, Color32::from_white_alpha(70));
+        }
         let played = Rect::from_min_max(track.min, pos2(x_of(self.snap.pos), track.bottom()));
         ui.painter().rect_filled(played, 3.0, theme::DARK.accent);
         if resp.hovered() || resp.dragged() {
@@ -969,30 +1080,26 @@ impl App {
     }
 
     fn subtitle_menu(&mut self, ui: &mut egui::Ui, fit: &ControlsFit) {
+        let mut picks = SubtitlePicks::new(&self.cfg);
+        let menu = ui.menu_button(RichText::new(t(Tr::SubtitlesMenu)).size(13.0), |ui| {
+            self.subtitle_menu_ui(ui, fit, &mut picks);
+        });
+        crate::record::place("subtitles_menu", menu.response.rect);
+        if self.selftest.as_ref().is_some_and(|s| s.plan.subs_menu) {
+            egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&menu.response));
+        }
+        self.apply_subtitle_picks(picks);
+    }
+
+    /// The items of the Subtitles menu, which the context menu shows too.
+    pub fn subtitle_menu_ui(&self, ui: &mut egui::Ui, fit: &ControlsFit, p: &mut SubtitlePicks) {
         let provider = match &self.translator {
             Ok(t) => t.id(),
             Err(_) => t(Tr::ProviderNotSetUp).to_owned(),
         };
         let asr_running = self.session.as_ref().is_some_and(|s| s.asr_running);
-        let mut pick_primary = None;
-        let mut pick_secondary = None;
-        let mut toggle_asr = false;
-        let mut add_file = false;
-        let mut save_srt = None;
-        let mut pick_audio = None;
-        let mut toggle_autopause = false;
-        let mut open_settings: Option<Option<SettingsTab>> = None;
-        let mut open_help = false;
-        let mut open_search = false;
-        let mut pick_style = None;
-        let mut size_step = None;
         let dub_on = self.dub.is_some();
-        let (mut toggle_dub, mut volumes_changed, mut volumes_done) = (false, false, false);
-        let mut original = self.cfg.tts.original_volume as f32;
-        let mut voice = self.cfg.tts.voice_volume as f32;
-        let mut voice_source = self.cfg.tts.voice_source.clone();
-        let mut voice_source_changed = false;
-        let menu = ui.menu_button(RichText::new(t(Tr::SubtitlesMenu)).size(13.0), |ui| {
+        {
             let Some(s) = &self.session else { return };
             ui.set_min_width(260.0);
             ui.label(RichText::new(t(Tr::Learning)).color(theme::muted()).small());
@@ -1010,14 +1117,14 @@ impl App {
                     resp.clone().on_hover_text(e);
                 }
                 if resp.clicked() {
-                    pick_primary = Some(Some(i));
+                    p.pick_primary = Some(Some(i));
                 }
             }
             if ui
                 .selectable_label(s.primary.is_none(), t(Tr::NoneChoice))
                 .clicked()
             {
-                pick_primary = Some(None);
+                p.pick_primary = Some(None);
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -1027,7 +1134,7 @@ impl App {
                         .small(),
                 );
                 if settings_gear(ui, SettingsTab::Translation) {
-                    open_settings = Some(Some(SettingsTab::Translation));
+                    p.open_settings = Some(Some(SettingsTab::Translation));
                 }
             });
             if ui
@@ -1037,7 +1144,7 @@ impl App {
                 )
                 .clicked()
             {
-                pick_secondary = Some(Secondary::Translate);
+                p.pick_secondary = Some(Secondary::Translate);
             }
             for (i, t) in s
                 .tracks
@@ -1049,14 +1156,14 @@ impl App {
                     .selectable_label(s.secondary == Secondary::Track(i), &t.label)
                     .clicked()
                 {
-                    pick_secondary = Some(Secondary::Track(i));
+                    p.pick_secondary = Some(Secondary::Track(i));
                 }
             }
             if ui
                 .selectable_label(s.secondary == Secondary::Off, t(Tr::OffChoice))
                 .clicked()
             {
-                pick_secondary = Some(Secondary::Off);
+                p.pick_secondary = Some(Secondary::Off);
             }
             ui.separator();
             let label = if asr_running {
@@ -1068,10 +1175,10 @@ impl App {
                 let transcribe = ui.button(label);
                 crate::record::place("transcribe", transcribe.rect);
                 if transcribe.clicked() {
-                    toggle_asr = true;
+                    p.toggle_asr = true;
                 }
                 if settings_gear(ui, SettingsTab::SpeechRecognition) {
-                    open_settings = Some(Some(SettingsTab::SpeechRecognition));
+                    p.open_settings = Some(Some(SettingsTab::SpeechRecognition));
                 }
             });
             ui.horizontal(|ui| {
@@ -1080,10 +1187,10 @@ impl App {
                     .on_hover_text(t(Tr::MenuVoiceOverHint))
                     .clicked()
                 {
-                    toggle_dub = true;
+                    p.toggle_dub = true;
                 }
                 if settings_gear(ui, SettingsTab::VoiceOver) {
-                    open_settings = Some(Some(SettingsTab::VoiceOver));
+                    p.open_settings = Some(Some(SettingsTab::VoiceOver));
                 }
             });
             if dub_on {
@@ -1092,8 +1199,8 @@ impl App {
                     .spacing([10.0, 4.0])
                     .show(ui, |ui| {
                         for (name, label, value) in [
-                            ("slider_original", t(Tr::SliderOriginal), &mut original),
-                            ("slider_voice", t(Tr::SliderVoice), &mut voice),
+                            ("slider_original", t(Tr::SliderOriginal), &mut p.original),
+                            ("slider_voice", t(Tr::SliderVoice), &mut p.voice),
                         ] {
                             ui.label(RichText::new(label).color(theme::muted()));
                             let r =
@@ -1103,15 +1210,15 @@ impl App {
                                 vec2(ui.spacing().slider_width, r.rect.height()),
                             );
                             crate::record::place(name, rail);
-                            volumes_changed |= r.changed();
-                            volumes_done |= r.drag_stopped() || (r.changed() && !r.dragged());
+                            p.volumes_changed |= r.changed();
+                            p.volumes_done |= r.drag_stopped() || (r.changed() && !r.dragged());
                             ui.end_row();
                         }
                         ui.label(RichText::new(t(Tr::RowVoiceSource)).color(theme::muted()))
                             .on_hover_text(t(Tr::VoiceSpeakerNote));
                         ui.horizontal(|ui| {
-                            voice_source_changed |=
-                                crate::tts_ui::voice_source_choice(ui, &mut voice_source);
+                            p.voice_source_changed |=
+                                crate::tts_ui::voice_source_choice(ui, &mut p.voice_source);
                         })
                         .response
                         .on_hover_text(t(Tr::VoiceSpeakerNote));
@@ -1119,17 +1226,17 @@ impl App {
                     });
             }
             if ui.button(t(Tr::AddSubFile)).clicked() {
-                add_file = true;
+                p.add_file = true;
             }
             ui.horizontal(|ui| {
                 let percent =
                     (substyle::clamp_scale(self.cfg.subtitles.scale) * 100.0).round() as i32;
                 ui.label(tf(Tr::SubSizeMenu, &[&percent]));
                 if ui.small_button("−").clicked() {
-                    size_step = Some(false);
+                    p.size_step = Some(false);
                 }
                 if ui.small_button("+").clicked() {
-                    size_step = Some(true);
+                    p.size_step = Some(true);
                 }
             });
             ui.menu_button(t(Tr::SubStyleLabel), |ui| {
@@ -1139,7 +1246,7 @@ impl App {
                         .selectable_label(style == current, t(style.name()))
                         .clicked()
                     {
-                        pick_style = Some(style);
+                        p.pick_style = Some(style);
                         ui.close();
                     }
                 }
@@ -1151,14 +1258,14 @@ impl App {
                 .add_enabled(has_primary, egui::Button::new(t(Tr::SaveTranscriptSrt)))
                 .clicked()
             {
-                save_srt = Some(false);
+                p.save_srt = Some(false);
             }
             if shown
                 && ui
                     .add_enabled(has_primary, egui::Button::new(t(Tr::SaveTranslationSrt)))
                     .clicked()
             {
-                save_srt = Some(true);
+                p.save_srt = Some(true);
             }
             if self.audio_tracks.len() > 1 {
                 ui.separator();
@@ -1169,7 +1276,7 @@ impl App {
                 );
                 for a in &self.audio_tracks {
                     if ui.selectable_label(a.selected, a.label()).clicked() {
-                        pick_audio = Some(a.id);
+                        p.pick_audio = Some(a.id);
                     }
                 }
             }
@@ -1182,24 +1289,45 @@ impl App {
                     .selectable_label(self.trainer.autopause, t(Tr::AutoPauseMenu))
                     .clicked()
             {
-                toggle_autopause = true;
+                p.toggle_autopause = true;
             }
             if !fit.settings && ui.button(t(Tr::SettingsMenu)).clicked() {
-                open_settings = Some(None);
+                p.open_settings = Some(None);
             }
             if !fit.settings && ui.button(t(Tr::HelpMenu)).clicked() {
-                open_help = true;
+                p.open_help = true;
             }
             if !fit.settings && self.search_available() && ui.button(t(Tr::SearchMenu)).clicked() {
-                open_search = true;
+                p.open_search = true;
             }
-        });
-        crate::record::place("subtitles_menu", menu.response.rect);
-        if self.selftest.as_ref().is_some_and(|s| s.plan.subs_menu) {
-            egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&menu.response));
         }
+    }
+
+    pub fn apply_subtitle_picks(&mut self, p: SubtitlePicks) {
+        let SubtitlePicks {
+            pick_primary,
+            pick_secondary,
+            toggle_asr,
+            add_file,
+            save_srt,
+            pick_audio,
+            toggle_autopause,
+            open_settings,
+            open_help,
+            open_search,
+            pick_style,
+            size_step,
+            toggle_dub,
+            volumes_changed,
+            volumes_done,
+            original,
+            voice,
+            voice_source,
+            voice_source_changed,
+        } = p;
+        let asr_running = self.session.as_ref().is_some_and(|s| s.asr_running);
         if toggle_dub {
-            self.set_dub(!dub_on);
+            self.set_dub(self.dub.is_none());
         }
         if voice_source_changed {
             let mut new = self.cfg.clone();
@@ -1549,7 +1677,9 @@ impl App {
     }
 
     fn word_popup(&mut self, ctx: &egui::Context) {
-        let Some(p) = &self.popup else { return };
+        let Some(p) = self.popup.as_ref().filter(|_| self.window_shot.is_none()) else {
+            return;
+        };
         let in_anki = p.saved_id.is_some_and(|id| {
             self.vocab
                 .iter()
@@ -1671,22 +1801,37 @@ impl App {
         let Some((text, _, _)) = &self.status else {
             return;
         };
-        if crate::control::controls_override() == Some(false) {
+        if crate::control::controls_override() == Some(false) || self.window_shot.is_some() {
             return;
         }
+        let reveal = self.toast_reveal.clone();
+        let mut show = false;
         egui::Area::new(Id::unique("toast"))
             .order(egui::Order::Tooltip)
             .anchor(Align2::CENTER_TOP, vec2(0.0, 56.0))
-            .interactable(false)
+            .interactable(reveal.is_some())
             .show(ctx, |ui| {
                 egui::Frame::NONE
                     .fill(theme::raised())
                     .corner_radius(8)
                     .inner_margin(egui::Margin::symmetric(14, 8))
                     .show(ui, |ui| {
-                        ui.label(text);
+                        ui.horizontal(|ui| {
+                            ui.label(text);
+                            if reveal.is_some() {
+                                let button = ui.button(t(Tr::ShowInFolder));
+                                crate::record::place("show_in_folder", button.rect);
+                                show = button.clicked();
+                            }
+                        });
                     });
             });
+        if show
+            && let Some(path) = reveal
+            && let Err(e) = crate::frame::reveal(&path)
+        {
+            self.toast(e);
+        }
         ctx.request_repaint_after(Duration::from_secs(1));
     }
 }
