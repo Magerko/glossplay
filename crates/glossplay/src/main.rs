@@ -8,6 +8,7 @@ mod dub;
 mod i18n;
 mod icon;
 mod jobs;
+mod keys;
 mod paths;
 mod player;
 mod search_ui;
@@ -68,6 +69,9 @@ Usage: glossplay [FILE or URL] [options]
       --tts-dialog --settings-voice --subs-menu   what to show in the screenshot
       --search-dialog QUERY         (with --selftest) search your sources and show the results
       --settings-sources            (with --selftest) Settings at Sources, after pressing Check
+      --keys LIST                   (with --selftest) press keys as a layout sends them, e.g.
+                                    ru:s=repeat_line,focus:url,ru:ctrl+v; prints what each did
+      --clipboard TEXT              what Ctrl+V pastes in --keys (the real clipboard is not used)
   --search QUERY                    search the server set in [sources], print the first results
   --stream-url LINK                 add a magnet link or info hash to TorrServer and print its
                                     files and stream URLs (the torrent stays on the server)
@@ -149,6 +153,8 @@ fn main() {
             "--tts-dialog" => plan.tts_dialog = true,
             "--settings-voice" => plan.settings_voice = true,
             "--subs-menu" => plan.subs_menu = true,
+            "--keys" => plan.keys = value().split(',').map(str::to_owned).collect(),
+            "--clipboard" => plan.clipboard = value(),
             "--search-dialog" => {
                 plan.search_dialog = Some(value());
                 plan.empty = true;
@@ -188,6 +194,9 @@ fn main() {
         std::process::exit(translate_file_twice(&file, to_lang.as_deref()));
     }
 
+    if !plan.keys.is_empty() && media.is_none() {
+        plan.empty = true;
+    }
     control::launch(&mut media);
     if is_selftest {
         // Checks compare texts, so a self-test speaks English unless a language is asked for.

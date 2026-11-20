@@ -110,6 +110,8 @@ pub struct App {
     /// which is taken out of the app while the test steps.
     pub quiet: bool,
     pub dub_save: Option<std::path::PathBuf>,
+    /// What the shortcuts of this frame did, for the self-test.
+    pub key_log: Vec<String>,
 }
 
 impl App {
@@ -212,6 +214,7 @@ impl App {
             volume: cfg.player.volume,
             quiet,
             dub_save,
+            key_log: Vec::new(),
             cfg,
         };
         if app.cfg.tts.enabled && !app.quiet && app.dub_ready() {
@@ -1223,7 +1226,7 @@ fn stream_title(url: &str) -> String {
     }
 }
 
-fn percent_decode(s: &str) -> String {
+pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

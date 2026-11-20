@@ -1385,107 +1385,65 @@ fn set_window(app: &mut App, ctx: &egui::Context, args: &Value) -> Result<Outcom
     later("set_window", args, wait)
 }
 
+/// Goes through the same table and the same checks as the keyboard: the key is pressed as
+/// with an English layout, and the events egui-winit would send are judged like real ones.
 fn press_key(app: &mut App, ctx: &egui::Context, args: &Value) -> Result<Outcome, String> {
-    let key = need_str(args, "key")?.trim().to_ascii_lowercase();
-    let did = match key.as_str() {
-        "space" => {
-            app.close_popup();
-            let paused = app.player.mpv.get_flag("pause").unwrap_or(true);
-            app.player.set_paused(!paused);
-            if paused { "play" } else { "pause" }
+    let name = need_str(args, "key")?.trim().to_lowercase();
+    let combo = crate::keys::parse_combo(&name).map_err(|e| format!("{e}; {KEYS}"))?;
+    let synth = crate::keys::synthesize(crate::keys::Layout::En, &combo, "");
+    let command = synth.press.iter().find_map(|e| match e {
+        egui::Event::Key {
+            key,
+            physical_key,
+            modifiers,
+            ..
+        } => crate::keys::command_for(*key, *physical_key, *modifiers),
+        _ => None,
+    });
+    let is_paste = synth
+        .press
+        .iter()
+        .any(|e| matches!(e, egui::Event::Paste(_)))
+        || (combo.modifiers.command_only() && combo.physical == egui::Key::V);
+    let gate = app.key_gate(ctx);
+    let action = if is_paste {
+        let text = opt_str(args, "text")?.unwrap_or_default();
+        if text.trim().is_empty() {
+            return Err(
+                "ctrl+v needs text: what the clipboard would hold (the player does not read \
+                 the system clipboard for an agent)"
+                    .into(),
+            );
         }
-        "left" => {
-            app.player.seek_relative(-5_000);
-            "back 5 s"
-        }
-        "right" => {
-            app.player.seek_relative(5_000);
-            "forward 5 s"
-        }
-        "up" => {
-            app.set_volume(app.volume + 5.0);
-            "volume up"
-        }
-        "down" => {
-            app.set_volume(app.volume - 5.0);
-            "volume down"
-        }
-        "a" => {
-            app.cue_nav(-1);
-            "previous line"
-        }
-        "s" => {
-            app.cue_nav(0);
-            "repeat line"
-        }
-        "d" => {
-            app.cue_nav(1);
-            "next line"
-        }
-        "p" => {
-            app.trainer.autopause = !app.trainer.autopause;
-            app.cfg.training.autopause = app.trainer.autopause;
-            app.toast(if app.trainer.autopause {
-                t(Tr::AutoPauseOn)
-            } else {
-                t(Tr::AutoPauseOff)
-            });
-            "auto-pause"
-        }
-        "f" => {
-            app.toggle_fullscreen(ctx);
-            "fullscreen"
-        }
-        "t" => {
-            app.sidebar_open = !app.sidebar_open;
-            "sidebar"
-        }
-        "m" => {
-            let muted = app.player.mpv.get_flag("mute").unwrap_or(false);
-            app.player.mpv.set_flag("mute", !muted || app.quiet);
-            "mute"
-        }
-        "1" => {
-            app.cfg.subtitles.show_primary = !app.cfg.subtitles.show_primary;
-            "original subtitles"
-        }
-        "2" => {
-            app.cfg.subtitles.show_secondary = !app.cfg.subtitles.show_secondary;
-            "translation line"
-        }
-        "[" | "]" => {
-            let speed = app.player.mpv.get_f64("speed").unwrap_or(1.0);
-            let speed = if key == "[" {
-                (speed - 0.25).max(0.25)
-            } else {
-                (speed + 0.25).min(4.0)
-            };
-            app.player.mpv.set_f64("speed", speed);
-            "speed"
-        }
-        "escape" => {
-            if app.asr_setup.dialog_open {
-                app.close_asr_setup();
-            } else if app.tts_setup.dialog_open {
-                app.close_tts_setup();
-            } else if app.settings_draft.is_some() {
-                app.settings_draft = None;
-            } else if app.popup.is_some() {
-                app.close_popup();
-            } else if app.fullscreen {
-                app.toggle_fullscreen(ctx);
+        let events = crate::keys::synthesize(crate::keys::Layout::En, &combo, text).press;
+        crate::keys::actions(&events, gate)
+    } else {
+        match command {
+            None => return Err(format!("\"{name}\" is not a player shortcut; {KEYS}")),
+            Some(crate::keys::Command::OpenFile) => {
+                return Err(
+                    "ctrl+o opens the system file dialog, which an agent cannot use; call open \
+                     with path_or_url instead"
+                        .into(),
+                );
             }
-            "escape"
-        }
-        other => {
-            return Err(format!(
-                "unknown key \"{other}\": space, left, right, up, down, a, s, d, p, f, t, m, \
-                 1, 2, [, ], escape"
-            ));
+            Some(crate::keys::Command::Search) if !app.search_available() => {
+                return Err(
+                    "ctrl+f searches the sources set in [sources], and none are set".into(),
+                );
+            }
+            Some(_) => crate::keys::actions(&synth.press, gate),
         }
     };
-    Ok(Outcome::Now(Ok(json!({"key": key, "action": did}))))
+    let Some(action) = action.into_iter().next() else {
+        return Err(format!("{name} did nothing: {}", gate.refusal()));
+    };
+    let did = app.perform(action, ctx);
+    Ok(Outcome::Now(Ok(json!({"key": name, "action": did}))))
 }
+
+const KEYS: &str = "keys: space, left, right, up, down, a, s, d, p, f, t, m, 1, 2, [, ], escape, \
+                    ctrl+f, ctrl+v (with text)";
 
 /// A path the agent asked to write: absolute, in an existing folder, with the extension the
 /// format needs, and not over an existing file unless that is allowed.
@@ -1859,8 +1817,14 @@ pub fn tool_list() -> Value {
             "Does what a player shortcut does: space (play/pause), left/right (5 s), up/down \
              (volume), a/s/d (previous, repeat, next line), p (auto-pause), f (fullscreen), \
              t (sidebar), m (mute), 1/2 (show the original or the translation line), [ and ] \
-             (speed), escape.",
-            json!({"key": {"type": "string"}}),
+             (speed), escape, ctrl+f (search the sources), ctrl+v with text (open the link, \
+             magnet link or file path in it, as pasting does). Like the keyboard, it does \
+             nothing but escape while a dialog is open, and only ctrl chords and escape while \
+             a text field has the focus.",
+            json!({
+                "key": {"type": "string"},
+                "text": {"type": "string", "description": "For ctrl+v: what the clipboard holds."},
+            }),
             &["key"]
         ),
         tool(

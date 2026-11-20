@@ -1,5 +1,6 @@
 use crate::app::{App, Async, SidebarTab};
 use crate::i18n::{Tr, t, tf};
+use crate::keys;
 use crate::session::{Load, Origin, Secondary};
 use crate::theme::{
     self, ACCENT, BG, DANGER, LINE, MUTED, PANEL, RAISED, SUB_PRIMARY, SUB_SECONDARY, TEXT,
@@ -15,6 +16,9 @@ use std::time::Duration;
 const CONTROLS_HEIGHT: f32 = 78.0;
 const HIDE_AFTER: Duration = Duration::from_millis(2500);
 const VOLUME_WIDTH: f32 = 80.0;
+/// Ids of the text fields the self-test types into.
+pub const URL_FIELD: &str = "url-field";
+pub const TRANSCRIPT_FIELD: &str = "transcript-search";
 
 /// Which items of the control bar are drawn at the current width.
 struct ControlsFit {
@@ -80,6 +84,15 @@ impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 1.0]
     }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if self.quiet {
+            // A test window can have the focus while someone types elsewhere: none of their
+            // keys, and none of their clipboard, reach it.
+            raw.events.retain(|e| !keys::is_keyboard(e));
+        }
+        crate::selftest::inject(self, ctx, raw);
+    }
 }
 
 fn icon_button(ui: &mut egui::Ui, icon: &str, hint: &str) -> bool {
@@ -130,104 +143,146 @@ fn toggle_chip(ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
 impl App {
     fn handle_input(&mut self, ctx: &egui::Context) {
         // A self-test window can take the focus while someone types elsewhere; their keys
-        // must not unmute it or change what is measured.
-        if self.quiet {
-            return;
-        }
-        let dropped: Vec<String> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .map(|f| f.path().to_string_lossy().into_owned())
-                .filter(|p| !p.is_empty())
-                .collect()
-        });
-        for path in dropped {
-            self.open(&path);
-        }
-        if ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_pressed()) {
-            self.last_activity = std::time::Instant::now();
-        }
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(Key::O)) {
-            self.open_dialog();
-        }
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(Key::F)) && !self.modal_open() {
-            self.open_search(None);
-        }
-        // The top window first: the setup dialogs open over Settings, and all of them over
-        // the word card.
-        if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            if self.asr_setup.dialog_open {
-                self.close_asr_setup();
-            } else if self.tts_setup.dialog_open {
-                self.close_tts_setup();
-            } else if self.settings_draft.is_some() {
-                self.settings_draft = None;
-            } else if self.search_ui.open {
-                self.close_search();
-            } else if self.popup.is_some() {
-                self.close_popup();
-            } else if self.fullscreen {
-                self.toggle_fullscreen(ctx);
+        // never get here (see `raw_input_hook`), and their drops and mouse must not either.
+        if !self.quiet {
+            let dropped: Vec<String> = ctx.input(|i| {
+                i.raw
+                    .dropped_files
+                    .iter()
+                    .map(|f| f.path().to_string_lossy().into_owned())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            });
+            for path in dropped {
+                self.open(&path);
+            }
+            if ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_pressed()) {
+                self.last_activity = std::time::Instant::now();
             }
         }
-        // Typing in a text field must not trigger player shortcuts.
-        if ctx.egui_wants_keyboard_input() || self.modal_open() {
-            return;
+        let gate = self.key_gate(ctx);
+        let actions = ctx.input(|i| keys::actions(&i.events, gate));
+        for action in actions {
+            // A self-test must not open a system dialog or take over the user's screen.
+            let skip = self.selftest.is_some()
+                && matches!(
+                    action,
+                    keys::Action::Run(keys::Command::OpenFile | keys::Command::Fullscreen)
+                );
+            let done = if skip {
+                action.name().to_owned()
+            } else {
+                self.perform(action, ctx)
+            };
+            if self.selftest.is_some() {
+                self.key_log.push(done);
+            }
         }
-        let pressed = |key| ctx.input(|i| i.key_pressed(key) && !i.modifiers.command);
-        if pressed(Key::Space) {
-            self.close_popup();
-            self.player.set_paused(!self.snap.paused);
+    }
+
+    pub fn key_gate(&self, ctx: &egui::Context) -> keys::Gate {
+        keys::Gate {
+            typing: ctx.egui_wants_keyboard_input(),
+            modal: self.modal_open(),
         }
-        if pressed(Key::ArrowLeft) {
-            self.player.seek_relative(-5_000);
+    }
+
+    /// Runs a shortcut; returns what was done, for the self-test and MCP.
+    pub fn perform(&mut self, action: keys::Action, ctx: &egui::Context) -> String {
+        match action {
+            keys::Action::Run(c) => {
+                self.run_command(c, ctx);
+                c.name().to_owned()
+            }
+            keys::Action::Paste(text) => format!("paste_{}", self.open_pasted(&text)),
         }
-        if pressed(Key::ArrowRight) {
-            self.player.seek_relative(5_000);
+    }
+
+    pub fn run_command(&mut self, command: keys::Command, ctx: &egui::Context) {
+        use keys::Command as C;
+        let mpv = self.player.mpv.clone();
+        match command {
+            C::PlayPause => {
+                self.close_popup();
+                let paused = mpv.get_flag("pause").unwrap_or(self.snap.paused);
+                self.player.set_paused(!paused);
+            }
+            C::Back => self.player.seek_relative(-5_000),
+            C::Forward => self.player.seek_relative(5_000),
+            C::VolumeUp => self.set_volume(self.volume + 5.0),
+            C::VolumeDown => self.set_volume(self.volume - 5.0),
+            C::PreviousLine => self.cue_nav(-1),
+            C::RepeatLine => self.cue_nav(0),
+            C::NextLine => self.cue_nav(1),
+            C::AutoPause => self.toggle_autopause(),
+            C::Fullscreen => self.toggle_fullscreen(ctx),
+            C::Sidebar => self.sidebar_open = !self.sidebar_open,
+            C::Mute => {
+                let muted = mpv.get_flag("mute").unwrap_or(self.snap.muted);
+                mpv.set_flag("mute", !muted || self.quiet);
+            }
+            C::ToggleOriginal => {
+                self.cfg.subtitles.show_primary = !self.cfg.subtitles.show_primary;
+            }
+            C::ToggleTranslation => {
+                self.cfg.subtitles.show_secondary = !self.cfg.subtitles.show_secondary;
+            }
+            C::Slower | C::Faster => {
+                let speed = mpv.get_f64("speed").unwrap_or(self.snap.speed);
+                let speed = if command == C::Slower {
+                    (speed - 0.25).max(0.25)
+                } else {
+                    (speed + 0.25).min(4.0)
+                };
+                mpv.set_f64("speed", speed);
+            }
+            C::OpenFile => self.open_dialog(),
+            C::Search => self.open_search(None),
+            // The top window first: the setup dialogs open over Settings, and all of them
+            // over the word card.
+            C::Escape => {
+                if self.asr_setup.dialog_open {
+                    self.close_asr_setup();
+                } else if self.tts_setup.dialog_open {
+                    self.close_tts_setup();
+                } else if self.settings_draft.is_some() {
+                    self.settings_draft = None;
+                } else if self.search_ui.open {
+                    self.close_search();
+                } else if self.popup.is_some() {
+                    self.close_popup();
+                } else if self.fullscreen {
+                    self.toggle_fullscreen(ctx);
+                }
+            }
         }
-        if pressed(Key::ArrowUp) {
-            self.set_volume(self.volume + 5.0);
-        }
-        if pressed(Key::ArrowDown) {
-            self.set_volume(self.volume - 5.0);
-        }
-        if pressed(Key::A) {
-            self.cue_nav(-1);
-        }
-        if pressed(Key::S) {
-            self.cue_nav(0);
-        }
-        if pressed(Key::D) {
-            self.cue_nav(1);
-        }
-        if pressed(Key::P) {
-            self.toggle_autopause();
-        }
-        if pressed(Key::F) {
-            self.toggle_fullscreen(ctx);
-        }
-        if pressed(Key::T) {
-            self.sidebar_open = !self.sidebar_open;
-        }
-        if pressed(Key::M) {
-            self.player.mpv.set_flag("mute", !self.snap.muted);
-        }
-        if pressed(Key::Num1) {
-            self.cfg.subtitles.show_primary = !self.cfg.subtitles.show_primary;
-        }
-        if pressed(Key::Num2) {
-            self.cfg.subtitles.show_secondary = !self.cfg.subtitles.show_secondary;
-        }
-        if pressed(Key::OpenBracket) {
-            self.player
-                .mpv
-                .set_f64("speed", (self.snap.speed - 0.25).max(0.25));
-        }
-        if pressed(Key::CloseBracket) {
-            self.player
-                .mpv
-                .set_f64("speed", (self.snap.speed + 0.25).min(4.0));
+    }
+
+    /// Ctrl+V outside a text field: opens a copied link, magnet link or file path the way
+    /// dropping a file or typing a link does. Returns which it was.
+    pub fn open_pasted(&mut self, text: &str) -> &'static str {
+        match keys::classify(text, |p| std::path::Path::new(p).is_file()) {
+            keys::Pasted::Link(url) => {
+                self.open(&url);
+                "link"
+            }
+            keys::Pasted::File(path) => {
+                self.open(&path);
+                "file"
+            }
+            keys::Pasted::Magnet(magnet) => {
+                if self.torrserver_ready() {
+                    self.open_magnet(magnet);
+                    "magnet"
+                } else {
+                    self.toast(t(Tr::PasteNeedsTorrServer));
+                    "magnet_without_torrserver"
+                }
+            }
+            keys::Pasted::Nothing => {
+                self.toast(t(Tr::PasteNothing));
+                "nothing"
+            }
         }
     }
 
@@ -328,6 +383,7 @@ impl App {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             let field = egui::TextEdit::singleline(&mut self.url_input)
+                .id(Id::unique(URL_FIELD))
                 .hint_text(t(Tr::PasteLink))
                 .desired_width(340.0);
             let entered = ui.add(field).lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
@@ -1032,6 +1088,7 @@ impl App {
         });
         ui.add(
             egui::TextEdit::singleline(&mut self.search)
+                .id(Id::unique(TRANSCRIPT_FIELD))
                 .hint_text(t(Tr::SearchHint))
                 .desired_width(f32::INFINITY),
         );

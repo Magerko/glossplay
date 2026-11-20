@@ -48,6 +48,12 @@ pub struct Plan {
     pub search_dialog: Option<String>,
     /// Settings scrolled to Sources, with the Check button pressed.
     pub settings_sources: bool,
+    /// Key presses to replay as egui-winit sends them with a layout, instead of playing:
+    /// `ru:s`, `en:ctrl+v=paste_file` (with the action expected), `focus:url`,
+    /// `focus:transcript`, `blur`, `clip:TEXT`, `wait:MS`, `playing`, `settings`.
+    pub keys: Vec<String>,
+    /// Stands in for the system clipboard, which a test must not read or change.
+    pub clipboard: String,
 }
 
 /// The pause in the middle of a voice-over run: the clip must stop with the video.
@@ -102,11 +108,29 @@ pub struct State {
     dub_ready_at_start: Option<usize>,
     /// The voice player's audio output and mute, read while a clip plays.
     voice_output: Option<(String, bool)>,
+    script: KeyScript,
+}
+
+#[derive(Default)]
+struct KeyScript {
+    next: usize,
+    clipboard: String,
+    /// The release of the key pressed in the frame before.
+    release: Vec<egui::Event>,
+    /// The step pressed this frame and the action it should give.
+    pressed: Option<(String, Option<String>)>,
+    wait_until: Option<Instant>,
+    playing_from: Option<(Ms, Instant)>,
 }
 
 impl State {
     pub fn new(plan: Plan) -> State {
+        let script = KeyScript {
+            clipboard: plan.clipboard.clone(),
+            ..Default::default()
+        };
         State {
+            script,
             plan,
             phase: Phase::Loading,
             launched: Instant::now(),
@@ -148,8 +172,196 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
     if st.plan.settings_sources {
         app.search_ui.scroll_to = true;
     }
-    advance(&mut st, app, ctx);
+    if st.plan.keys.is_empty() {
+        advance(&mut st, app, ctx);
+    } else {
+        after_keys(&mut st, app, ctx);
+    }
     app.selftest = Some(st);
+}
+
+/// Runs before the frame: puts the next scripted key into the input, the way egui-winit
+/// would have, or does the next non-key step.
+pub fn inject(app: &mut App, ctx: &egui::Context, raw: &mut egui::RawInput) {
+    let Some(mut st) = app.selftest.take() else {
+        return;
+    };
+    inject_step(&mut st, app, ctx, raw);
+    app.selftest = Some(st);
+}
+
+fn inject_step(st: &mut State, app: &mut App, ctx: &egui::Context, raw: &mut egui::RawInput) {
+    if st.plan.keys.is_empty() || matches!(st.phase, Phase::Done) {
+        return;
+    }
+    let s = &mut st.script;
+    if !s.release.is_empty() {
+        raw.events.append(&mut s.release);
+        return;
+    }
+    let loaded = st.plan.empty || app.session.as_ref().is_some_and(|s| s.tracks_discovered);
+    let waiting = s.wait_until.is_some_and(|t| Instant::now() < t);
+    if s.pressed.is_some()
+        || s.playing_from.is_some()
+        || waiting
+        || !loaded
+        || st.launched.elapsed() < Duration::from_millis(1500)
+    {
+        return;
+    }
+    let Some(step) = st.plan.keys.get(s.next).cloned() else {
+        return;
+    };
+    s.next += 1;
+    s.wait_until = Some(Instant::now() + Duration::from_millis(300));
+    let (kind, arg) = step.split_once(':').unwrap_or((step.as_str(), ""));
+    match kind {
+        "focus" => {
+            let id = match arg {
+                "url" => crate::ui::URL_FIELD,
+                "transcript" => {
+                    app.sidebar_open = true;
+                    app.sidebar_tab = crate::app::SidebarTab::Transcript;
+                    crate::ui::TRANSCRIPT_FIELD
+                }
+                other => {
+                    st.failures.push(format!("no field \"{other}\" to focus"));
+                    return;
+                }
+            };
+            ctx.memory_mut(|m| m.request_focus(egui::Id::unique(id)));
+            println!("step={step}");
+        }
+        "blur" => {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+            println!("step=blur");
+        }
+        "clip" => {
+            s.clipboard = arg.to_owned();
+            println!("step=clip text={arg}");
+        }
+        "wait" => {
+            let ms = arg.parse().unwrap_or(1000);
+            s.wait_until = Some(Instant::now() + Duration::from_millis(ms));
+            println!("step=wait ms={ms}");
+        }
+        "playing" => s.playing_from = Some((app.snap.pos, Instant::now())),
+        "settings" => {
+            app.settings_draft = Some(app.cfg.clone());
+            println!("step=settings");
+        }
+        _ => {
+            let (press, expected) = match step.rsplit_once('=') {
+                Some((p, want)) if !want.is_empty() && !p.ends_with(':') => {
+                    (p, Some(want.to_owned()))
+                }
+                _ => (step.as_str(), None),
+            };
+            let parsed = press.split_once(':').and_then(|(l, c)| {
+                Some((
+                    crate::keys::Layout::parse(l)?,
+                    crate::keys::parse_combo(c).ok()?,
+                ))
+            });
+            let Some((layout, combo)) = parsed else {
+                st.failures.push(format!("cannot read the step \"{step}\""));
+                return;
+            };
+            let synth = crate::keys::synthesize(layout, &combo, &s.clipboard);
+            println!("injected={press} events={:?}", short(&synth.press));
+            raw.events.extend(synth.press);
+            s.release = synth.release;
+            s.pressed = Some((press.to_owned(), expected));
+        }
+    }
+}
+
+/// The events without the noise of their default fields.
+fn short(events: &[egui::Event]) -> Vec<String> {
+    events
+        .iter()
+        .map(|e| match e {
+            egui::Event::Key {
+                key,
+                physical_key,
+                pressed,
+                modifiers,
+                ..
+            } => format!(
+                "Key{{key:{key:?} physical:{physical_key:?} pressed:{pressed}{}}}",
+                if modifiers.command { " ctrl" } else { "" }
+            ),
+            egui::Event::ModifiersChanged(m) => format!("Modifiers{{ctrl:{}}}", m.ctrl),
+            other => format!("{other:?}"),
+        })
+        .collect()
+}
+
+/// Runs after the frame: what the injected key did, and the end of the script.
+fn after_keys(st: &mut State, app: &mut App, ctx: &egui::Context) {
+    let log = std::mem::take(&mut app.key_log);
+    if matches!(st.phase, Phase::Done) {
+        return;
+    }
+    let s = &mut st.script;
+    if let Some((press, expected)) = s.pressed.take() {
+        let did = if log.is_empty() {
+            "none".to_owned()
+        } else {
+            log.join("+")
+        };
+        let focused = ctx.memory(|m| m.focused());
+        let field = if focused == Some(egui::Id::unique(crate::ui::URL_FIELD)) {
+            format!(" field_url={:?}", app.url_input)
+        } else if focused == Some(egui::Id::unique(crate::ui::TRANSCRIPT_FIELD)) {
+            format!(" field_transcript={:?}", app.search)
+        } else {
+            String::new()
+        };
+        println!("key={press} action={did}{field}");
+        if let Some(want) = expected
+            && want != did
+        {
+            st.failures.push(format!("{press} did {did}, not {want}"));
+        }
+    }
+    if let Some((from, since)) = s.playing_from
+        && since.elapsed() >= Duration::from_millis(1500)
+    {
+        s.playing_from = None;
+        let advanced = app.snap.pos - from;
+        let media = app.session.as_ref().map_or("-", |s| s.media.as_str());
+        println!(
+            "playing media={media} pos_ms={} advanced_ms={advanced}",
+            app.snap.pos
+        );
+        if advanced < 500 {
+            st.failures
+                .push(format!("playback advanced only {advanced} ms"));
+        }
+    }
+    let done = s.next >= st.plan.keys.len()
+        && s.pressed.is_none()
+        && s.release.is_empty()
+        && s.playing_from.is_none()
+        && s.wait_until.is_none_or(|t| Instant::now() >= t);
+    if done {
+        println!("field_url={:?}", app.url_input);
+        println!("field_transcript={:?}", app.search);
+        println!(
+            "media={}",
+            app.session.as_ref().map_or("-", |s| s.media.as_str())
+        );
+        println!("toast={}", app.last_toast);
+        if let crate::search_ui::View::Failed(e) = &app.search_ui.view {
+            println!("search_window_open={} error={e}", app.search_ui.open);
+        }
+        finish(st, ctx);
+    }
 }
 
 fn finish(st: &mut State, ctx: &egui::Context) {

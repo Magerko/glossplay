@@ -59,9 +59,9 @@ messages! {
     ],
     OpenVideo => ["Open a video…", "Открыть видео…", "Відкрити відео…"],
     DropHint => [
-        "or drop a file anywhere in this window",
-        "или перетащите файл в это окно",
-        "або перетягніть файл у це вікно"
+        "or drop a file anywhere in this window, or press Ctrl+V with a copied link or path",
+        "или перетащите файл в это окно, или нажмите Ctrl+V со скопированной ссылкой или путём",
+        "або перетягніть файл у це вікно, або натисніть Ctrl+V зі скопійованим посиланням чи шляхом"
     ],
     PasteLink => ["Paste a video link", "Вставьте ссылку на видео", "Вставте посилання на відео"],
     PlayButton => ["Play", "Смотреть", "Дивитися"],
@@ -1030,4 +1030,14 @@ messages! {
     CheckTorrServerOk => ["TorrServer {0}", "TorrServer {0}", "TorrServer {0}"],
     CheckTorrServerFailed => ["TorrServer: {0}", "TorrServer: {0}", "TorrServer: {0}"],
     CheckNotSet => ["the address is empty", "адрес не указан", "адресу не вказано"],
+    PasteNothing => [
+        "The clipboard holds no link or file path",
+        "В буфере обмена нет ссылки или пути к файлу",
+        "У буфері обміну немає посилання чи шляху до файлу"
+    ],
+    PasteNeedsTorrServer => [
+        "To play a magnet link, set the TorrServer address in Settings → Sources",
+        "Чтобы смотреть magnet-ссылку, укажите адрес TorrServer в Настройках → Источники",
+        "Щоб дивитися magnet-посилання, вкажіть адресу TorrServer у Налаштуваннях → Джерела"
+    ],
 }

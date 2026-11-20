@@ -204,6 +204,18 @@ fn check(sources: &Sources) -> Vec<Result<String, String>> {
     vec![search, ts]
 }
 
+/// The `dn=` name of a magnet link, or the link itself.
+fn magnet_title(magnet: &str) -> String {
+    magnet
+        .split_once('?')
+        .map_or("", |(_, q)| q)
+        .split('&')
+        .find_map(|p| p.strip_prefix("dn="))
+        .map(|n| crate::app::percent_decode(&n.replace('+', " ")))
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| magnet.to_owned())
+}
+
 fn forget(base: String, hash: String) {
     std::thread::spawn(move || {
         let _ = torrserver::remove(&base, &hash);
@@ -220,6 +232,29 @@ enum Action {
 impl App {
     pub fn search_available(&self) -> bool {
         self.cfg.sources.search_ready()
+    }
+
+    pub fn torrserver_ready(&self) -> bool {
+        !torrserver::base(&self.cfg.sources.torrserver_url).is_empty()
+    }
+
+    /// Plays a magnet link through TorrServer, the way a search result is opened: the
+    /// search window shows the wait, and the choice of files when there are several.
+    pub fn open_magnet(&mut self, magnet: String) {
+        self.close_popup();
+        let request = self.search_ui.next_request();
+        let s = &mut self.search_ui;
+        s.open = true;
+        s.view = View::Opening;
+        s.opening_title = magnet_title(&magnet);
+        let (sources, current) = (self.cfg.sources.clone(), s.current.clone());
+        self.jobs.spawn(move || {
+            let cancelled = || current.load(Ordering::SeqCst) != request;
+            Msg::FilesListed {
+                request,
+                result: list_release(&sources, &torznab::Link::Magnet(magnet), &cancelled),
+            }
+        });
     }
 
     /// The torrent and file of a stream of the configured TorrServer.
@@ -793,6 +828,19 @@ mod tests {
             path: path.into(),
             size: 1,
         }
+    }
+
+    #[test]
+    fn a_magnet_is_titled_by_its_name() {
+        assert_eq!(
+            magnet_title("magnet:?xt=urn:btih:abc&dn=Sintel%20(2010)&tr=udp"),
+            "Sintel (2010)"
+        );
+        assert_eq!(magnet_title("magnet:?dn=Big+Buck+Bunny"), "Big Buck Bunny");
+        assert_eq!(
+            magnet_title("magnet:?xt=urn:btih:abc"),
+            "magnet:?xt=urn:btih:abc"
+        );
     }
 
     #[test]
