@@ -1,19 +1,26 @@
-//! A service mode for making demo videos, switched on by `GLOSSPLAY_RECORD_DIR=<dir>`.
+//! A service mode for making demo videos, allowed by `GLOSSPLAY_RECORD_DIR=<dir>`.
 //!
-//! Nothing is played aloud: both players write their sound into WAV files in `<dir>` (the
-//! film into `video.wav`, every voice-over clip into a `voice-<line start>.wav` of its own),
-//! the window goes 30 frames a second through ffmpeg into `<dir>/window.mkv`, and
-//! `<dir>/timeline.jsonl` holds the wall-clock moments that tie them together. Volumes,
-//! pauses and the voice-over timing are the ones of normal playback.
+//! In this mode nothing is played aloud: both players write their sound into files. Recording
+//! itself runs in sessions, started and stopped by a control driving the player (the
+//! `record_start` and `record_stop` tools of `--mcp`); each session has a folder of its own, a
+//! new `rec-NNN` in `<dir>` unless the control names one. In it the window goes through ffmpeg
+//! into `window.mkv` (30 frames a second unless asked otherwise), the film's sound into
+//! `video.wav`, every voice-over clip played into a `voice-NNN-<line start>.wav` of its own (NNN
+//! counts the clips of the session, so a line said again gets a new file), and
+//! `timeline.jsonl` holds the wall-clock moments that tie them together. Volumes, pauses and the
+//! voice-over timing are the ones of normal playback. A red REC sign shows in the window while
+//! a session runs; it is drawn after the frame is taken, so the recording does not have it.
 //!
 //! Sample 0 of `video.wav` is where the film was at the `start` line, give or take a frame;
 //! a voice file starts one frame (1/30 s) into its clip, which mpv trims to meet the first
-//! frame of the voice player's picture, and plays from the clip's `started_at`.
+//! frame of the voice player's picture, and plays from the `started_at` of its `clip_started`
+//! line, which names the file.
 //!
-//! `GLOSSPLAY_RECORD_FROM` and `GLOSSPLAY_RECORD_TO` (seconds of the film) limit what is
-//! recorded; without them recording runs from the first moment of playback to the exit.
+//! As before sessions, a session can also start by itself and write straight into `<dir>`:
 //! `GLOSSPLAY_RECORD_NOW=1` starts it at once, on the start screen too, and
-//! `GLOSSPLAY_RECORD_FPS` sets the frame rate (30 by default).
+//! `GLOSSPLAY_RECORD_FROM` and `GLOSSPLAY_RECORD_TO` (seconds of the film) start it when
+//! playback reaches the first and stop it at the second. `GLOSSPLAY_RECORD_FPS` sets the
+//! frame rate a session gets when it is not asked for one.
 //!
 //! A control driving the player (the `pointer` tool of `--mcp`) can move a pointer of its own:
 //! its moves, presses and typing go into the window as input, the way a mouse and keyboard
@@ -34,12 +41,26 @@ pub const ENV_DIR: &str = "GLOSSPLAY_RECORD_DIR";
 
 struct Config {
     dir: PathBuf,
+    /// A session starts by itself, as it did before sessions could be asked for.
+    auto: bool,
     from_ms: i64,
     to_ms: Option<i64>,
     at_once: bool,
     fps: f64,
     epoch: Instant,
-    log: Mutex<Option<std::fs::File>>,
+}
+
+/// The session being recorded.
+struct Session {
+    dir: PathBuf,
+    log: Option<std::fs::File>,
+    clips: usize,
+}
+
+static SESSION: Mutex<Option<Session>> = Mutex::new(None);
+
+fn session() -> std::sync::MutexGuard<'static, Option<Session>> {
+    SESSION.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn config() -> Option<&'static Config> {
@@ -54,11 +75,14 @@ fn config() -> Option<&'static Config> {
                     .and_then(|v| v.parse::<f64>().ok())
                     .map(|s| (s * 1000.0) as i64)
             };
-            let log = std::fs::File::create(dir.join("timeline.jsonl")).ok();
+            let from_ms = secs("GLOSSPLAY_RECORD_FROM");
+            let to_ms = secs("GLOSSPLAY_RECORD_TO");
+            let at_once = std::env::var("GLOSSPLAY_RECORD_NOW").is_ok_and(|v| v == "1");
             Some(Config {
-                from_ms: secs("GLOSSPLAY_RECORD_FROM").unwrap_or(0),
-                to_ms: secs("GLOSSPLAY_RECORD_TO"),
-                at_once: std::env::var("GLOSSPLAY_RECORD_NOW").is_ok_and(|v| v == "1"),
+                auto: at_once || from_ms.is_some() || to_ms.is_some(),
+                from_ms: from_ms.unwrap_or(0),
+                to_ms,
+                at_once,
                 fps: std::env::var("GLOSSPLAY_RECORD_FPS")
                     .ok()
                     .and_then(|v| v.parse::<f64>().ok())
@@ -66,7 +90,6 @@ fn config() -> Option<&'static Config> {
                     .unwrap_or(30.0),
                 dir,
                 epoch: Instant::now(),
-                log: Mutex::new(log),
             })
         })
         .as_ref()
@@ -85,12 +108,12 @@ fn now(c: &Config) -> f64 {
     c.epoch.elapsed().as_secs_f64()
 }
 
-/// Appends a line to the timeline, with the time it happened.
+/// Appends a line to the timeline of the session, with the time it happened.
 pub fn event(kind: &str, mut fields: Value) {
     let Some(c) = config() else { return };
     fields["t"] = json!(now(c));
     fields["ev"] = json!(kind);
-    if let Some(f) = c.log.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+    if let Some(f) = session().as_mut().and_then(|s| s.log.as_mut()) {
         let _ = writeln!(f, "{fields}");
     }
 }
@@ -484,33 +507,41 @@ fn draw_pointer(painter: &egui::Painter) {
 
 static VOICE_FILE: Mutex<Option<String>> = Mutex::new(None);
 
-/// The file the next voice clip is written to.
+/// The file the next voice clip is written to: a new one in the session for every clip
+/// played, so a line said twice keeps both, and a scratch file between sessions.
 pub fn clip_file(line_start: i64) -> Option<String> {
-    let file = path(config()?, &format!("voice-{line_start:07}.wav"));
+    let c = config()?;
+    let file = match session().as_mut() {
+        Some(s) => {
+            s.clips += 1;
+            s.dir
+                .join(format!("voice-{:03}-{line_start:07}.wav", s.clips))
+        }
+        None => c.dir.join("voice-before.wav"),
+    };
+    let file = file.to_string_lossy().into_owned();
     *VOICE_FILE.lock().unwrap_or_else(|e| e.into_inner()) = Some(file.clone());
     Some(file)
 }
 
 /// How much the sound files have grown, which shows when their samples were really written.
-fn written(c: &Config) -> Value {
-    let len = |p: &str| std::fs::metadata(p).map_or(0, |m| m.len());
+fn written(dir: &Path) -> Value {
+    let len = |p: &Path| std::fs::metadata(p).map_or(0, |m| m.len());
     let voice = VOICE_FILE.lock().unwrap_or_else(|e| e.into_inner()).clone();
     json!({
-        "main": len(&path(c, "video.wav")),
+        "main": len(&dir.join("video.wav")),
         "voice_file": voice,
-        "voice": voice.as_deref().map_or(0, len),
+        "voice": voice.as_deref().map_or(0, |v| len(Path::new(v))),
     })
 }
 
-enum Stage {
-    Waiting,
-    Recording(Box<Capture>),
-    Done,
-}
-
 struct Capture {
+    dir: PathBuf,
+    fps: f64,
+    /// Started by itself, so `GLOSSPLAY_RECORD_TO` ends it.
+    auto: bool,
     t0: f64,
-    /// The last 30 fps slot that has a frame, and the one a read-back is on its way for.
+    /// The last slot that has a frame, and the one a read-back is on its way for.
     slot: i64,
     pending: Option<i64>,
     frames: SyncSender<Frame>,
@@ -519,7 +550,15 @@ struct Capture {
     paused: Option<bool>,
     volumes: (f64, f64),
     lines: Option<(Vec<String>, Vec<String>)>,
-    dropped: usize,
+    /// Frames handed to ffmpeg; the slots between them repeat the frame before.
+    sent: i64,
+}
+
+impl Capture {
+    /// Slots that got no frame of their own because ffmpeg was not keeping up.
+    fn repeated(&self) -> i64 {
+        (self.slot + 1 - self.sent).max(0)
+    }
 }
 
 struct Frame {
@@ -529,15 +568,40 @@ struct Frame {
     pixels: Vec<u8>,
 }
 
-static STAGE: Mutex<Option<Stage>> = Mutex::new(None);
+struct Recorder {
+    capture: Option<Box<Capture>>,
+    /// The session that starts by itself has not started yet.
+    auto_pending: bool,
+    /// Writers of stopped sessions still feeding ffmpeg the last frames.
+    finishing: Vec<std::thread::JoinHandle<()>>,
+    /// When the scratch sound file was last looked at.
+    scratch_checked: Instant,
+}
+
+/// Between sessions the film's sound goes on into a scratch file; past this size I start it
+/// afresh, so a long time without recording does not fill the disk.
+const SCRATCH_LIMIT: u64 = 64 << 20;
+
+static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
+
+fn recorder() -> std::sync::MutexGuard<'static, Option<Recorder>> {
+    RECORDER.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Runs once a frame, after everything is drawn.
 pub fn frame(app: &mut App, ctx: &egui::Context) {
     let Some(c) = config() else { return };
-    let mut guard = STAGE.lock().unwrap_or_else(|e| e.into_inner());
-    let stage = guard.get_or_insert(Stage::Waiting);
-    match stage {
-        Stage::Waiting => {
+    let mut guard = recorder();
+    let r = guard.get_or_insert_with(|| Recorder {
+        capture: None,
+        auto_pending: c.auto,
+        finishing: Vec::new(),
+        scratch_checked: Instant::now(),
+    });
+
+    r.finishing.retain(|w| !w.is_finished());
+    match &mut r.capture {
+        None if r.auto_pending => {
             let mpv = &app.player.mpv;
             let ready = c.at_once
                 || app.session.is_some()
@@ -547,40 +611,167 @@ pub fn frame(app: &mut App, ctx: &egui::Context) {
                     && app.snap.pos >= c.from_ms
                     && c.to_ms.is_none_or(|to| app.snap.pos < to);
             if ready {
-                *stage = start(c, app, ctx);
+                r.auto_pending = false;
+                match start(c, app, ctx, c.dir.clone(), c.fps, true) {
+                    Ok(cap) => r.capture = Some(cap),
+                    Err(e) => eprintln!("recording: {e}"),
+                }
             }
         }
-        Stage::Recording(cap) => {
-            if c.to_ms.is_some_and(|to| app.snap.pos >= to) {
-                stop(cap, app);
-                *stage = Stage::Done;
+        None => {
+            if r.scratch_checked.elapsed().as_secs() >= 10 {
+                r.scratch_checked = Instant::now();
+                let scratch = path(c, "video-before.wav");
+                if std::fs::metadata(&scratch).is_ok_and(|m| m.len() > SCRATCH_LIMIT) {
+                    // A reload opens the file anew, which empties it.
+                    app.player.mpv.set("ao-pcm-file", &scratch);
+                    app.player.mpv.command(&["ao-reload"]).ok();
+                }
+            }
+        }
+        Some(cap) => {
+            if cap.auto && c.to_ms.is_some_and(|to| app.snap.pos >= to) {
+                if let Some(cap) = r.capture.take()
+                    && let Some(w) = stop(*cap, app)
+                {
+                    r.finishing.push(w);
+                }
                 return;
             }
             step(c, cap, app, ctx);
         }
-        Stage::Done => {}
     }
+}
+
+/// Starts a session at once, whatever is on screen; `dir` is its folder, a new one in the
+/// recording folder when not given. Answers with the folder and the frame rate.
+pub fn start_session(
+    app: &mut App,
+    ctx: &egui::Context,
+    dir: Option<PathBuf>,
+    fps: Option<f64>,
+) -> Result<Value, String> {
+    let c = config().ok_or(NOT_ON)?;
+    let fps = fps.unwrap_or(c.fps);
+    if !(1.0..=120.0).contains(&fps) {
+        return Err(format!("fps must be from 1 to 120, not {fps}"));
+    }
+    let mut guard = recorder();
+    let r = guard.get_or_insert_with(|| Recorder {
+        capture: None,
+        auto_pending: c.auto,
+        finishing: Vec::new(),
+        scratch_checked: Instant::now(),
+    });
+
+    if let Some(cap) = &r.capture {
+        return Err(format!(
+            "already recording into {}; record_stop first",
+            cap.dir.display()
+        ));
+    }
+    let dir = match dir {
+        Some(d) if d.join("timeline.jsonl").exists() => {
+            return Err(format!(
+                "{} already holds a recording; name a new folder",
+                d.display()
+            ));
+        }
+        Some(d) => d,
+        None => new_session_dir(&c.dir),
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // An asked-for session replaces the one that would have started by itself.
+    r.auto_pending = false;
+    let cap = start(c, app, ctx, dir.clone(), fps, false)?;
+    r.capture = Some(cap);
+    Ok(json!({"dir": dir, "fps": fps}))
+}
+
+/// Stops the session; ffmpeg finishes the video in the background, see [`writers_done`].
+pub fn stop_session(app: &App) -> Result<Value, String> {
+    config().ok_or(NOT_ON)?;
+    let mut guard = recorder();
+    let r = guard.as_mut().ok_or("nothing is being recorded")?;
+    let cap = r.capture.take().ok_or("nothing is being recorded")?;
+    let (dir, slot, fps, dropped) = (cap.dir.clone(), cap.slot, cap.fps, cap.repeated());
+    if let Some(w) = stop(*cap, app) {
+        r.finishing.push(w);
+    }
+    Ok(json!({
+        "dir": dir,
+        "seconds": (slot + 1).max(0) as f64 / fps,
+        "frames_dropped": dropped,
+    }))
+}
+
+/// Whether the video of every stopped session is closed.
+pub fn writers_done() -> bool {
+    recorder()
+        .as_ref()
+        .is_none_or(|r| r.finishing.iter().all(|w| w.is_finished()))
+}
+
+/// The session being recorded, for `status`.
+pub fn recording() -> Option<Value> {
+    let c = config()?;
+    let guard = recorder();
+    let cap = guard.as_ref()?.capture.as_ref()?;
+    Some(json!({
+        "dir": cap.dir,
+        "fps": cap.fps,
+        "seconds": now(c) - cap.t0,
+        "frames_dropped": cap.repeated(),
+    }))
+}
+
+const NOT_ON: &str = "recording works only in the recording mode (GLOSSPLAY_RECORD_DIR)";
+
+/// `rec-001`, `rec-002`… in the recording folder, the first that is not there.
+fn new_session_dir(base: &Path) -> PathBuf {
+    (1..)
+        .map(|n| base.join(format!("rec-{n:03}")))
+        .find(|d| !d.exists())
+        .expect("some number is free")
 }
 
 /// Called from `on_exit`: closes the video and the film's sound file.
 pub fn finish(app: &App) {
-    let mut guard = STAGE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(Stage::Recording(cap)) = guard.as_mut() {
-        stop(cap, app);
+    let mut guard = recorder();
+    let Some(r) = guard.as_mut() else { return };
+    if let Some(cap) = r.capture.take()
+        && let Some(w) = stop(*cap, app)
+    {
+        r.finishing.push(w);
     }
-    *guard = Some(Stage::Done);
+    for w in r.finishing.drain(..) {
+        let _ = w.join();
+    }
 }
 
-fn start(c: &Config, app: &mut App, ctx: &egui::Context) -> Stage {
+fn start(
+    c: &Config,
+    app: &mut App,
+    ctx: &egui::Context,
+    dir: PathBuf,
+    fps: f64,
+    auto: bool,
+) -> Result<Box<Capture>, String> {
+    let log = std::fs::File::create(dir.join("timeline.jsonl"))
+        .map_err(|e| format!("cannot write in {}: {e}", dir.display()))?;
+    *session() = Some(Session {
+        dir: dir.clone(),
+        log: Some(log),
+        clips: 0,
+    });
     let mpv = &app.player.mpv;
     // A fresh output makes the first sample of video.wav the position playback is at now.
-    mpv.set("ao-pcm-file", &path(c, "video.wav"));
+    mpv.set("ao-pcm-file", &dir.join("video.wav").to_string_lossy());
     let reloaded = mpv.command(&["ao-reload"]).is_ok();
     let (tx, rx) = std::sync::mpsc::sync_channel::<Frame>(6);
-    let dir = c.dir.clone();
+    let writer_dir = dir.clone();
     let ffmpeg = app.ffmpeg.clone();
-    let fps = c.fps;
-    let writer = std::thread::spawn(move || write_frames(&dir, ffmpeg.as_deref(), fps, rx));
+    let writer = std::thread::spawn(move || write_frames(&writer_dir, ffmpeg.as_deref(), fps, rx));
     let t = now(c);
     // The wall clock lines this recording up with one made by another program at the same time.
     let unix = std::time::SystemTime::now()
@@ -588,10 +779,14 @@ fn start(c: &Config, app: &mut App, ctx: &egui::Context) -> Stage {
         .map_or(0.0, |d| d.as_secs_f64());
     event(
         "start",
-        json!({"pos": app.snap.pos, "ao_reload": reloaded, "fps": c.fps, "unix": unix}),
+        json!({"pos": app.snap.pos, "ao_reload": reloaded, "fps": fps, "unix": unix,
+            "media": app.session.is_some()}),
     );
     ctx.request_repaint();
-    Stage::Recording(Box::new(Capture {
+    Ok(Box::new(Capture {
+        dir,
+        fps,
+        auto,
         t0: t,
         slot: -1,
         pending: None,
@@ -601,7 +796,7 @@ fn start(c: &Config, app: &mut App, ctx: &egui::Context) -> Stage {
         paused: None,
         volumes: (-1.0, -1.0),
         lines: None,
-        dropped: 0,
+        sent: 0,
     }))
 }
 
@@ -619,9 +814,11 @@ fn step(c: &Config, cap: &mut Capture, app: &mut App, ctx: &egui::Context) {
             pixels,
         };
         match cap.frames.try_send(frame) {
-            Ok(()) => cap.slot = slot,
-            Err(TrySendError::Full(_)) => cap.dropped += 1,
-            Err(TrySendError::Disconnected(_)) => {}
+            Ok(()) => {
+                cap.slot = slot;
+                cap.sent += 1;
+            }
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
         }
     }
     let paused = app.snap.paused;
@@ -659,7 +856,7 @@ fn step(c: &Config, cap: &mut Capture, app: &mut App, ctx: &egui::Context) {
     let painter = ctx.layer_painter(layer);
     draw_clicks(c, &painter);
     draw_pointer(&painter);
-    let slot = ((now(c) - cap.t0) * c.fps).round() as i64;
+    let slot = ((now(c) - cap.t0) * cap.fps).round() as i64;
     if slot > cap.slot {
         cap.pending = Some(slot);
         painter.add(video::capture_callback(
@@ -667,25 +864,56 @@ fn step(c: &Config, cap: &mut Capture, app: &mut App, ctx: &egui::Context) {
             cap.shot.clone(),
         ));
     }
+    // Painted after the read-back above, so the window shows it and the recording does not.
+    draw_rec_sign(&painter, ctx.content_rect(), now(c));
     event(
         "pos",
-        json!({"pos": app.snap.pos, "paused": paused, "bytes": written(c)}),
+        json!({"pos": app.snap.pos, "paused": paused, "bytes": written(&cap.dir)}),
     );
     ctx.request_repaint();
 }
 
-fn stop(cap: &mut Capture, app: &App) {
-    // Switching the output closes video.wav, which writes its header.
-    app.player.mpv.set("ao", "null");
-    let (tx, _) = std::sync::mpsc::sync_channel(1);
-    drop(std::mem::replace(&mut cap.frames, tx));
-    if let Some(w) = cap.writer.take() {
-        let _ = w.join();
+/// A red dot and REC in the top right corner, the dot slowly pulsing.
+fn draw_rec_sign(painter: &egui::Painter, screen: egui::Rect, t: f64) {
+    let red = egui::Color32::from_rgb(230, 40, 40);
+    let plate = egui::Rect::from_min_size(
+        egui::pos2(screen.right() - 86.0, screen.top() + 10.0),
+        egui::vec2(72.0, 26.0),
+    );
+    painter.rect_filled(plate, 6.0, egui::Color32::from_black_alpha(170));
+    let pulse = 0.6 + 0.4 * (t * std::f64::consts::PI).sin().abs() as f32;
+    painter.circle_filled(
+        egui::pos2(plate.left() + 15.0, plate.center().y),
+        6.0,
+        red.gamma_multiply(pulse),
+    );
+    painter.text(
+        egui::pos2(plate.left() + 28.0, plate.center().y),
+        egui::Align2::LEFT_CENTER,
+        "REC",
+        egui::FontId::proportional(14.0),
+        egui::Color32::WHITE,
+    );
+}
+
+/// Ends the session: closes the film's sound file and lets ffmpeg finish the video.
+fn stop(mut cap: Capture, app: &App) -> Option<std::thread::JoinHandle<()>> {
+    // A fresh output closes video.wav, which writes its header; until the next session the
+    // sound goes to a scratch file again.
+    if let Some(c) = config() {
+        app.player
+            .mpv
+            .set("ao-pcm-file", &path(c, "video-before.wav"));
+        app.player.mpv.command(&["ao-reload"]).ok();
     }
     event(
         "stop",
-        json!({"pos": app.snap.pos, "last_slot": cap.slot, "dropped": cap.dropped}),
+        json!({"pos": app.snap.pos, "last_slot": cap.slot, "dropped": cap.repeated()}),
     );
+    *session() = None;
+    let (tx, _) = std::sync::mpsc::sync_channel(1);
+    drop(std::mem::replace(&mut cap.frames, tx));
+    cap.writer.take()
 }
 
 /// Feeds frames to ffmpeg; a slot without a frame of its own repeats the one before.

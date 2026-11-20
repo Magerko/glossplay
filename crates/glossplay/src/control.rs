@@ -333,6 +333,7 @@ fn time_limit(name: &str, args: &Value) -> Duration {
         "select_subtitles" => Duration::from_secs(90),
         "click_word" => Duration::from_secs(20),
         "pointer" => Duration::from_secs(120),
+        "record_stop" => Duration::from_secs(60),
         _ => Duration::from_secs(10),
     }
 }
@@ -488,6 +489,12 @@ fn run_tool(
             now(crate::info::as_json(&sections))
         }
         "pointer" => pointer(ctx, args),
+        "record_start" => {
+            let dir = opt_str(args, "dir")?.map(PathBuf::from);
+            let fps = opt_f64(args, "fps")?;
+            now(crate::record::start_session(app, ctx, dir, fps)?)
+        }
+        "record_stop" => record_stop(app, args),
         _ => Err(format!("{name} is not implemented")),
     }
 }
@@ -1598,6 +1605,18 @@ fn screenshot(_app: &mut App, args: &Value) -> Result<Outcome, String> {
     later("screenshot", args, wait)
 }
 
+fn record_stop(app: &mut App, args: &Value) -> Result<Outcome, String> {
+    let stopped = crate::record::stop_session(app)?;
+    // Answered once ffmpeg has closed the video, so the files can be used at once.
+    let wait: Wait = Box::new(move |_, _, late| {
+        if crate::record::writers_done() {
+            return Some(Ok(stopped.clone()));
+        }
+        late.then(|| Err("the video was not closed in time".into()))
+    });
+    later("record_stop", args, wait)
+}
+
 fn save_frame(app: &mut App, args: &Value) -> Result<Outcome, String> {
     session(app)?;
     let subtitles = opt_bool(args, "subtitles")?.unwrap_or(false);
@@ -1668,6 +1687,7 @@ fn status(app: &App, ctx: &egui::Context) -> Value {
         },
         "auto_pause": app.trainer.autopause,
         "buffering": app.buffering_shown,
+        "recording": crate::record::recording(),
         "video_info_open": app.info_open,
         "voice_over": dub_json(app),
         "speech_recognition": asr_json(app),
@@ -1961,6 +1981,30 @@ pub fn tool_list() -> Value {
             &["action"]
         ),
         tool(
+            "record_start",
+            "Start recording (recording mode)",
+            "Only with GLOSSPLAY_RECORD_DIR set: starts recording at once, whatever is on screen \
+             (the start screen too): the window into window.mkv, the film's sound into \
+             video.wav, every voice-over clip played into a voice-NNN-<line>.wav of its own, and \
+             timeline.jsonl tying them together. Each recording has a folder of its own: dir, \
+             or a new rec-NNN in GLOSSPLAY_RECORD_DIR. The window shows a red REC sign that the \
+             recording does not have. One recording at a time.",
+            json!({
+                "dir": {"type": "string", "description": "The folder to record into; made if missing, and must not hold a recording already."},
+                "fps": {"type": "number", "minimum": 1, "maximum": 120, "description": "Frames a second of window.mkv (30 by default)."},
+            }),
+            &[]
+        ),
+        tool(
+            "record_stop",
+            "Stop recording",
+            "Stops the recording and answers once its files are closed, with the folder, the \
+             seconds recorded and frames_dropped: the frames of the video that repeat the one \
+             before because the window was not drawn or encoded in time.",
+            none.clone(),
+            &[]
+        ),
+        tool(
             "press_key",
             "Press a key",
             "Does what a player shortcut does: space (play/pause), left/right (5 s), up/down \
@@ -2021,7 +2065,7 @@ mod tests {
     use super::*;
 
     /// Every name `run_tool` handles; kept here so a tool cannot be listed but not run.
-    const RUN: [&str; 30] = [
+    const RUN: [&str; 32] = [
         "open",
         "play",
         "pause",
@@ -2052,6 +2096,8 @@ mod tests {
         "pointer",
         "save_frame",
         "video_info",
+        "record_start",
+        "record_stop",
     ];
 
     fn check_schema(path: &str, s: &Value) {
@@ -2144,7 +2190,7 @@ mod tests {
         let Some(Action::Send(r)) = actions.into_iter().next() else {
             panic!("no answer");
         };
-        assert_eq!(r["result"]["tools"].as_array().unwrap().len(), 30);
+        assert_eq!(r["result"]["tools"].as_array().unwrap().len(), 32);
         let actions = p.handle(
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"click_word","arguments":{"index":3}}}"#,
         );

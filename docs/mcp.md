@@ -92,7 +92,7 @@ All times are in seconds. Results are JSON text.
 | `seek` | `seconds`, `exact?` (true) | Jumps there; `exact: false` lands on a keyframe, faster. |
 | `set_speed` | `speed` (0.25–4) | Playback speed. |
 | `set_volume` | `percent` (0–150), `muted?` | Player volume. |
-| `status` | — | Position, duration, pause, speed, volume, video size and decoder, title, languages, window geometry, open card and dialogs, voice-over and recognition state, whether a stream is buffering (`buffering`), last message. |
+| `status` | — | Position, duration, pause, speed, volume, video size and decoder, title, languages, window geometry, open card and dialogs, voice-over and recognition state, whether a stream is buffering (`buffering`), the recording under way (`recording`: folder, fps, seconds, or `null`), last message. |
 | `video_info` | — | What the Video info window shows, by section: file (title, source — a link by its host only — format, duration, size), video (codec, resolution, frame rate, bitrate, pixel format, colour and HDR, hardware decoding), sound, subtitles, playback (dropped and late frames, output frame rate) and, for a stream, network (cache state, seconds and bytes buffered ahead, download speed). |
 
 ### Subtitles and languages
@@ -138,6 +138,8 @@ All times are in seconds. Results are JSON text.
 | `screenshot` | `path`, `overwrite?` | Saves the window as drawn (with subtitles, cards, dialogs) to a PNG. |
 | `save_frame` | `subtitles?` (false), `path?`, `overwrite?` | Saves the frame on screen to a PNG as the picture's right-click menu does: without subtitles at the video's own size (mpv's screenshot), or with them as the window shows the picture, the control bar and anything over the picture left out. Without `path` it goes to the frames folder of Settings → Player (`Pictures/Glossplay` by default) under a name made of the title and the moment. Answers with the file and its size once it is written. |
 | `pointer` | `action`: `move`, `click`, `double_click`, `drag`, `type`, `key`, `paste`, `hide`, `where`; `x?`, `y?`, `seconds?`, `text?`, `replace?`, `key?` | Recording mode only (`GLOSSPLAY_RECORD_DIR`): moves a pointer of its own over the window in window pixels and clicks, drags (from where it is), types into the focused field (over `seconds`; with `replace: true` it first selects all there, so the text takes its place), presses `key` with its modifiers (`ctrl+a`, `backspace`, `delete`, `enter`, `escape`, `tab`, `home`, `end`, `left`, `right`, `up`, `down`; `ctrl` means ⌘ on macOS) or pastes `text` as Ctrl+V would, as a mouse and keyboard would; `where` lists the named places on screen (buttons, sliders, the URL field, transcript rows, torrent files) with their centres; the recording shows it as an arrow with a ring at each click. Answers when the move is over. |
+| `record_start` | `dir?`, `fps?` (1–120, 30) | Recording mode only: starts a recording at once, whatever is on screen, the start screen too. Each recording has a folder of its own: `dir` (made if missing; one that already holds a recording is refused) or a new `rec-001`, `rec-002`… in `GLOSSPLAY_RECORD_DIR`. Answers with the folder and the frame rate. One recording at a time. See [Recording](#recording). |
+| `record_stop` | — | Stops the recording and answers once its files are closed, with the folder, the seconds recorded and `frames_dropped`, the frames of the video that repeat the one before because the window was not drawn or encoded in time (the window draws no faster than the screen refreshes, so 60 fps needs a 60 Hz screen and a machine that keeps up). |
 
 ## Example: setting up a shot
 
@@ -156,6 +158,89 @@ The agent prepares the scene; the recorder captures the area `status` reports.
    `search_transcript {text: "entropy"}`.
 8. `screenshot {path: "D:\\Shots\\sidebar.png"}` for a still; stop the recorder.
 
+## Recording
+
+For demo videos the player can record itself, picture and sound, without anything being
+played aloud. Start it with `GLOSSPLAY_RECORD_DIR` set to a folder; that only allows
+recording and says where it goes: nothing is recorded until `record_start`.
+
+```json
+{
+  "mcpServers": {
+    "glossplay": {
+      "command": "C:\Program Files\Glossplay\glossplay.exe",
+      "args": ["--mcp"],
+      "env": { "GLOSSPLAY_RECORD_DIR": "D:\Recordings" }
+    }
+  }
+}
+```
+
+While a recording runs, a red **REC** sign shows in the window's top right corner; it is
+drawn after the frame is taken, so the recording itself does not have it. Between recordings
+the film's sound goes into a scratch file, `video-before.wav` in `GLOSSPLAY_RECORD_DIR`, which
+is started afresh once it passes 64 MB.
+
+A recording's folder holds:
+
+| File | What it is |
+|---|---|
+| `window.mkv` | The window, at the asked frame rate, from the moment of `record_start`. A frame that was not drawn or encoded in time repeats the one before, so the video keeps time. |
+| `video.wav` | The film's sound, 48 kHz stereo float, at the volume set in the player. Sample 0 is where the film was at the `start` line. |
+| `voice-NNN-LLLLLLL.wav` | One voice-over clip as it was played: `NNN` counts the clips of the recording, `LLLLLLL` is the line's start in ms. A line spoken twice gets two files. |
+| `timeline.jsonl` | One JSON object a line, `t` in seconds of the player's clock, `ev` the kind. |
+| `ffmpeg.log` | What the encoder said, empty when all went well. |
+
+Lines of `timeline.jsonl` worth knowing:
+
+| `ev` | Fields |
+|---|---|
+| `start` | `pos` (ms of the film), `fps`, `unix` (wall clock, to line up with another recorder), `media` (a file was open) |
+| `pos` | every frame: `pos`, `paused`, `bytes.main` (size of `video.wav` then) |
+| `pause`, `play`, `volume`, `lines` | playback state, volumes, the subtitle lines on screen |
+| `clip` | a voice clip about to play: `line`, `text`, `clip_ms`, `file` |
+| `clip_started` | the clip's first sample sounded: `file`, `line`, `started_at` (ms of the film), `voice_pos` (seconds into the clip; the file starts there) |
+| `mcp`, `pointer`, `click` | the calls and pointer actions, for cutting the video to them |
+| `stop` | `pos`, `last_slot` (the last frame), `dropped` |
+
+### Putting the sound together
+
+mpv writes the sound files as fast as it decodes, not in step with the clock: `video.wav`
+holds only what was played, without the paused stretches, and runs somewhat ahead of the
+picture. So the track for `window.mkv` is built from the timeline (track time 0 is the `t`
+of `start`):
+
+1. **Reading the files.** Samples are 48 kHz stereo 32-bit float, 8 bytes a frame, after the
+   header; find the `data` chunk rather than assume its size (mpv writes a 68-byte header).
+2. **Stretches of playback.** Split the `pos` lines where `paused` turns on and at seeks (the
+   playhead jumps against `t` and stays moved). Within a stretch the playhead runs with the
+   clock, so one offset `k = median(pos − t)` turns film time into track time.
+3. **The film.** In a stretch, for the `pos` lines where `bytes.main` grew, take
+   `bytes.main` as seconds of sound (minus the header, / 8 / 48000) minus `pos`; mpv writes
+   ahead, so the smallest of these (a low percentile), `c`, is the true lead. The sound of
+   film second `p` is then at second `p + c` of `video.wav` and goes to track time `p − k`.
+   Bytes written before a seek belong to the old place: start the stretch no earlier than the
+   size the file had at the seek, and end it at the last playing moment.
+4. **The voice.** For every `clip_started`, take its `file`: sample 0 is about one frame
+   (1/30 s) into the clip, and the clip's start sounded at film second `started_at`. Turn
+   film time into track time with the `k` of the stretches after `t`, so a pause in the middle
+   of a clip leaves the gap it left on screen. Do not place a voice file by how the file
+   sizes grew: the voice player writes ahead too, and the phrase lands early that way.
+5. Add the two (they are already at the volumes heard), keep the peak below 1, and mux:
+   `ffmpeg -i window.mkv -i mix.wav -c:v copy -c:a aac out.mp4`.
+
+The player does not write that mix itself: mpv's file output gives no moment-by-moment
+timing to mix by while playing, so the mix is made afterwards from the timeline.
+
+### Before `record_start`
+
+The environment variables of earlier versions still work and start a recording by
+themselves, straight into `GLOSSPLAY_RECORD_DIR`: `GLOSSPLAY_RECORD_NOW=1` at once, on the
+start screen too; `GLOSSPLAY_RECORD_FROM` and `GLOSSPLAY_RECORD_TO` (seconds of the film)
+when playback reaches the first and until the second. `GLOSSPLAY_RECORD_FPS` sets the frame
+rate a recording gets when `record_start` does not ask for one. `record_stop` stops such a
+recording too; a recording asked for with `record_start` before it began takes its place.
+
 ## Safety and limits
 
 - MCP is off unless the player is started with `--mcp`. It opens no network port: the only
@@ -165,6 +250,9 @@ The agent prepares the scene; the recorder captures the area `status` reports.
   in a folder that must exist, and replaces an existing file only with `overwrite: true`.
   `save_frame` does the same with a path; without one it writes a new file in the frames
   folder of the settings and never replaces one there.
+  `record_start` writes only in the folder it is given or in a new one inside
+  `GLOSSPLAY_RECORD_DIR`, never into a folder that already holds a recording; without
+  `GLOSSPLAY_RECORD_DIR` it refuses.
   `save_word` writes to the player's word list and keeps a still of the video in the
   player's data folder, as the Save button does.
 - `set_languages`, `set_ui_language` and `voice_over` change settings as the Settings window

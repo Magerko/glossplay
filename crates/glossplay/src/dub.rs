@@ -1054,6 +1054,8 @@ struct Current {
     cmd_pos: Ms,
     started_at: Option<Ms>,
     index: usize,
+    /// The file of the recording the clip is written to, in the recording mode.
+    record_file: Option<String>,
 }
 
 struct Hold {
@@ -1234,7 +1236,7 @@ impl Player {
                     crate::record::event(
                         "clip_started",
                         serde_json::json!({"line": c.unit.start, "started_at": started_at,
-                            "pos": pos, "voice_pos": t}),
+                            "pos": pos, "voice_pos": t, "file": c.record_file}),
                     );
                 }
                 _ if c.cmd_at.elapsed() > Duration::from_secs(3) => {
@@ -1288,7 +1290,7 @@ impl Player {
             });
             s.stats.played.len() - 1
         };
-        if let Some(file) = record {
+        if let Some(file) = &record {
             crate::record::event(
                 "clip",
                 serde_json::json!({"line": unit.start, "pos": pos, "file": file,
@@ -1305,6 +1307,7 @@ impl Player {
             cmd_pos: pos,
             started_at: None,
             index,
+            record_file: record,
         });
     }
 
