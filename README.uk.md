@@ -2,6 +2,13 @@
 
 [English](README.md) · [Русский](README.ru.md) · **Українська** · [中文](README.zh.md)
 
+[![Реліз](https://img.shields.io/github/v/release/Magerko/glossplay?label=%D1%80%D0%B5%D0%BB%D1%96%D0%B7&color=5EC9A8)](https://github.com/Magerko/glossplay/releases/latest)
+[![Завантаження](https://img.shields.io/github/downloads/Magerko/glossplay/total?label=%D0%B7%D0%B0%D0%B2%D0%B0%D0%BD%D1%82%D0%B0%D0%B6%D0%B5%D0%BD%D0%BD%D1%8F&color=5EC9A8)](https://github.com/Magerko/glossplay/releases)
+[![Збірка](https://img.shields.io/github/actions/workflow/status/Magerko/glossplay/ci.yml?branch=main&label=%D0%B7%D0%B1%D1%96%D1%80%D0%BA%D0%B0)](https://github.com/Magerko/glossplay/actions/workflows/ci.yml)
+[![Ліцензія](https://img.shields.io/github/license/Magerko/glossplay?color=F6D680)](LICENSE)
+[![Зірки](https://img.shields.io/github/stars/Magerko/glossplay?style=flat&color=F6D680)](https://github.com/Magerko/glossplay/stargazers)
+![Платформи](https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-16181D?logo=rust&logoColor=white&label=Rust)
+
 Відеоплеєр для тих, хто вивчає мови за фільмами та роликами. Показує репліку в оригіналі разом
 із перекладом, сам створює субтитри до відео, у яких їх немає, пояснює будь-яке слово після
 кліку й зберігає слова, які ви хочете запам'ятати.
@@ -213,7 +220,13 @@ Anki запущеним. Колода й тип запису «Glossplay» ст�
 | `M` | Без звуку |
 | `Ctrl+O` | Відкрити файл |
 | `Ctrl+F` | Пошук у власних джерелах (з'являється, коли джерела налаштовано) |
-| `Esc` | Закрити картку слова, вийти з повного екрана |
+| `Ctrl+V` | Відкрити скопійоване посилання, magnet-посилання або шлях до файлу (коли курсор не в полі введення) |
+| `Esc` | Закрити картку слова, діалог або вікно пошуку, вийти з повного екрана |
+
+Літерні клавіші працюють за своїм місцем на клавіатурі за будь-якої розкладки: і в українській
+`S` (там це «і») повторює репліку. Поки відкрито діалог, діє лише `Esc`; поки ви друкуєте
+в полі — лише `Esc`, `Ctrl+O` і `Ctrl+F`. Magnet-посилання відкривається через TorrServer,
+тому потрібні налаштовані джерела.
 
 Файли субтитрів поруч із відео (`Movie.srt`, `Movie.en.srt`, `Movie.uk.ass`) підхоплюються
 автоматично. Файл субтитрів можна й просто перетягнути у вікно.

@@ -2,6 +2,13 @@
 
 **English** · [Русский](README.ru.md) · [Українська](README.uk.md) · [中文](README.zh.md)
 
+[![Release](https://img.shields.io/github/v/release/Magerko/glossplay?label=release&color=5EC9A8)](https://github.com/Magerko/glossplay/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Magerko/glossplay/total?label=downloads&color=5EC9A8)](https://github.com/Magerko/glossplay/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/Magerko/glossplay/ci.yml?branch=main&label=build)](https://github.com/Magerko/glossplay/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Magerko/glossplay?color=F6D680)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Magerko/glossplay?style=flat&color=F6D680)](https://github.com/Magerko/glossplay/stargazers)
+![Platforms](https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-16181D?logo=rust&logoColor=white&label=Rust)
+
 A video player for people who learn languages by watching. It shows the original line and its
 translation together, writes subtitles for videos that have none, explains any word you click,
 and keeps the words you want to remember.
@@ -214,7 +221,13 @@ key.
 | `M` | Mute |
 | `Ctrl+O` | Open a file |
 | `Ctrl+F` | Search your sources (shown when sources are set up) |
-| `Esc` | Close the word card, leave full screen |
+| `Ctrl+V` | Open a copied link, magnet link or file path (when no text field has the cursor) |
+| `Esc` | Close the word card, a dialog or the search window; leave full screen |
+
+Letter keys work by their place on the keyboard, whatever the layout: with a Russian layout
+`S` still repeats the line. While a dialog is open only `Esc` works; while you type in a field
+only `Esc`, `Ctrl+O` and `Ctrl+F` do. A magnet link opens through TorrServer, so it needs the
+sources set up.
 
 Subtitle files next to the video (`Movie.srt`, `Movie.en.srt`, `Movie.ru.ass`) are picked up
 automatically. You can also drop a subtitle file on the window.

@@ -2,6 +2,13 @@
 
 [English](README.md) · [Русский](README.ru.md) · [Українська](README.uk.md) · **中文**
 
+[![版本](https://img.shields.io/github/v/release/Magerko/glossplay?label=%E7%89%88%E6%9C%AC&color=5EC9A8)](https://github.com/Magerko/glossplay/releases/latest)
+[![下载](https://img.shields.io/github/downloads/Magerko/glossplay/total?label=%E4%B8%8B%E8%BD%BD&color=5EC9A8)](https://github.com/Magerko/glossplay/releases)
+[![构建](https://img.shields.io/github/actions/workflow/status/Magerko/glossplay/ci.yml?branch=main&label=%E6%9E%84%E5%BB%BA)](https://github.com/Magerko/glossplay/actions/workflows/ci.yml)
+[![许可证](https://img.shields.io/github/license/Magerko/glossplay?color=F6D680)](LICENSE)
+[![星标](https://img.shields.io/github/stars/Magerko/glossplay?style=flat&color=F6D680)](https://github.com/Magerko/glossplay/stargazers)
+![平台](https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-16181D?logo=rust&logoColor=white&label=Rust)
+
 一款为“看视频学语言”的人设计的视频播放器。它同时显示原文台词和译文，能为没有字幕的视频自动生成字幕，
 点击任意单词即可看到解释，并帮你保存想记住的单词。
 
@@ -185,7 +192,12 @@ Glossplay 本身不含任何来源，也不推荐任何来源。往自己的搜�
 | `M` | 静音 |
 | `Ctrl+O` | 打开文件 |
 | `Ctrl+F` | 在自己的来源中搜索（配置好来源后显示） |
-| `Esc` | 关闭单词卡片、退出全屏 |
+| `Ctrl+V` | 打开复制的链接、magnet 链接或文件路径（光标不在输入框中时） |
+| `Esc` | 关闭单词卡片、对话框或搜索窗口，退出全屏 |
+
+字母快捷键按键盘上的位置识别，与当前输入法和键盘布局无关：例如在俄语布局下 `S` 依然是重复当前这一句。
+对话框打开时只有 `Esc` 有效；在输入框中打字时只有 `Esc`、`Ctrl+O` 和 `Ctrl+F` 有效。
+magnet 链接通过 TorrServer 打开，因此需要先配置好来源。
 
 与视频放在一起的字幕文件（`Movie.srt`、`Movie.en.srt`、`Movie.zh.ass`）会被自动加载。
 也可以直接把字幕文件拖进窗口。

@@ -2,6 +2,13 @@
 
 [English](README.md) · **Русский** · [Українська](README.uk.md) · [中文](README.zh.md)
 
+[![Релиз](https://img.shields.io/github/v/release/Magerko/glossplay?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=5EC9A8)](https://github.com/Magerko/glossplay/releases/latest)
+[![Загрузки](https://img.shields.io/github/downloads/Magerko/glossplay/total?label=%D0%B7%D0%B0%D0%B3%D1%80%D1%83%D0%B7%D0%BA%D0%B8&color=5EC9A8)](https://github.com/Magerko/glossplay/releases)
+[![Сборка](https://img.shields.io/github/actions/workflow/status/Magerko/glossplay/ci.yml?branch=main&label=%D1%81%D0%B1%D0%BE%D1%80%D0%BA%D0%B0)](https://github.com/Magerko/glossplay/actions/workflows/ci.yml)
+[![Лицензия](https://img.shields.io/github/license/Magerko/glossplay?color=F6D680)](LICENSE)
+[![Звёзды](https://img.shields.io/github/stars/Magerko/glossplay?style=flat&color=F6D680)](https://github.com/Magerko/glossplay/stargazers)
+![Платформы](https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-16181D?logo=rust&logoColor=white&label=Rust)
+
 Видеоплеер для тех, кто учит языки по фильмам и роликам. Показывает реплику в оригинале вместе
 с переводом, сам пишет субтитры к видео, у которых их нет, объясняет любое слово по клику
 и хранит слова, которые вы хотите запомнить.
@@ -214,7 +221,13 @@ Torznab ([Jackett](https://github.com/Jackett/Jackett), [Prowlarr](https://prowl
 | `M` | Без звука |
 | `Ctrl+O` | Открыть файл |
 | `Ctrl+F` | Поиск по своим источникам (показывается, когда источники настроены) |
-| `Esc` | Закрыть карточку слова, выйти из полного экрана |
+| `Ctrl+V` | Открыть скопированную ссылку, magnet-ссылку или путь к файлу (когда курсор не в поле ввода) |
+| `Esc` | Закрыть карточку слова, диалог или окно поиска, выйти из полного экрана |
+
+Буквенные клавиши работают по своему месту на клавиатуре при любой раскладке: и в русской
+`S` (там это «ы») повторяет реплику. Пока открыт диалог, действует только `Esc`; пока вы
+печатаете в поле — только `Esc`, `Ctrl+O` и `Ctrl+F`. Magnet-ссылка открывается через
+TorrServer, поэтому нужны настроенные источники.
 
 Файлы субтитров рядом с видео (`Movie.srt`, `Movie.en.srt`, `Movie.ru.ass`) подхватываются
 автоматически. Файл субтитров можно и просто перетащить в окно.
