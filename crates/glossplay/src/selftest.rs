@@ -46,6 +46,8 @@ pub struct Plan {
     pub sub_scale: Option<f32>,
     pub sub_position: Option<String>,
     pub sub_margin: Option<f32>,
+    /// `--theme dark|light|system` for this run.
+    pub theme: Option<String>,
     /// No file: the start screen, for the screenshot.
     pub empty: bool,
     /// Show the saved words in the sidebar.

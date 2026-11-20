@@ -6,7 +6,7 @@ use crate::i18n::{Tr, t, tf};
 use crate::jobs::Msg;
 use crate::session::{StreamSub, sidecar_lang};
 use crate::setup_text;
-use crate::theme::{ACCENT, DANGER, MUTED, RAISED, TEXT};
+use crate::theme;
 use eframe::egui::{self, Align2, Color32, FontId, Id, Key, Rect, RichText, Sense, pos2, vec2};
 use gp_ai::AiError;
 use gp_ai::torrserver::{self, Source, Torrent, TorrentFile};
@@ -517,20 +517,20 @@ fn search_contents(s: &mut SearchUi, ui: &mut egui::Ui) -> Option<Action> {
         View::Searching => busy(ui, t(Tr::Searching), &s.query),
         View::Opening => busy(ui, t(Tr::GettingFiles), &s.opening_title),
         View::Failed(e) => {
-            ui.label(RichText::new(e).color(DANGER));
+            ui.label(RichText::new(e).color(theme::danger()));
             if !s.results.is_empty() && ui.button(t(Tr::BackToResults)).clicked() {
                 action = Some(Action::Back);
             }
         }
         View::Results if s.results.is_empty() => {
             if s.searched {
-                ui.label(RichText::new(t(Tr::NothingFound)).color(MUTED));
+                ui.label(RichText::new(t(Tr::NothingFound)).color(theme::muted()));
             }
         }
         View::Results => {
             ui.label(
                 RichText::new(tf(Tr::FoundCount, &[&s.results.len()]))
-                    .color(MUTED)
+                    .color(theme::muted())
                     .small(),
             );
             let cells: Vec<[String; 5]> = s
@@ -585,7 +585,7 @@ fn search_contents(s: &mut SearchUi, ui: &mut egui::Ui) -> Option<Action> {
             });
             ui.label(
                 RichText::new(tf(Tr::ChooseFile, &[&videos.len()]))
-                    .color(MUTED)
+                    .color(theme::muted())
                     .small(),
             );
             let cells: Vec<[String; 2]> = videos
@@ -616,7 +616,7 @@ fn busy(ui: &mut egui::Ui, what: &str, about: &str) {
         ui.spinner();
         ui.label(what);
     });
-    ui.label(RichText::new(about).color(MUTED).small());
+    ui.label(RichText::new(about).color(theme::muted()).small());
 }
 
 /// A list with columns; `widths` of 0 take the room left. Returns the row clicked and
@@ -659,7 +659,13 @@ fn table<const N: usize>(
         }
     };
     let (head, _) = ui.allocate_exact_size(vec2(full, 18.0), Sense::hover());
-    draw(ui, head, headers, FontId::proportional(12.0), MUTED);
+    draw(
+        ui,
+        head,
+        headers,
+        FontId::proportional(12.0),
+        theme::muted(),
+    );
     let spacing = ui.spacing().item_spacing.y;
     let mut area = egui::ScrollArea::vertical().auto_shrink(false);
     if *scroll_to {
@@ -673,18 +679,18 @@ fn table<const N: usize>(
             let (rect, resp) =
                 ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
             if i == selected {
-                ui.painter().rect_filled(rect, 5.0, RAISED);
+                ui.painter().rect_filled(rect, 5.0, theme::raised());
                 ui.painter().rect_filled(
                     Rect::from_min_size(rect.min, vec2(3.0, ROW)),
                     2.0,
-                    ACCENT,
+                    theme::accent(),
                 );
             } else if resp.hovered() {
                 ui.painter()
-                    .rect_filled(rect, 5.0, RAISED.gamma_multiply(0.6));
+                    .rect_filled(rect, 5.0, theme::raised().gamma_multiply(0.6));
             }
             let texts: Vec<&str> = cells[i].iter().map(String::as_str).collect();
-            draw(ui, rect, &texts, FontId::proportional(14.0), TEXT);
+            draw(ui, rect, &texts, FontId::proportional(14.0), theme::text());
             let resp = resp.on_hover_text(&cells[i][0]);
             if resp.double_clicked() {
                 hit = Some((i, true));
@@ -702,7 +708,14 @@ pub fn sources_section(ui: &mut egui::Ui, draft: &mut Config, s: &SearchUi, wide
         let at = Rect::from_min_size(ui.cursor().min - vec2(0.0, 32.0), vec2(1.0, 1.0));
         ui.scroll_to_rect(at, Some(egui::Align::TOP));
     }
-    ui.add(egui::Label::new(RichText::new(t(Tr::SourcesNote)).color(MUTED).small()).wrap());
+    ui.add(
+        egui::Label::new(
+            RichText::new(t(Tr::SourcesNote))
+                .color(theme::muted())
+                .small(),
+        )
+        .wrap(),
+    );
     egui::Grid::new("sources")
         .num_columns(2)
         .spacing([16.0, 8.0])
@@ -743,8 +756,8 @@ pub fn sources_section(ui: &mut egui::Ui, draft: &mut Config, s: &SearchUi, wide
     if let Check::Done(lines) = &s.check {
         for line in lines {
             match line {
-                Ok(text) => ui.label(RichText::new(text).color(ACCENT)),
-                Err(text) => ui.label(RichText::new(text).color(DANGER)),
+                Ok(text) => ui.label(RichText::new(text).color(theme::accent())),
+                Err(text) => ui.label(RichText::new(text).color(theme::danger())),
             };
         }
     }

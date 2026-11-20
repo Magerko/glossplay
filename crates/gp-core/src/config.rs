@@ -47,6 +47,8 @@ pub struct General {
     pub ui_scale: f32,
     /// Windows only: "Open with" and context-menu entries in Explorer.
     pub shell_integration: bool,
+    /// "dark", "light" or "system"; anything else means dark.
+    pub theme: String,
 }
 
 impl Default for General {
@@ -57,6 +59,7 @@ impl Default for General {
             ui_lang: "auto".into(),
             ui_scale: 1.0,
             shell_integration: false,
+            theme: "dark".into(),
         }
     }
 }
@@ -270,6 +273,7 @@ mod tests {
         assert_eq!(c.general.native_lang, "de");
         assert_eq!(c.general.learn_lang, "en");
         assert_eq!(c.general.ui_lang, "auto");
+        assert_eq!(c.general.theme, "dark");
         assert!(!c.general.shell_integration);
         let on = Config::from_toml("[general]\nshell_integration = true\n").unwrap();
         assert!(on.general.shell_integration);

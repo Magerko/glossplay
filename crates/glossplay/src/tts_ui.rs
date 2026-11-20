@@ -7,7 +7,7 @@ use crate::dub::{Dub, DubConfig, Source};
 use crate::i18n::{Tr, t, tf};
 use crate::jobs::Msg;
 use crate::setup_text as text;
-use crate::theme::{ACCENT, DANGER, MUTED, SUB_SECONDARY};
+use crate::theme;
 use crate::tts_setup::{self, ENGINE_AVAILABLE, Engine, TtsInstall};
 use crate::ui::dialog_height;
 use eframe::egui::{self, Align, Align2, RichText, vec2};
@@ -312,7 +312,7 @@ impl App {
                         plan(ui, e);
                         warnings(ui, e);
                         if let Some(i) = &s.installed {
-                            ui.label(RichText::new(i.status()).color(MUTED));
+                            ui.label(RichText::new(i.status()).color(theme::muted()));
                         }
                         ui.add_space(6.0);
                         licences(ui);
@@ -331,7 +331,11 @@ impl App {
                         }
                         match &s.outcome {
                             Some(Outcome::Ready { enabled }) => {
-                                ui.label(RichText::new(t(Tr::TtsReady)).color(ACCENT).strong());
+                                ui.label(
+                                    RichText::new(t(Tr::TtsReady))
+                                        .color(theme::accent())
+                                        .strong(),
+                                );
                                 ui.label(if *enabled {
                                     t(Tr::TtsReadyOn)
                                 } else {
@@ -344,10 +348,10 @@ impl App {
                                 return;
                             }
                             Some(Outcome::Failed(e)) => {
-                                ui.label(RichText::new(e).color(DANGER));
+                                ui.label(RichText::new(e).color(theme::danger()));
                             }
                             Some(Outcome::Cancelled) => {
-                                ui.label(RichText::new(t(Tr::Cancelled)).color(MUTED));
+                                ui.label(RichText::new(t(Tr::Cancelled)).color(theme::muted()));
                             }
                             None => {}
                         }
@@ -413,7 +417,7 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
     let size = tts_setup::component(tts_setup::resolve(&draft.tts.install_engine)).download_size();
     ui.label(
         RichText::new(format!("{}: {}", t(Tr::RowTotal), text::size(size)))
-            .color(MUTED)
+            .color(theme::muted())
             .small(),
     );
     ui.horizontal(|ui| {
@@ -435,7 +439,7 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
             action = Some(Action::Remove);
         }
     });
-    ui.label(RichText::new(text::tts_language(&draft.general.native_lang)).color(MUTED));
+    ui.label(RichText::new(text::tts_language(&draft.general.native_lang)).color(theme::muted()));
     egui::Grid::new("tts-volumes")
         .num_columns(2)
         .spacing([16.0, 6.0])
@@ -447,7 +451,7 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
             ui.add(egui::Slider::new(&mut draft.tts.voice_volume, 0.0..=150.0).integer());
             ui.end_row();
         });
-    ui.label(RichText::new(t(Tr::TtsAdvanced)).color(MUTED));
+    ui.label(RichText::new(t(Tr::TtsAdvanced)).color(theme::muted()));
     egui::Grid::new("tts-own")
         .num_columns(2)
         .spacing([16.0, 6.0])
@@ -503,7 +507,7 @@ fn hardware_line(ui: &mut egui::Ui) {
         },
         None => t(Tr::CheckingHardware).to_owned(),
     };
-    ui.label(RichText::new(line).color(MUTED));
+    ui.label(RichText::new(line).color(theme::muted()));
 }
 
 fn plan(ui: &mut egui::Ui, engine: Engine) {
@@ -529,7 +533,7 @@ fn plan(ui: &mut egui::Ui, engine: Engine) {
             components::space_still_needed(&c),
             components::free_space(&root),
         ))
-        .color(MUTED),
+        .color(theme::muted()),
     );
     ui.label(
         RichText::new(format!(
@@ -537,15 +541,19 @@ fn plan(ui: &mut egui::Ui, engine: Engine) {
             t(Tr::RowPlace),
             components::dir(&c.id).display()
         ))
-        .color(MUTED)
+        .color(theme::muted())
         .small(),
     );
-    ui.label(RichText::new(t(Tr::TtsSources)).color(MUTED).small());
+    ui.label(
+        RichText::new(t(Tr::TtsSources))
+            .color(theme::muted())
+            .small(),
+    );
 }
 
 fn warnings(ui: &mut egui::Ui, engine: Engine) {
     let mut warn = |t: &str| {
-        ui.label(RichText::new(t).color(SUB_SECONDARY));
+        ui.label(RichText::new(t).color(theme::hint()));
     };
     if !ENGINE_AVAILABLE {
         warn(t(Tr::TtsNoEngineHere));
@@ -569,10 +577,18 @@ fn licences(ui: &mut egui::Ui) {
         .inner_margin(10)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new(t(Tr::TtsLicenceNc)).strong().color(DANGER));
+            ui.label(
+                RichText::new(t(Tr::TtsLicenceNc))
+                    .strong()
+                    .color(theme::danger()),
+            );
             ui.label(RichText::new(t(Tr::TtsNoImpersonation)).strong());
             ui.label(t(Tr::TtsLicenceBoson));
-            ui.label(RichText::new(t(Tr::TtsLicenceEngine)).color(MUTED).small());
+            ui.label(
+                RichText::new(t(Tr::TtsLicenceEngine))
+                    .color(theme::muted())
+                    .small(),
+            );
             ui.horizontal_wrapped(|ui| {
                 ui.hyperlink_to(text::TTS_LINK_CC, text::TTS_URL_CC);
                 ui.label("·");
@@ -592,7 +608,7 @@ fn progress(ui: &mut egui::Ui, p: &Progress) {
     );
     ui.label(
         RichText::new(text::file_line(&stage, p.file_done, p.file_total))
-            .color(MUTED)
+            .color(theme::muted())
             .small(),
     );
 }

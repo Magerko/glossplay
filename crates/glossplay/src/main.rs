@@ -51,6 +51,7 @@ Usage: glossplay [FILE or URL] [options]
                                     translation shown under it to FILE.tr.srt
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
+      --theme dark|light|system     interface theme for this run
       --sub-style NAME --sub-scale N --sub-position bottom|top --sub-margin N
                                     subtitle look for this run (style: plate, outline, bold,
                                     yellow, light; scale 0.6 to 2.0)
@@ -162,6 +163,7 @@ fn main() {
             "--sub-scale" => plan.sub_scale = value().parse().ok(),
             "--sub-position" => plan.sub_position = Some(value()),
             "--sub-margin" => plan.sub_margin = value().parse().ok(),
+            "--theme" => plan.theme = Some(value()),
             "--keys" => plan.keys = value().split(',').map(str::to_owned).collect(),
             "--clipboard" => plan.clipboard = value(),
             "--search-dialog" => {

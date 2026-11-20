@@ -83,6 +83,8 @@ pub struct App {
     /// Translation jobs sent, for the self-test report.
     pub translate_jobs: usize,
     pub settings_draft: Option<Config>,
+    /// The theme setting changed; the next frame sets the colours again.
+    pub restyle: bool,
     pub url_input: String,
     /// A link opened before yt-dlp finished downloading; played as soon as it is there.
     pending_url: Option<String>,
@@ -118,6 +120,9 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Result<App, String> {
         let (mut cfg, config_error) = paths::load_config();
         if let Some(plan) = &launch.selftest {
+            if let Some(v) = &plan.theme {
+                cfg.general.theme = v.clone();
+            }
             let subs = &mut cfg.subtitles;
             if let Some(v) = &plan.sub_style {
                 subs.style = v.clone();
@@ -137,7 +142,7 @@ impl App {
             i18n::apply_setting(&cfg.general.ui_lang);
         }
         theme::install_fonts(&cc.egui_ctx);
-        theme::apply(&cc.egui_ctx, cfg.general.ui_scale);
+        theme::apply(&cc.egui_ctx, cfg.general.ui_scale, &cfg.general.theme);
 
         let player = Player::new(&cfg.player).map_err(|e| e.to_string())?;
         let quiet = launch.selftest.is_some();
@@ -211,6 +216,7 @@ impl App {
             panel_busy: false,
             translate_jobs: 0,
             settings_draft: None,
+            restyle: false,
             url_input: String::new(),
             status: None,
             config_broken: config_error.is_some(),
@@ -1160,6 +1166,7 @@ impl App {
 
     pub fn apply_settings(&mut self, new: Config) {
         let rescale = new.general.ui_scale != self.cfg.general.ui_scale;
+        self.restyle |= new.general.theme != self.cfg.general.theme;
         if self.selftest.is_none() {
             i18n::apply_setting(&new.general.ui_lang);
         }

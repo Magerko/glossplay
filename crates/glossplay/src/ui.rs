@@ -3,7 +3,7 @@ use crate::i18n::{Tr, t, tf, tk};
 use crate::keys;
 use crate::session::{Load, Origin, Secondary};
 use crate::substyle::{self, Position, SubStyle};
-use crate::theme::{self, ACCENT, BG, DANGER, LINE, MUTED, PANEL, RAISED, TEXT};
+use crate::theme;
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Id, Key, Layout, Rect, RichText, Sense, Stroke, pos2,
     vec2,
@@ -47,6 +47,9 @@ impl ControlsFit {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if std::mem::take(&mut self.restyle) {
+            theme::apply_colors(&ctx, &self.cfg.general.theme);
+        }
         self.tick(&ctx);
         self.handle_input(&ctx);
         self.panel_cues.clear();
@@ -56,11 +59,16 @@ impl eframe::App for App {
             egui::Panel::right("sidebar")
                 .default_size(380.0_f32.min(max))
                 .size_range(220.0..=max)
-                .frame(egui::Frame::NONE.fill(PANEL).inner_margin(12))
+                .frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(12))
                 .show(ui, |ui| self.sidebar(ui));
         }
+        let backdrop = if self.session.is_some() {
+            theme::DARK.bg
+        } else {
+            theme::bg()
+        };
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(BG))
+            .frame(egui::Frame::NONE.fill(backdrop))
             .show(ui, |ui| self.stage(ui));
         self.word_popup(&ctx);
         self.search_window(&ctx);
@@ -107,7 +115,11 @@ fn icon_button(ui: &mut egui::Ui, icon: &str, hint: &str) -> bool {
 /// The font's play and pause glyphs differ in size, so I draw this pair myself.
 fn play_button(ui: &mut egui::Ui, paused: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 28.0), Sense::click());
-    let color = if resp.hovered() { ACCENT } else { TEXT };
+    let color = if resp.hovered() {
+        theme::DARK.accent
+    } else {
+        theme::DARK.text
+    };
     let c = rect.center();
     if paused {
         let points = vec![
@@ -132,9 +144,20 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> bool {
 }
 
 fn toggle_chip(ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
-    let color = if on { ACCENT } else { MUTED };
+    let color = if on {
+        theme::DARK.accent
+    } else {
+        theme::DARK.muted
+    };
     let button = egui::Button::new(RichText::new(label).size(13.0).color(color))
-        .stroke(Stroke::new(1.0, if on { ACCENT } else { LINE }))
+        .stroke(Stroke::new(
+            1.0,
+            if on {
+                theme::DARK.accent
+            } else {
+                theme::DARK.line
+            },
+        ))
         .fill(Color32::TRANSPARENT);
     ui.add(button).on_hover_text(hint).clicked()
 }
@@ -386,7 +409,7 @@ impl App {
         );
         let ui = &mut child;
         ui.label(RichText::new("Glossplay").size(34.0).strong());
-        ui.label(RichText::new(t(Tr::Tagline)).color(MUTED));
+        ui.label(RichText::new(t(Tr::Tagline)).color(theme::muted()));
         ui.add_space(18.0);
         if ui
             .add(
@@ -399,7 +422,7 @@ impl App {
         }
         ui.label(
             RichText::new(tk(Tr::DropHint).as_ref())
-                .color(MUTED)
+                .color(theme::muted())
                 .small(),
         );
         ui.add_space(14.0);
@@ -430,11 +453,15 @@ impl App {
             });
         }
         ui.add_space(18.0);
-        ui.label(RichText::new(t(Tr::ShortcutsHelp)).color(MUTED).small());
+        ui.label(
+            RichText::new(t(Tr::ShortcutsHelp))
+                .color(theme::muted())
+                .small(),
+        );
         if self.search_available() {
             ui.label(
                 RichText::new(tk(Tr::ShortcutsSearch).as_ref())
-                    .color(MUTED)
+                    .color(theme::muted())
                     .small(),
             );
         }
@@ -478,7 +505,7 @@ impl App {
             Align2::LEFT_CENTER,
             text,
             FontId::proportional(14.0),
-            TEXT,
+            theme::DARK.text,
         );
     }
 
@@ -691,6 +718,8 @@ impl App {
                 .layout(Layout::top_down(Align::Min)),
         );
         let ui = &mut child;
+        // The bar lies on the picture, so it keeps the dark look in a light theme.
+        ui.set_style(std::sync::Arc::new(theme::style(false)));
         self.seek_bar(ui);
         ui.add_space(2.0);
         let fit = self.fit_controls(ui, ui.available_width());
@@ -717,7 +746,7 @@ impl App {
             if icon_button(ui, "🔁", t(Tr::RepeatLineHint)) {
                 self.cue_nav(0);
             }
-            ui.label(RichText::new(clock).color(MUTED).monospace());
+            ui.label(RichText::new(clock).color(theme::DARK.muted).monospace());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if fit.fullscreen && icon_button(ui, "⛶", t(Tr::FullscreenHint)) {
                     self.toggle_fullscreen(ui.ctx());
@@ -863,10 +892,13 @@ impl App {
             .rect_filled(track, 3.0, Color32::from_white_alpha(50));
         let x_of = |ms: Ms| track.left() + track.width() * (ms as f32 / duration).clamp(0.0, 1.0);
         let played = Rect::from_min_max(track.min, pos2(x_of(self.snap.pos), track.bottom()));
-        ui.painter().rect_filled(played, 3.0, ACCENT);
+        ui.painter().rect_filled(played, 3.0, theme::DARK.accent);
         if resp.hovered() || resp.dragged() {
-            ui.painter()
-                .circle_filled(pos2(x_of(self.snap.pos), track.center().y), 7.0, ACCENT);
+            ui.painter().circle_filled(
+                pos2(x_of(self.snap.pos), track.center().y),
+                7.0,
+                theme::DARK.accent,
+            );
         }
         let Some(pointer) = resp.interact_pointer_pos().or(resp.hover_pos()) else {
             return;
@@ -912,7 +944,7 @@ impl App {
         let menu = ui.menu_button(RichText::new(t(Tr::SubtitlesMenu)).size(13.0), |ui| {
             let Some(s) = &self.session else { return };
             ui.set_min_width(260.0);
-            ui.label(RichText::new(t(Tr::Learning)).color(MUTED).small());
+            ui.label(RichText::new(t(Tr::Learning)).color(theme::muted()).small());
             for (i, sub) in s.tracks.iter().enumerate() {
                 let state = match &sub.load {
                     Load::Ready if sub.live => format!("  ({})", t(Tr::StateAsYouWatch)),
@@ -937,7 +969,11 @@ impl App {
                 pick_primary = Some(None);
             }
             ui.separator();
-            ui.label(RichText::new(t(Tr::TranslationLabel)).color(MUTED).small());
+            ui.label(
+                RichText::new(t(Tr::TranslationLabel))
+                    .color(theme::muted())
+                    .small(),
+            );
             if ui
                 .selectable_label(
                     s.secondary == Secondary::Translate,
@@ -991,7 +1027,7 @@ impl App {
                             (t(Tr::SliderOriginal), &mut original),
                             (t(Tr::SliderVoice), &mut voice),
                         ] {
-                            ui.label(RichText::new(label).color(MUTED));
+                            ui.label(RichText::new(label).color(theme::muted()));
                             let r =
                                 ui.add(egui::Slider::new(value, 0.0..=150.0).integer().suffix("%"));
                             volumes_changed |= r.changed();
@@ -1044,7 +1080,11 @@ impl App {
             }
             if self.audio_tracks.len() > 1 {
                 ui.separator();
-                ui.label(RichText::new(t(Tr::AudioLabel)).color(MUTED).small());
+                ui.label(
+                    RichText::new(t(Tr::AudioLabel))
+                        .color(theme::muted())
+                        .small(),
+                );
                 for a in &self.audio_tracks {
                     if ui.selectable_label(a.selected, a.label()).clicked() {
                         pick_audio = Some(a.id);
@@ -1219,11 +1259,11 @@ impl App {
 
     fn transcript(&mut self, ui: &mut egui::Ui) {
         let Some(s) = &self.session else {
-            ui.label(RichText::new(t(Tr::OpenToSeeTranscript)).color(MUTED));
+            ui.label(RichText::new(t(Tr::OpenToSeeTranscript)).color(theme::muted()));
             return;
         };
         let Some(t) = s.primary_track() else {
-            ui.label(RichText::new(t(Tr::NoTextSubtitles)).color(MUTED));
+            ui.label(RichText::new(t(Tr::NoTextSubtitles)).color(theme::muted()));
             return;
         };
         let needle = self.search.to_lowercase();
@@ -1253,15 +1293,15 @@ impl App {
                 let (rect, resp) =
                     ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
                 if Some(i) == current {
-                    ui.painter().rect_filled(rect, 6.0, RAISED);
+                    ui.painter().rect_filled(rect, 6.0, theme::raised());
                     ui.painter().rect_filled(
                         Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
                         2.0,
-                        ACCENT,
+                        theme::accent(),
                     );
                 } else if resp.hovered() {
                     ui.painter()
-                        .rect_filled(rect, 6.0, RAISED.gamma_multiply(0.6));
+                        .rect_filled(rect, 6.0, theme::raised().gamma_multiply(0.6));
                 }
                 let text_left = rect.left() + 58.0;
                 let width = rect.right() - text_left - 6.0;
@@ -1270,7 +1310,7 @@ impl App {
                     Align2::LEFT_TOP,
                     theme::clock(cue.start),
                     FontId::monospace(11.0),
-                    MUTED,
+                    theme::muted(),
                 );
                 let one_line = |text: &str, font: FontId, color: Color32| {
                     let mut job = egui::text::LayoutJob::simple_singleline(
@@ -1286,9 +1326,9 @@ impl App {
                     one_line(
                         &cue.text,
                         FontId::new(14.5, theme::subs_family(t.track.lang.as_deref(), &cue.text)),
-                        TEXT,
+                        theme::text(),
                     ),
-                    TEXT,
+                    theme::text(),
                 );
                 if let Some(tr) = s.translation_of(i) {
                     ui.painter().galley(
@@ -1296,9 +1336,9 @@ impl App {
                         one_line(
                             &tr,
                             FontId::new(12.5, theme::subs_family(Some(&native), &tr)),
-                            MUTED,
+                            theme::muted(),
                         ),
-                        MUTED,
+                        theme::muted(),
                     );
                 }
                 if resp.clicked() {
@@ -1317,7 +1357,7 @@ impl App {
 
     fn word_list(&mut self, ui: &mut egui::Ui) {
         if self.vocab.is_empty() {
-            ui.label(RichText::new(t(Tr::WordsEmpty)).color(MUTED));
+            ui.label(RichText::new(t(Tr::WordsEmpty)).color(theme::muted()));
             return;
         }
         let needle = self.search.to_lowercase();
@@ -1335,7 +1375,7 @@ impl App {
                         continue;
                     }
                     egui::Frame::NONE
-                        .fill(RAISED)
+                        .fill(theme::raised())
                         .corner_radius(8)
                         .inner_margin(10)
                         .show(ui, |ui| {
@@ -1347,11 +1387,11 @@ impl App {
                                         .strong()
                                         .family(theme::subs_family(None, &w.word)),
                                 );
-                                ui.label(RichText::new(&w.translation).color(ACCENT));
+                                ui.label(RichText::new(&w.translation).color(theme::accent()));
                             });
                             ui.label(
                                 RichText::new(&w.sentence)
-                                    .color(MUTED)
+                                    .color(theme::muted())
                                     .small()
                                     .family(theme::subs_family(None, &w.sentence)),
                             );
@@ -1379,12 +1419,16 @@ impl App {
                                     anki = Some(entry.id);
                                 }
                                 if ui
-                                    .small_button(RichText::new(t(Tr::DeleteWord)).color(DANGER))
+                                    .small_button(
+                                        RichText::new(t(Tr::DeleteWord)).color(theme::danger()),
+                                    )
                                     .clicked()
                                 {
                                     delete = Some(entry.id);
                                 }
-                                ui.label(RichText::new(&w.media_title).color(MUTED).small());
+                                ui.label(
+                                    RichText::new(&w.media_title).color(theme::muted()).small(),
+                                );
                             });
                         });
                 }
@@ -1421,7 +1465,7 @@ impl App {
             .constrain(true)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
-                    .fill(PANEL)
+                    .fill(theme::panel())
                     .inner_margin(14)
                     .show(ui, |ui| {
                         ui.set_width(340.0);
@@ -1439,12 +1483,12 @@ impl App {
                             });
                         });
                         match &p.translation {
-                            Async::Ready(text) => {
-                                drop(ui.label(RichText::new(text).size(18.0).color(ACCENT)))
-                            }
+                            Async::Ready(text) => drop(
+                                ui.label(RichText::new(text).size(18.0).color(theme::accent())),
+                            ),
                             Async::Pending => drop(ui.spinner()),
                             Async::Failed(e) => {
-                                drop(ui.label(RichText::new(e).color(DANGER).small()))
+                                drop(ui.label(RichText::new(e).color(theme::danger()).small()))
                             }
                             Async::Idle => {}
                         }
@@ -1454,24 +1498,28 @@ impl App {
                                 ui.label(text);
                             }
                             Async::Pending => drop(
-                                ui.label(RichText::new(t(Tr::Explaining)).color(MUTED).small()),
+                                ui.label(
+                                    RichText::new(t(Tr::Explaining))
+                                        .color(theme::muted())
+                                        .small(),
+                                ),
                             ),
                             Async::Failed(e) => {
-                                drop(ui.label(RichText::new(e).color(DANGER).small()))
+                                drop(ui.label(RichText::new(e).color(theme::danger()).small()))
                             }
                             Async::Idle => {}
                         }
                         ui.add_space(6.0);
                         ui.label(
                             RichText::new(&p.sentence)
-                                .color(MUTED)
+                                .color(theme::muted())
                                 .size(13.0)
                                 .family(theme::subs_family(lang.as_deref(), &p.sentence)),
                         );
                         if !p.sentence_translation.is_empty() {
                             ui.label(
                                 RichText::new(&p.sentence_translation)
-                                    .color(MUTED)
+                                    .color(theme::muted())
                                     .size(13.0)
                                     .italics(),
                             );
@@ -1532,7 +1580,7 @@ impl App {
                         let wide = 300.0;
                         let section = |ui: &mut egui::Ui, title: &str| {
                             ui.add_space(8.0);
-                            ui.label(RichText::new(title).strong().color(ACCENT));
+                            ui.label(RichText::new(title).strong().color(theme::accent()));
                         };
                         section(ui, t(Tr::SectionLanguages));
                         egui::Grid::new("lang")
@@ -1639,7 +1687,11 @@ impl App {
                                 );
                                 ui.end_row();
                             });
-                        ui.label(RichText::new(t(Tr::SubPreviewLabel)).color(MUTED).small());
+                        ui.label(
+                            RichText::new(t(Tr::SubPreviewLabel))
+                                .color(theme::muted())
+                                .small(),
+                        );
                         subtitle_preview(ui, &draft.subtitles);
                         section(ui, t(Tr::SectionTranslation));
                         egui::Grid::new("tr")
@@ -1698,7 +1750,7 @@ impl App {
                             });
                         section(ui, t(Tr::SectionSpeechRecognition));
                         asr_action = crate::setup_ui::settings_section(ui, &mut draft, asr_setup);
-                        ui.label(RichText::new(t(Tr::Advanced)).color(MUTED));
+                        ui.label(RichText::new(t(Tr::Advanced)).color(theme::muted()));
                         egui::Grid::new("asr")
                             .num_columns(2)
                             .spacing([16.0, 8.0])
@@ -1753,6 +1805,28 @@ impl App {
                                 ui.end_row();
                                 ui.label(t(Tr::InterfaceScaleRow));
                                 ui.add(egui::Slider::new(&mut draft.general.ui_scale, 0.75..=2.0));
+                                ui.end_row();
+                                ui.label(t(Tr::ThemeRow));
+                                let choices = [
+                                    ("dark", Tr::ThemeDark),
+                                    ("light", Tr::ThemeLight),
+                                    ("system", Tr::ThemeSystem),
+                                ];
+                                let shown = choices
+                                    .iter()
+                                    .find(|(id, _)| *id == draft.general.theme)
+                                    .map_or(Tr::ThemeDark, |(_, name)| *name);
+                                egui::ComboBox::from_id_salt("theme")
+                                    .selected_text(t(shown))
+                                    .show_ui(ui, |ui| {
+                                        for (id, name) in choices {
+                                            ui.selectable_value(
+                                                &mut draft.general.theme,
+                                                id.to_owned(),
+                                                t(name),
+                                            );
+                                        }
+                                    });
                                 ui.end_row();
                                 if crate::shell::SUPPORTED {
                                     ui.label("");
@@ -1809,7 +1883,7 @@ impl App {
             .interactable(false)
             .show(ctx, |ui| {
                 egui::Frame::NONE
-                    .fill(RAISED)
+                    .fill(theme::raised())
                     .corner_radius(8)
                     .inner_margin(egui::Margin::symmetric(14, 8))
                     .show(ui, |ui| {

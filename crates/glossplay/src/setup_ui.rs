@@ -7,7 +7,7 @@ use crate::components::{self, Event, InstallError, Progress};
 use crate::i18n::{Tr, t, tf};
 use crate::jobs::Msg;
 use crate::setup_text as text;
-use crate::theme::{ACCENT, DANGER, MUTED, SUB_SECONDARY};
+use crate::theme;
 use crate::ui::dialog_height;
 use eframe::egui::{self, Align, Align2, RichText, vec2};
 use gp_core::config::Config;
@@ -222,10 +222,14 @@ impl App {
                         plan(ui, &v);
                         warnings(ui, &engine, &v, hw);
                         if let Some(i) = &s.installed {
-                            ui.label(RichText::new(i.status()).color(MUTED));
+                            ui.label(RichText::new(i.status()).color(theme::muted()));
                         }
                         ui.add_space(4.0);
-                        ui.label(RichText::new(t(Tr::LicenceNote)).color(MUTED).small());
+                        ui.label(
+                            RichText::new(t(Tr::LicenceNote))
+                                .color(theme::muted())
+                                .small(),
+                        );
                         ui.add_space(10.0);
                         if let Some(p) = &s.progress {
                             progress(ui, p);
@@ -237,7 +241,9 @@ impl App {
                         }
                         match &s.outcome {
                             Some(Outcome::Ready { started }) => {
-                                ui.label(RichText::new(t(Tr::Ready)).color(ACCENT).strong());
+                                ui.label(
+                                    RichText::new(t(Tr::Ready)).color(theme::accent()).strong(),
+                                );
                                 ui.label(if *started {
                                     t(Tr::ReadyStarted)
                                 } else {
@@ -250,10 +256,10 @@ impl App {
                                 return;
                             }
                             Some(Outcome::Failed(e)) => {
-                                ui.label(RichText::new(e).color(DANGER));
+                                ui.label(RichText::new(e).color(theme::danger()));
                             }
                             Some(Outcome::Cancelled) => {
-                                ui.label(RichText::new(t(Tr::Cancelled)).color(MUTED));
+                                ui.label(RichText::new(t(Tr::Cancelled)).color(theme::muted()));
                             }
                             None => {}
                         }
@@ -333,7 +339,7 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &AsrSetup) -> 
             let size = asr_setup::component(&v).download_size();
             ui.label(
                 RichText::new(format!("{}: {}", t(Tr::RowTotal), text::size(size)))
-                    .color(MUTED)
+                    .color(theme::muted())
                     .small(),
             );
         }
@@ -455,7 +461,7 @@ fn hardware_line(ui: &mut egui::Ui, hw: &Hardware) {
         Some(g) => text::gpu_line(&g.name, g.vram_mb),
         None => t(Tr::NoNvidia).to_owned(),
     };
-    ui.label(RichText::new(line).color(MUTED));
+    ui.label(RichText::new(line).color(theme::muted()));
 }
 
 /// What will be downloaded, how much, and where it goes.
@@ -482,7 +488,7 @@ fn plan(ui: &mut egui::Ui, v: &Variant) {
             components::space_still_needed(&c),
             components::free_space(&root),
         ))
-        .color(MUTED),
+        .color(theme::muted()),
     );
     ui.label(
         RichText::new(format!(
@@ -490,14 +496,14 @@ fn plan(ui: &mut egui::Ui, v: &Variant) {
             t(Tr::RowPlace),
             components::dir(&c.id).display()
         ))
-        .color(MUTED)
+        .color(theme::muted())
         .small(),
     );
 }
 
 fn warnings(ui: &mut egui::Ui, engine_pref: &str, v: &Variant, hw: &Hardware) {
     let mut warn = |t: &str| {
-        ui.label(RichText::new(t).color(SUB_SECONDARY));
+        ui.label(RichText::new(t).color(theme::hint()));
     };
     if !ENGINE_AVAILABLE {
         warn(t(Tr::NoEngineHere));
@@ -527,7 +533,7 @@ fn progress(ui: &mut egui::Ui, p: &Progress) {
     );
     ui.label(
         RichText::new(text::file_line(&stage, p.file_done, p.file_total))
-            .color(MUTED)
+            .color(theme::muted())
             .small(),
     );
     // Checking and unpacking take a while on big files but move nothing on the main bar.

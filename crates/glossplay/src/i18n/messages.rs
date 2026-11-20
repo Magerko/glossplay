@@ -144,6 +144,10 @@ messages! {
         "Вчіться, поки дивитеся"
     ],
     SubSizeToast => ["Subtitle size {0}%", "Размер субтитров {0}%", "Розмір субтитрів {0}%"],
+    ThemeRow => ["Theme", "Тема", "Тема"],
+    ThemeDark => ["Dark", "Тёмная", "Темна"],
+    ThemeLight => ["Light", "Светлая", "Світла"],
+    ThemeSystem => ["Like the system", "Как в системе", "Як у системі"],
     CouldNotSaveSettings => [
         "Could not save settings: {0}",
         "Не удалось сохранить настройки: {0}",

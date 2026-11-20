@@ -2,16 +2,94 @@ use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily};
 use gp_core::Ms;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-pub const BG: Color32 = Color32::from_rgb(14, 15, 18);
-pub const PANEL: Color32 = Color32::from_rgb(22, 24, 29);
-pub const RAISED: Color32 = Color32::from_rgb(34, 37, 45);
-pub const LINE: Color32 = Color32::from_rgb(48, 52, 62);
-pub const TEXT: Color32 = Color32::from_rgb(232, 234, 240);
-pub const MUTED: Color32 = Color32::from_rgb(140, 147, 162);
-pub const ACCENT: Color32 = Color32::from_rgb(94, 201, 168);
-pub const SUB_SECONDARY: Color32 = Color32::from_rgb(246, 214, 128);
-pub const DANGER: Color32 = Color32::from_rgb(235, 110, 110);
+/// The colours of the interface around the video. The video itself, the subtitles over it
+/// and the control bar drawn on it do not follow the theme.
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    pub bg: Color32,
+    pub panel: Color32,
+    pub raised: Color32,
+    pub line: Color32,
+    pub text: Color32,
+    pub muted: Color32,
+    pub accent: Color32,
+    pub danger: Color32,
+    /// Notes that should stand out a little from the muted text.
+    pub hint: Color32,
+}
+
+pub const DARK: Palette = Palette {
+    bg: Color32::from_rgb(14, 15, 18),
+    panel: Color32::from_rgb(22, 24, 29),
+    raised: Color32::from_rgb(34, 37, 45),
+    line: Color32::from_rgb(48, 52, 62),
+    text: Color32::from_rgb(232, 234, 240),
+    muted: Color32::from_rgb(140, 147, 162),
+    accent: Color32::from_rgb(94, 201, 168),
+    danger: Color32::from_rgb(235, 110, 110),
+    hint: Color32::from_rgb(246, 214, 128),
+};
+
+// Text colours are picked for WCAG AA (4.5:1) on `panel` and on `raised`: the accent is a
+// darker teal than in the dark theme and the hint an amber brown, after the icon's colours.
+pub const LIGHT: Palette = Palette {
+    bg: Color32::from_rgb(236, 239, 243),
+    panel: Color32::from_rgb(248, 249, 251),
+    raised: Color32::from_rgb(232, 236, 241),
+    line: Color32::from_rgb(200, 206, 216),
+    text: Color32::from_rgb(24, 28, 36),
+    muted: Color32::from_rgb(88, 96, 112),
+    accent: Color32::from_rgb(0, 112, 90),
+    danger: Color32::from_rgb(176, 40, 40),
+    hint: Color32::from_rgb(128, 76, 0),
+};
+
+static LIGHT_ON: AtomicBool = AtomicBool::new(false);
+
+pub fn palette() -> Palette {
+    if LIGHT_ON.load(Ordering::Relaxed) {
+        LIGHT
+    } else {
+        DARK
+    }
+}
+
+pub fn bg() -> Color32 {
+    palette().bg
+}
+pub fn panel() -> Color32 {
+    palette().panel
+}
+pub fn raised() -> Color32 {
+    palette().raised
+}
+pub fn text() -> Color32 {
+    palette().text
+}
+pub fn muted() -> Color32 {
+    palette().muted
+}
+pub fn accent() -> Color32 {
+    palette().accent
+}
+pub fn danger() -> Color32 {
+    palette().danger
+}
+pub fn hint() -> Color32 {
+    palette().hint
+}
+
+/// Whether the interface is light: `setting` is "dark", "light" or "system", and
+/// `system_dark` what the system reports, if it does. Anything unknown means dark.
+pub fn is_light(setting: &str, system_dark: Option<bool>) -> bool {
+    match setting.trim().to_ascii_lowercase().as_str() {
+        "light" => true,
+        "system" => system_dark == Some(false),
+        _ => false,
+    }
+}
 
 pub fn clock(ms: Ms) -> String {
     let s = ms.max(0) / 1000;
@@ -22,27 +100,51 @@ pub fn clock(ms: Ms) -> String {
     }
 }
 
-pub fn apply(ctx: &egui::Context, scale: f32) {
+pub fn apply(ctx: &egui::Context, scale: f32, theme: &str) {
     ctx.set_pixels_per_point(ctx.native_pixels_per_point().unwrap_or(1.0) * scale.clamp(0.5, 3.0));
-    let mut style = (*ctx.global_style()).clone();
+    apply_colors(ctx, theme);
+}
+
+/// The colours and shapes of the widgets; the size of the interface is left alone.
+pub fn apply_colors(ctx: &egui::Context, theme: &str) {
+    let system_dark = ctx.system_theme().map(|t| t == egui::Theme::Dark);
+    let light = is_light(theme, system_dark);
+    LIGHT_ON.store(light, Ordering::Relaxed);
+    ctx.set_style_of(egui::Theme::Dark, style(light));
+    ctx.set_style_of(egui::Theme::Light, style(light));
+    ctx.set_theme(if light {
+        egui::Theme::Light
+    } else {
+        egui::Theme::Dark
+    });
+}
+
+/// The style of widgets in a palette; the control bar uses the dark one over the video.
+pub fn style(light: bool) -> egui::Style {
+    let p = if light { LIGHT } else { DARK };
+    let mut style = egui::Style::default();
     let v = &mut style.visuals;
-    *v = egui::Visuals::dark();
-    v.panel_fill = PANEL;
-    v.window_fill = PANEL;
-    v.extreme_bg_color = BG;
-    v.faint_bg_color = RAISED;
-    v.override_text_color = Some(TEXT);
-    v.selection.bg_fill = ACCENT.gamma_multiply(0.35);
-    v.selection.stroke = egui::Stroke::new(1.0, ACCENT);
-    v.hyperlink_color = ACCENT;
-    v.window_stroke = egui::Stroke::new(1.0, LINE);
-    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, LINE);
-    v.widgets.inactive.bg_fill = RAISED;
-    v.widgets.inactive.weak_bg_fill = RAISED;
-    v.widgets.hovered.bg_fill = LINE;
-    v.widgets.hovered.weak_bg_fill = LINE;
-    v.widgets.active.bg_fill = ACCENT.gamma_multiply(0.5);
-    v.widgets.active.weak_bg_fill = ACCENT.gamma_multiply(0.5);
+    *v = if light {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
+    v.panel_fill = p.panel;
+    v.window_fill = p.panel;
+    v.extreme_bg_color = if light { Color32::WHITE } else { p.bg };
+    v.faint_bg_color = p.raised;
+    v.override_text_color = Some(p.text);
+    v.selection.bg_fill = p.accent.gamma_multiply(if light { 0.25 } else { 0.35 });
+    v.selection.stroke = egui::Stroke::new(1.0, p.accent);
+    v.hyperlink_color = p.accent;
+    v.window_stroke = egui::Stroke::new(1.0, p.line);
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, p.line);
+    v.widgets.inactive.bg_fill = p.raised;
+    v.widgets.inactive.weak_bg_fill = p.raised;
+    v.widgets.hovered.bg_fill = p.line;
+    v.widgets.hovered.weak_bg_fill = p.line;
+    v.widgets.active.bg_fill = p.accent.gamma_multiply(if light { 0.35 } else { 0.5 });
+    v.widgets.active.weak_bg_fill = p.accent.gamma_multiply(if light { 0.35 } else { 0.5 });
     let radius = egui::CornerRadius::same(6);
     for w in [
         &mut v.widgets.inactive,
@@ -56,9 +158,7 @@ pub fn apply(ctx: &egui::Context, scale: f32) {
     v.menu_corner_radius = egui::CornerRadius::same(8);
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(8.0, 4.0);
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.set_style_of(egui::Theme::Dark, style.clone());
-    ctx.set_style_of(egui::Theme::Light, style);
+    style
 }
 
 /// One face of a system font file. `index` picks a face inside a .ttc collection.
@@ -277,5 +377,55 @@ mod tests {
         assert_eq!(name(subs_family(None, "今日は天気です")), "subs-ja");
         assert_eq!(name(subs_family(Some("und"), "안녕하세요")), "subs-ko");
         assert_eq!(name(subs_family(None, "plain text")), "Proportional");
+    }
+
+    #[test]
+    fn the_theme_setting_is_read_forgivingly() {
+        assert!(!is_light("dark", Some(false)));
+        assert!(is_light("light", Some(true)));
+        assert!(is_light(" Light ", None));
+        assert!(is_light("system", Some(false)));
+        assert!(!is_light("system", Some(true)));
+        assert!(
+            !is_light("system", None),
+            "no answer from the system means dark"
+        );
+        assert!(!is_light("", None));
+        assert!(!is_light("sepia", Some(false)));
+    }
+
+    fn luminance(c: Color32) -> f64 {
+        let lin = |v: u8| {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+    }
+
+    fn contrast(a: Color32, b: Color32) -> f64 {
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn text_colours_reach_wcag_aa_in_both_palettes() {
+        for (name, p) in [("dark", DARK), ("light", LIGHT)] {
+            for ground in [p.panel, p.raised, p.bg] {
+                for (what, fg) in [
+                    ("text", p.text),
+                    ("muted", p.muted),
+                    ("accent", p.accent),
+                    ("danger", p.danger),
+                    ("hint", p.hint),
+                ] {
+                    let ratio = contrast(fg, ground);
+                    assert!(ratio >= 4.5, "{name} {what} on {ground:?}: {ratio:.2}");
+                }
+            }
+        }
     }
 }
