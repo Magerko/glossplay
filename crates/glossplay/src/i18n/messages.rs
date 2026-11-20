@@ -1387,6 +1387,14 @@ messages! {
     InfoBuffered => ["Buffered ahead", "Загружено вперёд", "Завантажено вперед"],
     InfoBufferedBytes => ["In the buffer", "В буфере", "У буфері"],
     InfoSpeed => ["Download speed", "Скорость загрузки", "Швидкість завантаження"],
+    ChangeFolder => ["Change…", "Изменить…", "Змінити…"],
+    ComponentsFolderRow => ["Download folder", "Папка для загрузок", "Тека для завантажень"],
+    InfoComponentsFolder => [
+        "Where speech recognition and the voice-over engine are downloaded with their models; they take gigabytes. Empty: the program's data folder. What is installed already stays where it is and keeps working.",
+        "Куда скачиваются распознавание речи и движок озвучки с моделями; они занимают гигабайты. Пусто — папка данных программы. Уже установленное остаётся на месте и работает.",
+        "Куди завантажуються розпізнавання мовлення й рушій озвучення з моделями; вони займають гігабайти. Порожньо — тека даних програми. Уже встановлене лишається на місці й працює."
+    ],
+    FreeOnDisk => ["{0} free on this disk", "Свободно на диске: {0}", "Вільно на диску: {0}"],
     UnitSeconds => ["{0} s", "{0} с", "{0} с"],
     UnitFps => ["{0} fps", "{0} к/с", "{0} к/с"],
     UnitKbps => ["{0} kbit/s", "{0} кбит/с", "{0} кбіт/с"],

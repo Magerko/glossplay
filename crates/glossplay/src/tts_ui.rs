@@ -355,6 +355,7 @@ impl App {
         }
         let mut engine = self.cfg.tts.install_engine.clone();
         let mut agreed = self.tts_setup.agreed;
+        let mut change_folder = false;
         let (mut open, mut install, mut cancel, mut close) = (true, None, false, false);
         let s = &self.tts_setup;
         egui::Window::new(t(Tr::TtsDialogTitle))
@@ -375,7 +376,7 @@ impl App {
                         ui.add_enabled_ui(!s.running(), |ui| choice(ui, "tts-dialog", &mut engine));
                         let e = tts_setup::resolve(&engine);
                         ui.add_space(6.0);
-                        plan(ui, e);
+                        change_folder |= plan(ui, e, s.running());
                         warnings(ui, e);
                         if let Some(i) = &s.installed {
                             ui.label(RichText::new(i.status()).color(theme::muted()));
@@ -441,6 +442,9 @@ impl App {
         }
         self.cfg.tts.install_engine = engine;
         self.tts_setup.agreed = agreed;
+        if change_folder {
+            self.choose_components_dir();
+        }
         if cancel {
             self.cancel_tts_install();
         }
@@ -586,7 +590,7 @@ fn hardware_line(ui: &mut egui::Ui) {
     ui.label(RichText::new(line).color(theme::muted()));
 }
 
-fn plan(ui: &mut egui::Ui, engine: Engine) {
+fn plan(ui: &mut egui::Ui, engine: Engine, running: bool) -> bool {
     let c = tts_setup::component(engine);
     egui::Grid::new("tts-plan")
         .num_columns(2)
@@ -602,29 +606,15 @@ fn plan(ui: &mut egui::Ui, engine: Engine) {
             ui.label(RichText::new(text::size(c.download_size())).strong());
             ui.end_row();
         });
-    let root = components::root();
-    ui.label(
-        RichText::new(text::space_line(
-            c.installed_size(),
-            components::space_still_needed(&c),
-            components::free_space(&root),
-        ))
-        .color(theme::muted()),
-    );
-    ui.label(
-        RichText::new(format!(
-            "{}: {}",
-            t(Tr::RowPlace),
-            components::dir(&c.id).display()
-        ))
-        .color(theme::muted())
-        .small(),
-    );
+    let change = ui
+        .add_enabled_ui(!running, |ui| crate::setup_ui::place(ui, &c))
+        .inner;
     ui.label(
         RichText::new(t(Tr::TtsSources))
             .color(theme::muted())
             .small(),
     );
+    change
 }
 
 fn warnings(ui: &mut egui::Ui, engine: Engine) {

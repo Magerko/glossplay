@@ -130,6 +130,9 @@ Whisper 模型和 Silero 语音检测器（它能避免 Whisper 在静音和音�
 （在 RTX 50 系列上见到过）。使用 **Subtitles → Transcribe speech**，或勾选“Transcribe automatically”。
 识别结果会被缓存，每个视频只需识别一次。
 
+语音识别和配音引擎会下载到播放器的数据文件夹。如果系统盘较小，可以换一个文件夹：安装对话框中文件夹旁的
+**更改…** 按钮，或 **设置 → 播放器 → 下载文件夹**（那里也会显示可用空间）。已安装的内容保留在原处，照常使用。
+
 *高级：使用自己的 whisper.cpp。* 在 Settings → Speech recognition → Advanced 中，可以指定你自己的
 `whisper-server` 和模型文件。需要包含 `whisper-server` 的 whisper.cpp 构建：最新的发布版本常常没有文件，
 请打开[所有发布版本的列表](https://github.com/ggml-org/whisper.cpp/releases)，选择最新的、带有文件（Assets）

@@ -570,6 +570,12 @@ pub fn text(key: Tr) -> &'static str {
         Tr::InfoBuffered => "已预先缓冲",
         Tr::InfoBufferedBytes => "缓冲区中",
         Tr::InfoSpeed => "下载速度",
+        Tr::ChangeFolder => "更改…",
+        Tr::ComponentsFolderRow => "下载文件夹",
+        Tr::InfoComponentsFolder => {
+            "语音识别和配音引擎及其模型下载到这里，它们占用数 GB。留空：程序的数据文件夹。已安装的内容保留在原处，照常使用。"
+        }
+        Tr::FreeOnDisk => "此磁盘可用空间：{0}",
         Tr::UnitSeconds => "{0} 秒",
         Tr::UnitFps => "{0} 帧/秒",
         Tr::UnitKbps => "{0} kbit/s",

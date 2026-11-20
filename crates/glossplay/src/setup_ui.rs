@@ -169,6 +169,25 @@ impl App {
         }
     }
 
+    /// Asks for the folder speech recognition and the voice engine are downloaded to.
+    pub fn choose_components_dir(&mut self) {
+        // A self-test must not open a system dialog.
+        if self.selftest.is_some() {
+            return;
+        }
+        let Some(dir) = rfd::FileDialog::new()
+            .set_directory(crate::components::root())
+            .pick_folder()
+        else {
+            return;
+        };
+        self.cfg.general.components_dir = dir.to_string_lossy().into_owned();
+        crate::components::set_root(&self.cfg.general.components_dir);
+        if let Err(e) = crate::paths::save_config(&mut self.cfg) {
+            self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
+        }
+    }
+
     fn cancel_asr_install(&mut self) {
         if let Some(c) = &self.asr_setup.cancel {
             c.store(true, Ordering::Relaxed);
@@ -187,6 +206,7 @@ impl App {
             self.cfg.asr.install_engine.clone(),
             self.cfg.asr.install_model.clone(),
         );
+        let mut change_folder = false;
         let (mut open, mut install, mut cancel, mut close) = (true, None, false, false);
         let s = &self.asr_setup;
         egui::Window::new(t(Tr::DialogTitle))
@@ -217,7 +237,7 @@ impl App {
                         });
                         let v = asr_setup::resolve(&engine, &model, hw.gpu.as_ref());
                         ui.add_space(6.0);
-                        plan(ui, &v);
+                        change_folder |= plan(ui, &v, s.running());
                         warnings(ui, &engine, &v, hw);
                         if let Some(i) = &s.installed {
                             ui.label(RichText::new(i.status()).color(theme::muted()));
@@ -281,6 +301,9 @@ impl App {
         }
         self.cfg.asr.install_engine = engine;
         self.cfg.asr.install_model = model;
+        if change_folder {
+            self.choose_components_dir();
+        }
         if cancel {
             self.cancel_asr_install();
         }
@@ -462,7 +485,8 @@ fn hardware_line(ui: &mut egui::Ui, hw: &Hardware) {
 }
 
 /// What will be downloaded, how much, and where it goes.
-fn plan(ui: &mut egui::Ui, v: &Variant) {
+/// What will be downloaded and where; true when the user asks for another folder.
+fn plan(ui: &mut egui::Ui, v: &Variant, running: bool) -> bool {
     let c = asr_setup::component(v);
     egui::Grid::new("setup-plan")
         .num_columns(2)
@@ -478,24 +502,33 @@ fn plan(ui: &mut egui::Ui, v: &Variant) {
             ui.label(RichText::new(text::size(c.download_size())).strong());
             ui.end_row();
         });
-    let root = components::root();
+    ui.add_enabled_ui(!running, |ui| place(ui, &c)).inner
+}
+
+/// The space the component takes and is free, and the folder it goes to, with a button to
+/// choose another; true when it is clicked.
+pub fn place(ui: &mut egui::Ui, c: &components::Component) -> bool {
     ui.label(
         RichText::new(text::space_line(
             c.installed_size(),
-            components::space_still_needed(&c),
-            components::free_space(&root),
+            components::space_still_needed(c),
+            components::free_space(&components::root()),
         ))
         .color(theme::muted()),
     );
-    ui.label(
-        RichText::new(format!(
-            "{}: {}",
-            t(Tr::RowPlace),
-            components::dir(&c.id).display()
-        ))
-        .color(theme::muted())
-        .small(),
-    );
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(format!(
+                "{}: {}",
+                t(Tr::RowPlace),
+                components::dir(&c.id).display()
+            ))
+            .color(theme::muted())
+            .small(),
+        );
+        ui.small_button(t(Tr::ChangeFolder)).clicked()
+    })
+    .inner
 }
 
 fn warnings(ui: &mut egui::Ui, engine_pref: &str, v: &Variant, hw: &Hardware) {

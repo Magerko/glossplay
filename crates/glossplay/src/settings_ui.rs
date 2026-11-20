@@ -768,6 +768,29 @@ fn player(ui: &mut egui::Ui, form: &Form, draft: &mut Config) {
             form.folder(ui, &mut draft.player.frames_dir, &default.to_string_lossy());
         },
     );
+    form.row(
+        ui,
+        t(Tr::ComponentsFolderRow),
+        Some(t(Tr::InfoComponentsFolder)),
+        |ui| {
+            let default = crate::components::default_root();
+            form.folder(
+                ui,
+                &mut draft.general.components_dir,
+                &default.to_string_lossy(),
+            );
+        },
+    );
+    if let Some(free) = crate::components::free_space(&match draft.general.components_dir.trim() {
+        "" => crate::components::default_root(),
+        dir => std::path::PathBuf::from(dir),
+    }) {
+        ui.label(
+            RichText::new(tf(Tr::FreeOnDisk, &[&crate::setup_text::size(free)]))
+                .color(theme::muted())
+                .small(),
+        );
+    }
     form.row(ui, t(Tr::InterfaceScaleRow), Some(t(Tr::InfoScale)), |ui| {
         form.slider(
             ui,

@@ -78,6 +78,8 @@ pub struct General {
     pub shell_integration: bool,
     /// "dark", "light" or "system"; anything else means dark.
     pub theme: String,
+    /// Where speech recognition and the voice engine are downloaded; empty means the data folder.
+    pub components_dir: String,
 }
 
 impl Default for General {
@@ -89,6 +91,7 @@ impl Default for General {
             ui_scale: 1.0,
             shell_integration: false,
             theme: "dark".into(),
+            components_dir: String::new(),
         }
     }
 }

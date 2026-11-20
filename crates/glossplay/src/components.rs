@@ -238,8 +238,33 @@ impl Rate {
     }
 }
 
-pub fn root() -> PathBuf {
+static ROOT: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Takes the folder chosen in Settings; empty means the default one.
+pub fn set_root(setting: &str) {
+    let setting = setting.trim();
+    *ROOT.lock().unwrap_or_else(|e| e.into_inner()) =
+        (!setting.is_empty()).then(|| PathBuf::from(setting));
+}
+
+pub fn default_root() -> PathBuf {
     paths::data_dir().join("components")
+}
+
+/// Where components are installed now.
+pub fn root() -> PathBuf {
+    ROOT.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .unwrap_or_else(default_root)
+}
+
+/// The folders to look for an installed component in: the chosen one, then the default one,
+/// which holds what was installed before another folder was chosen.
+fn roots() -> Vec<PathBuf> {
+    let mut all = vec![root(), default_root()];
+    all.dedup();
+    all
 }
 
 pub fn dir(id: &str) -> PathBuf {
@@ -280,7 +305,7 @@ fn intact(state: &Installed) -> bool {
 
 /// The installed component, if it is there and whole.
 pub fn installed(id: &str) -> Option<Installed> {
-    installed_in(&root(), id)
+    roots().iter().find_map(|r| installed_in(r, id))
 }
 
 fn installed_in(root: &Path, id: &str) -> Option<Installed> {
@@ -289,7 +314,7 @@ fn installed_in(root: &Path, id: &str) -> Option<Installed> {
 
 /// Changes the component-specific part of the state, such as "first run done".
 pub fn update_meta(id: &str, change: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
-    let dir = dir(id);
+    let dir = installed(id).map_or_else(|| dir(id), |s| s.dir);
     let mut state = read_state(&dir).ok_or_else(|| t(Tr::NotInstalled).to_owned())?;
     change(&mut state.meta);
     write_state(&dir, &state).map_err(|e| e.to_string())
@@ -297,7 +322,7 @@ pub fn update_meta(id: &str, change: impl FnOnce(&mut serde_json::Value)) -> Res
 
 /// Deletes the component. Downloads kept for resuming are left alone.
 pub fn remove(id: &str) -> Result<(), String> {
-    remove_in(&root(), id)
+    roots().iter().try_for_each(|r| remove_in(r, id))
 }
 
 fn remove_in(root: &Path, id: &str) -> Result<(), String> {

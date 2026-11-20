@@ -156,6 +156,11 @@ NVIDIA build can take up to a minute to prepare for the card (seen on the RTX 50
 **Subtitles → Transcribe speech**, or tick "Transcribe automatically". Transcripts are cached,
 so a video is only transcribed once.
 
+Speech recognition and the voice-over engine are downloaded into the player's data folder. On a small
+system disk choose another one: the **Change…** button by the folder in the install dialog, or
+**Settings → Player → Download folder**, which also shows the space free there. What is already
+installed stays where it is and keeps working.
+
 *Advanced: use my own whisper.cpp.* Under Settings → Speech recognition → Advanced you can point
 Glossplay at your own `whisper-server` and model file. Get a whisper.cpp build that contains
 `whisper-server`: the newest release often has no files, so open the

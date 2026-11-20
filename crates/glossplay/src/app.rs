@@ -177,6 +177,7 @@ impl App {
         let fonts_chinese = i18n::lang() == i18n::Lang::Zh;
         theme::install_fonts(&cc.egui_ctx, fonts_chinese);
         theme::apply(&cc.egui_ctx, cfg.general.ui_scale, &cfg.general.theme);
+        crate::components::set_root(&cfg.general.components_dir);
 
         let player = Player::new(&cfg.player).map_err(|e| e.to_string())?;
         let quiet = launch.selftest.is_some();
@@ -1234,6 +1235,7 @@ impl App {
         let shell_changed = new.general.shell_integration != self.cfg.general.shell_integration;
         let (old_tts, old_lang) = (self.cfg.tts.clone(), self.cfg.general.native_lang.clone());
         self.cfg = new;
+        crate::components::set_root(&self.cfg.general.components_dir);
         let tts = &self.cfg.tts;
         let voice_changed = (
             &tts.base_url,
