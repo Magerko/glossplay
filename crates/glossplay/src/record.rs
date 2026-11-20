@@ -226,7 +226,11 @@ pub enum PointerAction {
     Type {
         text: String,
         secs: f64,
+        /// Select all that is in the field first, so the text takes its place.
+        replace: bool,
     },
+    /// A key with its modifiers, such as ctrl+a or backspace, pressed and released.
+    Key(crate::keys::Combo),
     /// What Ctrl+V gives a text field: the whole text at once.
     Paste(String),
     Hide,
@@ -240,9 +244,16 @@ struct Glide {
 }
 
 enum Step {
-    Glide { to: egui::Pos2, secs: f64 },
-    Button { pressed: bool },
+    Glide {
+        to: egui::Pos2,
+        secs: f64,
+    },
+    Button {
+        pressed: bool,
+    },
     Paste(String),
+    /// Input events as the keyboard would send them in one frame.
+    Events(Vec<egui::Event>),
 }
 
 #[derive(Default)]
@@ -254,7 +265,8 @@ struct Pointer {
     /// One step a frame: egui sees a press and its release in different frames, as it would
     /// from a real mouse.
     steps: std::collections::VecDeque<Step>,
-    typing: Option<(Vec<char>, f64, f64)>,
+    /// What is left to type, when typing began, how long it takes and how much it was.
+    typing: Option<(Vec<char>, f64, f64, usize)>,
 }
 
 static POINTER: Mutex<Option<Pointer>> = Mutex::new(None);
@@ -280,6 +292,7 @@ pub fn pointer(action: PointerAction, ppp: f32) -> Result<(), String> {
         PointerAction::Drag { .. } => "drag",
         PointerAction::Type { .. } => "type",
         PointerAction::Paste(_) => "paste",
+        PointerAction::Key(_) => "key",
         PointerAction::Hide => "hide",
     };
     p.shown = !matches!(action, PointerAction::Hide);
@@ -300,15 +313,33 @@ pub fn pointer(action: PointerAction, ppp: f32) -> Result<(), String> {
             p.steps.push_back(Step::Glide { to: at(x, y), secs });
             p.steps.push_back(Step::Button { pressed: false });
         }
-        PointerAction::Type { text, secs } => {
-            p.typing = Some((text.chars().collect(), now(c), secs.max(0.0)));
+        PointerAction::Type {
+            text,
+            secs,
+            replace,
+        } => {
+            if replace {
+                let all = crate::keys::parse_combo("ctrl+a").expect("a known combo");
+                push_key(p, &all);
+            }
+            let chars: Vec<char> = text.chars().collect();
+            let total = chars.len();
+            p.typing = Some((chars, now(c), secs.max(0.0), total));
         }
+        PointerAction::Key(combo) => push_key(p, &combo),
         PointerAction::Paste(text) => p.steps.push_back(Step::Paste(text)),
         PointerAction::Hide => {}
     }
     drop(guard);
     event("pointer", json!({"action": what}));
     Ok(())
+}
+
+/// A key press and its release, a frame apart, as the keyboard sends them.
+fn push_key(p: &mut Pointer, combo: &crate::keys::Combo) {
+    let synth = crate::keys::synthesize(crate::keys::Layout::En, combo, "");
+    p.steps.push_back(Step::Events(synth.press));
+    p.steps.push_back(Step::Events(synth.release));
 }
 
 pub fn pointer_busy() -> bool {
@@ -349,6 +380,7 @@ pub fn inject(ctx: &egui::Context, raw: &mut egui::RawInput) {
                 });
             }
             Some(Step::Paste(text)) => raw.events.push(egui::Event::Paste(text)),
+            Some(Step::Events(events)) => raw.events.extend(events),
             Some(Step::Button { pressed }) => {
                 let pos = p.pos.unwrap_or_default();
                 if pressed {
@@ -377,13 +409,11 @@ pub fn inject(ctx: &egui::Context, raw: &mut egui::RawInput) {
             p.glide = None;
         }
     } else if p.steps.is_empty()
-        && let Some((chars, start, secs)) = &mut p.typing
+        && let Some((chars, start, secs, total)) = &mut p.typing
     {
-        let n = chars.len().max(1) as f64;
-        let due = (((t - *start) / secs.max(1e-3)) * n).floor() as usize + 1;
-        let take = due.min(chars.len());
-        let text: String = chars.drain(..take).collect();
-        *start += take as f64 * *secs / n;
+        let typed = *total - chars.len();
+        let take = typed_by(t - *start, *secs, *total).saturating_sub(typed);
+        let text: String = chars.drain(..take.min(chars.len())).collect();
         if !text.is_empty() {
             raw.events.push(egui::Event::Text(text));
         }
@@ -398,6 +428,16 @@ pub fn inject(ctx: &egui::Context, raw: &mut egui::RawInput) {
         }
         ctx.request_repaint();
     }
+}
+
+/// How many of `total` characters are typed `elapsed` seconds into typing that takes `secs`:
+/// the first at once, the rest evenly after it.
+fn typed_by(elapsed: f64, secs: f64, total: usize) -> usize {
+    if secs <= 0.0 || total == 0 {
+        return total;
+    }
+    let k = (elapsed / secs).clamp(0.0, 1.0);
+    ((k * total as f64).floor() as usize + 1).min(total)
 }
 
 fn drop_click(t: f64, pos: egui::Pos2) {
@@ -701,4 +741,25 @@ fn spawn_ffmpeg(dir: &Path, ffmpeg: Option<&Path>, fps: f64, w: u32, h: u32) -> 
         cmd.creation_flags(0x0800_0000);
     }
     cmd.spawn().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typing_takes_the_time_asked_for() {
+        // 8 characters over 0.64 s: one at once, then one every 0.08 s.
+        assert_eq!(typed_by(0.0, 0.64, 8), 1);
+        assert_eq!(typed_by(0.05, 0.64, 8), 1);
+        assert_eq!(typed_by(0.08, 0.64, 8), 2);
+        assert_eq!(typed_by(0.33, 0.64, 8), 5);
+        assert_eq!(typed_by(0.64, 0.64, 8), 8);
+        assert_eq!(typed_by(9.0, 0.64, 8), 8);
+        assert_eq!(
+            typed_by(0.0, 0.0, 8),
+            8,
+            "no time given types it all at once"
+        );
+    }
 }

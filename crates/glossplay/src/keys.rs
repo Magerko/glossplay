@@ -476,6 +476,10 @@ pub fn parse_combo_for(s: &str, mac: bool) -> Result<Combo, String> {
         "escape" | "esc" => Key::Escape,
         "enter" => Key::Enter,
         "tab" => Key::Tab,
+        "backspace" => Key::Backspace,
+        "delete" | "del" => Key::Delete,
+        "home" => Key::Home,
+        "end" => Key::End,
         other if other.chars().count() == 1 => {
             Key::from_name(other).ok_or_else(|| format!("unknown key \"{other}\""))?
         }
@@ -792,6 +796,23 @@ mod tests {
         assert!(parse_combo("ctrl+v").unwrap().modifiers.command);
         assert_eq!(parse_combo("[").unwrap().physical, Key::OpenBracket);
         assert_eq!(parse_combo("esc").unwrap().physical, Key::Escape);
+        // The keys a field is cleared and edited with, for the recording pointer.
+        assert_eq!(parse_combo("backspace").unwrap().physical, Key::Backspace);
+        assert_eq!(parse_combo("Delete").unwrap().physical, Key::Delete);
+        assert_eq!(parse_combo("home").unwrap().physical, Key::Home);
+        assert_eq!(parse_combo("end").unwrap().physical, Key::End);
+        let all = synthesize(Layout::En, &parse_combo("ctrl+a").unwrap(), "");
+        assert!(
+            all.press.iter().any(
+                |e| matches!(e, Event::Key { key: Key::A, modifiers, .. } if modifiers.command)
+            ),
+            "{:?}",
+            all.press
+        );
+        assert!(
+            !all.press.iter().any(|e| matches!(e, Event::Text(_))),
+            "ctrl+a types nothing"
+        );
         assert!(parse_combo("hyper+s").is_err());
         assert!(parse_combo("ы").is_err());
         assert!(parse_combo("f13x").is_err());

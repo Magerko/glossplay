@@ -1521,8 +1521,14 @@ fn pointer(ctx: &egui::Context, args: &Value) -> Result<Outcome, String> {
         "type" => {
             let text = need_str(args, "text")?.to_owned();
             let secs = secs.unwrap_or(0.08 * text.chars().count() as f64);
-            P::Type { text, secs }
+            let replace = opt_bool(args, "replace")?.unwrap_or(false);
+            P::Type {
+                text,
+                secs,
+                replace,
+            }
         }
+        "key" => P::Key(crate::keys::parse_combo(need_str(args, "key")?)?),
         "hide" => P::Hide,
         "where" => {
             if !crate::record::on() {
@@ -1534,7 +1540,7 @@ fn pointer(ctx: &egui::Context, args: &Value) -> Result<Outcome, String> {
         }
         other => {
             return Err(format!(
-                "unknown action \"{other}\": move, click, double_click, drag, type, paste, hide or where"
+                "unknown action \"{other}\": move, click, double_click, drag, type, key, paste, hide or where"
             ));
         }
     };
@@ -1940,13 +1946,17 @@ pub fn tool_list() -> Value {
             "Only with GLOSSPLAY_RECORD_DIR set, for recording what the player does: moves a \
              pointer of its own over the window and clicks, drags or types with it, as a mouse \
              and keyboard would, and draws it into the recording. Answers when the move is over. \
+             key: presses a key with its modifiers in the focused field (ctrl+a, backspace, \
+             delete, enter, escape, tab, home, end, left, right, up, down). \
              where: the centres of some buttons drawn now (save_word, words_tab, icons).",
             json!({
-                "action": {"type": "string", "enum": ["move", "click", "double_click", "drag", "type", "paste", "hide", "where"]},
+                "action": {"type": "string", "enum": ["move", "click", "double_click", "drag", "type", "key", "paste", "hide", "where"]},
                 "x": {"type": "number", "description": "Window pixels from the left of the drawing area: where to move, click, or drag to (drag starts where the pointer is)."},
                 "y": {"type": "number", "description": "Window pixels from the top."},
                 "seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60, "description": "How long the move or the typing takes (0.7 s for a move, 1.2 s for a drag)."},
                 "text": {"type": "string", "description": "What to type, into the field that has the focus."},
+                "replace": {"type": "boolean", "description": "For type: select all that is in the field first, so the text replaces it (default false)."},
+                "key": {"type": "string", "description": "For key: a key, with ctrl+, shift+ or alt+ in front (ctrl means ⌘ on macOS)."},
             }),
             &["action"]
         ),
