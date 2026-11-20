@@ -40,6 +40,12 @@ pub struct Plan {
     pub settings_voice: bool,
     /// Keep the Subtitles menu open for the screenshot.
     pub subs_menu: bool,
+    /// Overrides of `[subtitles]` for a screenshot: `--sub-style`, `--sub-scale`,
+    /// `--sub-position`, `--sub-margin`.
+    pub sub_style: Option<String>,
+    pub sub_scale: Option<f32>,
+    pub sub_position: Option<String>,
+    pub sub_margin: Option<f32>,
     /// No file: the start screen, for the screenshot.
     pub empty: bool,
     /// Show the saved words in the sidebar.

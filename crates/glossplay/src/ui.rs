@@ -2,9 +2,8 @@ use crate::app::{App, Async, SidebarTab};
 use crate::i18n::{Tr, t, tf, tk};
 use crate::keys;
 use crate::session::{Load, Origin, Secondary};
-use crate::theme::{
-    self, ACCENT, BG, DANGER, LINE, MUTED, PANEL, RAISED, SUB_PRIMARY, SUB_SECONDARY, TEXT,
-};
+use crate::substyle::{self, Position, SubStyle};
+use crate::theme::{self, ACCENT, BG, DANGER, LINE, MUTED, PANEL, RAISED, TEXT};
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Id, Key, Layout, Rect, RichText, Sense, Stroke, pos2,
     vec2,
@@ -236,6 +235,13 @@ impl App {
                 };
                 mpv.set_f64("speed", speed);
             }
+            C::SubtitlesSmaller | C::SubtitlesLarger => {
+                let up = command == C::SubtitlesLarger;
+                let scale = substyle::step_scale(self.cfg.subtitles.scale, up);
+                self.set_subtitle_scale(scale);
+                let percent = (scale * 100.0).round() as i32;
+                self.toast_for(tf(Tr::SubSizeToast, &[&percent]), Duration::from_secs(1));
+            }
             C::OpenFile => self.open_dialog(),
             C::Search => self.open_search(None),
             // The top window first: the setup dialogs open over Settings, and all of them
@@ -255,6 +261,17 @@ impl App {
                     self.toggle_fullscreen(ctx);
                 }
             }
+        }
+    }
+
+    /// A new subtitle size from the keys or the menu; it is kept in the config at once, since
+    /// it is a thing people adjust while watching and expect to find again.
+    pub fn set_subtitle_scale(&mut self, scale: f32) {
+        self.cfg.subtitles.scale = scale;
+        if !self.quiet
+            && let Err(e) = crate::paths::save_config(&self.cfg)
+        {
+            self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
         }
     }
 
@@ -353,7 +370,8 @@ impl App {
             } else {
                 34.0 * scale
             };
-        self.subtitles(ui, rect, bottom, scale);
+        let top = rect.top() + if visible { 52.0 } else { 20.0 * scale };
+        self.subtitles(ui, rect, (top, bottom), scale);
         if visible {
             self.header(ui, rect);
             self.controls(ui, rect);
@@ -464,7 +482,7 @@ impl App {
         );
     }
 
-    fn subtitles(&mut self, ui: &mut egui::Ui, rect: Rect, bottom: f32, scale: f32) {
+    fn subtitles(&mut self, ui: &mut egui::Ui, rect: Rect, edges: (f32, f32), scale: f32) {
         let Some(s) = &self.session else { return };
         let pos = self.snap.pos;
         let primary = if self.cfg.subtitles.show_primary {
@@ -479,37 +497,85 @@ impl App {
         };
         let track_index = s.primary.unwrap_or(0);
         let lang = s.primary_track().and_then(|t| t.track.lang.clone());
-        let size = self.cfg.subtitles.font_size * scale;
-        let max_width = rect.width() * 0.86;
-        let mut y = bottom;
-
         let secondary_lang = match s.secondary {
             Secondary::Track(i) => s.tracks.get(i).and_then(|t| t.track.lang.clone()),
             _ => Some(self.cfg.general.native_lang.clone()),
         };
+        let look = SubStyle::from_id(&self.cfg.subtitles.style).look();
+        let at_top = Position::from_id(&self.cfg.subtitles.position) == Position::Top;
+        let size = self.cfg.subtitles.font_size
+            * substyle::clamp_scale(self.cfg.subtitles.scale)
+            * look.size
+            * scale;
+        let margin = self.cfg.subtitles.margin.clamp(0.0, 300.0) * scale;
+        let max_width = rect.width() * 0.86;
         let small_size = size * self.cfg.subtitles.secondary_scale;
-        for text in secondary.iter().rev() {
-            let small = FontId::new(
-                small_size,
-                theme::subs_family(secondary_lang.as_deref(), text),
-            );
-            let galley =
-                ui.painter()
-                    .layout(text.replace('\n', " "), small, SUB_SECONDARY, max_width);
-            let at = pos2(rect.center().x - galley.size().x / 2.0, y - galley.size().y);
-            let backdrop = Rect::from_min_size(at, galley.size()).expand2(vec2(10.0, 3.0));
-            ui.painter()
-                .rect_filled(backdrop, 6.0, Color32::from_black_alpha(140));
-            outlined(ui.painter(), at, galley.clone(), SUB_SECONDARY, scale);
-            y -= galley.size().y + 8.0;
-        }
+        let (top_edge, bottom_edge) = edges;
+        let mut y = if at_top {
+            top_edge + margin
+        } else {
+            bottom_edge - margin
+        };
 
+        let draw = SubDraw {
+            rect,
+            look,
+            scale,
+            down: at_top,
+        };
+        let track = (track_index, lang.as_deref());
+        let clicked = if at_top {
+            let clicked = self.primary_lines(ui, &draw, &primary, track, size, max_width, &mut y);
+            draw.secondary(
+                ui,
+                &secondary,
+                secondary_lang.as_deref(),
+                small_size,
+                max_width,
+                &mut y,
+            );
+            clicked
+        } else {
+            draw.secondary(
+                ui,
+                &secondary,
+                secondary_lang.as_deref(),
+                small_size,
+                max_width,
+                &mut y,
+            );
+            self.primary_lines(ui, &draw, &primary, track, size, max_width, &mut y)
+        };
+        if let Some((word, cue, token, anchor)) = clicked {
+            self.open_word(word, cue, token, anchor);
+        }
+    }
+
+    /// Draws the original lines from `y` away from the edge and returns the word clicked.
+    #[allow(clippy::too_many_arguments)]
+    fn primary_lines(
+        &mut self,
+        ui: &mut egui::Ui,
+        draw: &SubDraw,
+        lines: &[crate::session::Line],
+        track: (usize, Option<&str>),
+        size: f32,
+        max_width: f32,
+        y: &mut f32,
+    ) -> Option<(String, usize, usize, egui::Pos2)> {
+        let (rect, look, scale) = (draw.rect, &draw.look, draw.scale);
+        let (track_index, lang) = track;
         let open_token = self.popup.as_ref().map(|p| p.token);
         let words_live = !self.modal_open();
         let mut clicked: Option<(String, usize, usize, egui::Pos2)> = None;
-        for line in primary.iter().rev() {
-            let tokens = self.tokens_for(track_index, line.cue, &line.text, lang.as_deref());
-            let font = FontId::new(size, theme::subs_family(lang.as_deref(), &line.text));
+        let ordered: Vec<&crate::session::Line> = if draw.down {
+            lines.iter().collect()
+        } else {
+            lines.iter().rev().collect()
+        };
+        for line in ordered {
+            let tokens = self.tokens_for(track_index, line.cue, &line.text, lang);
+            let font = FontId::new(size, theme::subs_family(lang, &line.text));
             // Lay the words out in rows by hand: every word needs its own hit box.
             let mut rows: Vec<Vec<(usize, Arc<egui::Galley>)>> = vec![Vec::new()];
             let mut row_width = 0.0;
@@ -522,7 +588,7 @@ impl App {
                 }
                 let galley =
                     ui.painter()
-                        .layout_no_wrap(piece.to_owned(), font.clone(), SUB_PRIMARY);
+                        .layout_no_wrap(piece.to_owned(), font.clone(), look.original);
                 let width = galley.size().x;
                 if row_width + width > max_width && row_width > 0.0 {
                     rows.push(Vec::new());
@@ -541,15 +607,15 @@ impl App {
                 .iter()
                 .map(|r| r.iter().map(|(_, g)| g.size().x).sum::<f32>())
                 .fold(0.0, f32::max);
+            let block_top = draw.top_of(*y, block_height);
             let block = Rect::from_min_size(
-                pos2(rect.center().x - widest / 2.0, y - block_height),
+                pos2(rect.center().x - widest / 2.0, block_top),
                 vec2(widest, block_height),
             );
-            ui.painter().rect_filled(
-                block.expand2(vec2(12.0, 4.0)),
-                8.0,
-                Color32::from_black_alpha(140),
-            );
+            if let Some(plate) = look.plate {
+                ui.painter()
+                    .rect_filled(block.expand2(vec2(12.0, 4.0)), 8.0, plate);
+            }
             for (r, row) in rows.iter().enumerate() {
                 let width: f32 = row.iter().map(|(_, g)| g.size().x).sum();
                 let mut x = rect.center().x - width / 2.0;
@@ -561,7 +627,14 @@ impl App {
                     let at = pos2(x, top + (row_height - galley.size().y) / 2.0);
                     x += galley.size().x;
                     if token.kind != TokenKind::Word {
-                        outlined(ui.painter(), at, galley.clone(), SUB_PRIMARY, scale);
+                        substyle::paint(
+                            ui.painter(),
+                            at,
+                            galley.clone(),
+                            look.original,
+                            look,
+                            scale,
+                        );
                         continue;
                     }
                     let word = &line.text[token.range.clone()];
@@ -579,13 +652,13 @@ impl App {
                         ui.painter().rect_filled(
                             word_rect.expand2(vec2(2.0, 0.0)),
                             5.0,
-                            ACCENT.gamma_multiply(0.45),
+                            look.hover,
                         );
                     }
                     if hovered {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
-                    outlined(ui.painter(), at, galley.clone(), SUB_PRIMARY, scale);
+                    substyle::paint(ui.painter(), at, galley.clone(), look.original, look, scale);
                     if self.saved_words.contains(&word.to_lowercase()) {
                         let under = word_rect.bottom() - row_height * 0.1;
                         ui.painter().line_segment(
@@ -593,7 +666,7 @@ impl App {
                                 pos2(word_rect.left(), under),
                                 pos2(word_rect.right(), under),
                             ],
-                            Stroke::new(2.0 * scale, ACCENT),
+                            Stroke::new(2.0 * scale, look.saved),
                         );
                     }
                     if resp.is_some_and(|r| r.clicked()) {
@@ -601,11 +674,9 @@ impl App {
                     }
                 }
             }
-            y -= block_height + 10.0;
+            *y = draw.next(*y, block_height + 10.0);
         }
-        if let Some((word, cue, token, anchor)) = clicked {
-            self.open_word(word, cue, token, anchor);
-        }
+        clicked
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, rect: Rect) {
@@ -832,6 +903,8 @@ impl App {
         let mut toggle_autopause = false;
         let mut open_settings = false;
         let mut open_search = false;
+        let mut pick_style = None;
+        let mut size_step = None;
         let dub_on = self.dub.is_some();
         let (mut toggle_dub, mut volumes_changed, mut volumes_done) = (false, false, false);
         let mut original = self.cfg.tts.original_volume as f32;
@@ -930,6 +1003,29 @@ impl App {
             if ui.button(t(Tr::AddSubFile)).clicked() {
                 add_file = true;
             }
+            ui.horizontal(|ui| {
+                let percent =
+                    (substyle::clamp_scale(self.cfg.subtitles.scale) * 100.0).round() as i32;
+                ui.label(tf(Tr::SubSizeMenu, &[&percent]));
+                if ui.small_button("−").clicked() {
+                    size_step = Some(false);
+                }
+                if ui.small_button("+").clicked() {
+                    size_step = Some(true);
+                }
+            });
+            ui.menu_button(t(Tr::SubStyleLabel), |ui| {
+                let current = SubStyle::from_id(&self.cfg.subtitles.style);
+                for style in SubStyle::ALL {
+                    if ui
+                        .selectable_label(style == current, t(style.name()))
+                        .clicked()
+                    {
+                        pick_style = Some(style);
+                        ui.close();
+                    }
+                }
+            });
             ui.separator();
             let has_primary = s.primary_track().is_some();
             let shown = s.secondary != Secondary::Off;
@@ -995,6 +1091,18 @@ impl App {
         }
         if open_settings {
             self.settings_draft = Some(self.new_settings_draft());
+        }
+        if let Some(up) = size_step {
+            let scale = substyle::step_scale(self.cfg.subtitles.scale, up);
+            self.set_subtitle_scale(scale);
+        }
+        if let Some(style) = pick_style {
+            self.cfg.subtitles.style = style.id().to_owned();
+            if !self.quiet
+                && let Err(e) = crate::paths::save_config(&self.cfg)
+            {
+                self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
+            }
         }
         if open_search {
             self.open_search(None);
@@ -1476,6 +1584,54 @@ impl App {
                                     0.5..=1.2,
                                 ));
                                 ui.end_row();
+                                ui.label(t(Tr::SubSizeLabel));
+                                ui.add(
+                                    egui::Slider::new(
+                                        &mut draft.subtitles.scale,
+                                        substyle::SCALE_MIN..=substyle::SCALE_MAX,
+                                    )
+                                    .step_by(f64::from(substyle::SCALE_STEP))
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                                    .custom_parser(|s| {
+                                        s.trim()
+                                            .trim_end_matches('%')
+                                            .parse::<f64>()
+                                            .ok()
+                                            .map(|p| p / 100.0)
+                                    }),
+                                );
+                                ui.end_row();
+                                ui.label(t(Tr::SubStyleLabel));
+                                let current = SubStyle::from_id(&draft.subtitles.style);
+                                egui::ComboBox::from_id_salt("sub-style")
+                                    .selected_text(t(current.name()))
+                                    .show_ui(ui, |ui| {
+                                        for style in SubStyle::ALL {
+                                            ui.selectable_value(
+                                                &mut draft.subtitles.style,
+                                                style.id().to_owned(),
+                                                t(style.name()),
+                                            );
+                                        }
+                                    });
+                                ui.end_row();
+                                ui.label(t(Tr::SubPositionLabel));
+                                let current = Position::from_id(&draft.subtitles.position);
+                                egui::ComboBox::from_id_salt("sub-position")
+                                    .selected_text(t(current.name()))
+                                    .show_ui(ui, |ui| {
+                                        for place in [Position::Bottom, Position::Top] {
+                                            ui.selectable_value(
+                                                &mut draft.subtitles.position,
+                                                place.id().to_owned(),
+                                                t(place.name()),
+                                            );
+                                        }
+                                    });
+                                ui.end_row();
+                                ui.label(t(Tr::SubMarginLabel));
+                                ui.add(egui::Slider::new(&mut draft.subtitles.margin, 0.0..=150.0));
+                                ui.end_row();
                                 ui.label("");
                                 ui.checkbox(
                                     &mut draft.subtitles.auto_translate,
@@ -1483,6 +1639,8 @@ impl App {
                                 );
                                 ui.end_row();
                             });
+                        ui.label(RichText::new(t(Tr::SubPreviewLabel)).color(MUTED).small());
+                        subtitle_preview(ui, &draft.subtitles);
                         section(ui, t(Tr::SectionTranslation));
                         egui::Grid::new("tr")
                             .num_columns(2)
@@ -1697,35 +1855,112 @@ fn path_field(ui: &mut egui::Ui, value: &mut String, width: f32) {
     });
 }
 
-/// Subtitle text with a dark outline, readable on any picture.
-fn outlined(
-    painter: &egui::Painter,
-    at: egui::Pos2,
-    galley: Arc<egui::Galley>,
-    color: Color32,
-    scale: f32,
-) {
-    let d = (1.6 * scale).max(1.0);
-    for (dx, dy) in [
-        (-d, 0.0),
-        (d, 0.0),
-        (0.0, -d),
-        (0.0, d),
-        (-d, -d),
-        (d, -d),
-        (-d, d),
-        (d, d),
-    ] {
-        painter.galley_with_override_text_color(
-            at + vec2(dx, dy),
-            galley.clone(),
-            Color32::from_black_alpha(230),
-        );
-    }
-    painter.galley(at, galley, color);
-}
-
 /// How tall the scrolling part of a dialog may be, so its buttons stay inside a small window.
 pub fn dialog_height(ctx: &egui::Context) -> f32 {
     (ctx.content_rect().height() - 110.0).clamp(120.0, 700.0)
+}
+
+/// A sample of the chosen look on a dark and on a light picture.
+fn subtitle_preview(ui: &mut egui::Ui, subs: &gp_core::config::Subtitles) {
+    let look = SubStyle::from_id(&subs.style).look();
+    let size =
+        (subs.font_size * substyle::clamp_scale(subs.scale) * look.size * 0.5).clamp(9.0, 24.0);
+    let width = ui.available_width().min(560.0);
+    ui.horizontal(|ui| {
+        for ground in [
+            Color32::from_rgb(22, 28, 36),
+            Color32::from_rgb(214, 222, 228),
+        ] {
+            let (rect, _) = ui.allocate_exact_size(vec2(width / 2.0 - 4.0, 84.0), Sense::hover());
+            let painter = ui.painter_at(rect);
+            painter.rect_filled(rect, 6.0, ground);
+            let inner = rect.width() - 16.0;
+            let samples = [
+                (t(Tr::SubSampleOriginal), look.original, size),
+                (
+                    t(Tr::SubSampleTranslation),
+                    look.translation,
+                    size * subs.secondary_scale,
+                ),
+            ];
+            let galleys: Vec<_> = samples
+                .iter()
+                .map(|(text, color, size)| {
+                    painter.layout(text.to_string(), FontId::proportional(*size), *color, inner)
+                })
+                .collect();
+            let total: f32 = galleys.iter().map(|g| g.size().y + 6.0).sum();
+            let mut y = rect.center().y - total / 2.0;
+            for galley in galleys {
+                let at = pos2(rect.center().x - galley.size().x / 2.0, y);
+                if let Some(plate) = look.plate {
+                    let backdrop = Rect::from_min_size(at, galley.size()).expand2(vec2(6.0, 2.0));
+                    painter.rect_filled(backdrop, 4.0, plate);
+                }
+                let color = galley.job.sections[0].format.color;
+                y += galley.size().y + 6.0;
+                substyle::paint(&painter, at, galley, color, &look, 0.6);
+            }
+        }
+    });
+}
+
+/// Where and how a block of subtitle lines is drawn.
+struct SubDraw {
+    rect: Rect,
+    look: substyle::Look,
+    scale: f32,
+    /// Lines stack downwards from the top edge instead of upwards from the bottom one.
+    down: bool,
+}
+
+impl SubDraw {
+    /// The top of a block `height` tall whose edge-side border is at `y`.
+    fn top_of(&self, y: f32, height: f32) -> f32 {
+        if self.down { y } else { y - height }
+    }
+
+    fn next(&self, y: f32, advance: f32) -> f32 {
+        if self.down { y + advance } else { y - advance }
+    }
+
+    fn secondary(
+        &self,
+        ui: &mut egui::Ui,
+        lines: &[String],
+        lang: Option<&str>,
+        size: f32,
+        max_width: f32,
+        y: &mut f32,
+    ) {
+        let look = &self.look;
+        let ordered: Vec<&String> = if self.down {
+            lines.iter().collect()
+        } else {
+            lines.iter().rev().collect()
+        };
+        for text in ordered {
+            let font = FontId::new(size, theme::subs_family(lang, text));
+            let galley =
+                ui.painter()
+                    .layout(text.replace('\n', " "), font, look.translation, max_width);
+            let at = pos2(
+                self.rect.center().x - galley.size().x / 2.0,
+                self.top_of(*y, galley.size().y),
+            );
+            if let Some(plate) = look.plate {
+                let backdrop = Rect::from_min_size(at, galley.size()).expand2(vec2(10.0, 3.0));
+                ui.painter().rect_filled(backdrop, 6.0, plate);
+            }
+            substyle::paint(
+                ui.painter(),
+                at,
+                galley.clone(),
+                look.translation,
+                look,
+                self.scale,
+            );
+            *y = self.next(*y, galley.size().y + 8.0);
+        }
+    }
 }

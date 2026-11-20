@@ -24,6 +24,8 @@ pub enum Command {
     ToggleTranslation,
     Slower,
     Faster,
+    SubtitlesSmaller,
+    SubtitlesLarger,
     OpenFile,
     Search,
     Escape,
@@ -48,6 +50,8 @@ impl Command {
             Command::ToggleTranslation => "toggle_translation",
             Command::Slower => "slower",
             Command::Faster => "faster",
+            Command::SubtitlesSmaller => "subtitles_smaller",
+            Command::SubtitlesLarger => "subtitles_larger",
             Command::OpenFile => "open_file",
             Command::Search => "search",
             Command::Escape => "escape",
@@ -63,7 +67,7 @@ enum Chord {
     Any,
 }
 
-const BINDINGS: [(Key, Chord, Command); 19] = [
+const BINDINGS: [(Key, Chord, Command); 22] = [
     (Key::Space, Chord::Plain, Command::PlayPause),
     (Key::ArrowLeft, Chord::Plain, Command::Back),
     (Key::ArrowRight, Chord::Plain, Command::Forward),
@@ -80,6 +84,9 @@ const BINDINGS: [(Key, Chord, Command); 19] = [
     (Key::Num2, Chord::Plain, Command::ToggleTranslation),
     (Key::OpenBracket, Chord::Plain, Command::Slower),
     (Key::CloseBracket, Chord::Plain, Command::Faster),
+    (Key::Minus, Chord::Plain, Command::SubtitlesSmaller),
+    (Key::Equals, Chord::Plain, Command::SubtitlesLarger),
+    (Key::Plus, Chord::Plain, Command::SubtitlesLarger),
     (Key::O, Chord::Ctrl, Command::OpenFile),
     (Key::F, Chord::Ctrl, Command::Search),
     (Key::Escape, Chord::Any, Command::Escape),
@@ -592,6 +599,8 @@ mod tests {
                 ("2", Command::ToggleTranslation),
                 ("[", Command::Slower),
                 ("]", Command::Faster),
+                ("-", Command::SubtitlesSmaller),
+                ("=", Command::SubtitlesLarger),
                 ("shift+s", Command::RepeatLine),
                 ("ctrl+o", Command::OpenFile),
                 ("ctrl+f", Command::Search),

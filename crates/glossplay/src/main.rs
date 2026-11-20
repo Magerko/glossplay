@@ -18,6 +18,7 @@ mod session;
 mod setup_text;
 mod setup_ui;
 mod shell;
+mod substyle;
 mod theme;
 mod tts_setup;
 mod tts_ui;
@@ -50,6 +51,9 @@ Usage: glossplay [FILE or URL] [options]
                                     translation shown under it to FILE.tr.srt
       --screenshot FILE.png         save the window as an image at the end
       --controls --sidebar --word N --paused   what to show in the screenshot
+      --sub-style NAME --sub-scale N --sub-position bottom|top --sub-margin N
+                                    subtitle look for this run (style: plate, outline, bold,
+                                    yellow, light; scale 0.6 to 2.0)
       --empty                       (with --selftest) no file: the start screen; with
                                     --settings the top of the settings window
       --words-tab                   show the saved words in the sidebar
@@ -154,6 +158,10 @@ fn main() {
             "--tts-dialog" => plan.tts_dialog = true,
             "--settings-voice" => plan.settings_voice = true,
             "--subs-menu" => plan.subs_menu = true,
+            "--sub-style" => plan.sub_style = Some(value()),
+            "--sub-scale" => plan.sub_scale = value().parse().ok(),
+            "--sub-position" => plan.sub_position = Some(value()),
+            "--sub-margin" => plan.sub_margin = value().parse().ok(),
             "--keys" => plan.keys = value().split(',').map(str::to_owned).collect(),
             "--clipboard" => plan.clipboard = value(),
             "--search-dialog" => {

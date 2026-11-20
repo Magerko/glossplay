@@ -10,7 +10,6 @@ pub const LINE: Color32 = Color32::from_rgb(48, 52, 62);
 pub const TEXT: Color32 = Color32::from_rgb(232, 234, 240);
 pub const MUTED: Color32 = Color32::from_rgb(140, 147, 162);
 pub const ACCENT: Color32 = Color32::from_rgb(94, 201, 168);
-pub const SUB_PRIMARY: Color32 = Color32::from_rgb(255, 255, 255);
 pub const SUB_SECONDARY: Color32 = Color32::from_rgb(246, 214, 128);
 pub const DANGER: Color32 = Color32::from_rgb(235, 110, 110);
 

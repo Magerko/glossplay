@@ -222,6 +222,7 @@ key.
 | `←` / `→` | Back / forward 5 seconds |
 | `↑` / `↓` | Volume |
 | `[` / `]` | Slower / faster |
+| `-` / `=` | Smaller / larger subtitles |
 | `1` / `2` | Hide or show the original / the translation |
 | `T` | Transcript and saved words |
 | `F`, double click | Full screen |

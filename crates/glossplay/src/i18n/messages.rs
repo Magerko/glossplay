@@ -116,6 +116,34 @@ messages! {
         "Автопауза після кожної репліки (P)"
     ],
     SettingsMenu => ["Settings…", "Настройки…", "Налаштування…"],
+    SubStyleLabel => ["Style", "Стиль", "Стиль"],
+    SubStylePlate => ["Plate", "Плашка", "Плашка"],
+    SubStyleOutline => ["Outline", "Контур", "Контур"],
+    SubStyleBold => ["Large and bold", "Крупный жирный", "Великий жирний"],
+    SubStyleYellow => ["Classic yellow", "Жёлтый классический", "Жовтий класичний"],
+    SubStyleLight => ["Light plate", "Светлая плашка", "Світла плашка"],
+    SubSizeLabel => ["Size", "Размер", "Розмір"],
+    SubSizeMenu => [
+        "Size {0}% (- / =)",
+        "Размер {0}% (- / =)",
+        "Розмір {0}% (- / =)"
+    ],
+    SubPositionLabel => ["Position", "Положение", "Положення"],
+    SubPosBottom => ["Bottom", "Снизу", "Знизу"],
+    SubPosTop => ["Top", "Сверху", "Зверху"],
+    SubMarginLabel => ["Distance from the edge", "Отступ от края", "Відступ від краю"],
+    SubPreviewLabel => ["Preview", "Предпросмотр", "Попередній перегляд"],
+    SubSampleOriginal => [
+        "Learn a language by watching",
+        "Learn a language by watching",
+        "Learn a language by watching"
+    ],
+    SubSampleTranslation => [
+        "Learn while you watch",
+        "Учитесь, пока смотрите",
+        "Вчіться, поки дивитеся"
+    ],
+    SubSizeToast => ["Subtitle size {0}%", "Размер субтитров {0}%", "Розмір субтитрів {0}%"],
     CouldNotSaveSettings => [
         "Could not save settings: {0}",
         "Не удалось сохранить настройки: {0}",

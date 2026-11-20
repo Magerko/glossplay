@@ -89,6 +89,14 @@ pub struct Subtitles {
     /// In points at a window height of 720; scales with the window.
     pub font_size: f32,
     pub secondary_scale: f32,
+    /// A look from `glossplay`'s list of subtitle styles; an unknown name means the default one.
+    pub style: String,
+    /// One multiplier for the original and the translation: 0.6 to 2.0.
+    pub scale: f32,
+    /// `bottom` or `top`.
+    pub position: String,
+    /// Extra distance from that edge, in points at a window height of 720.
+    pub margin: f32,
     pub show_primary: bool,
     pub show_secondary: bool,
     pub auto_translate: bool,
@@ -99,6 +107,10 @@ impl Default for Subtitles {
         Subtitles {
             font_size: 30.0,
             secondary_scale: 0.8,
+            style: "plate".into(),
+            scale: 1.0,
+            position: "bottom".into(),
+            margin: 0.0,
             show_primary: true,
             show_secondary: true,
             auto_translate: true,
@@ -264,6 +276,32 @@ mod tests {
         assert_eq!(c.translation.provider, "google");
         assert!(!c.tts.enabled, "the voice-over stays off until asked for");
         assert_eq!((c.tts.original_volume, c.tts.voice_volume), (25.0, 100.0));
+    }
+
+    #[test]
+    fn subtitle_look_defaults_keep_the_old_appearance() {
+        let old = Config::from_toml(
+            "[subtitles]
+font_size = 36.0
+",
+        )
+        .unwrap();
+        assert_eq!(old.subtitles.font_size, 36.0);
+        assert_eq!(
+            (old.subtitles.style.as_str(), old.subtitles.scale),
+            ("plate", 1.0)
+        );
+        assert_eq!(
+            (old.subtitles.position.as_str(), old.subtitles.margin),
+            ("bottom", 0.0)
+        );
+        let odd = Config::from_toml(
+            "[subtitles]
+style = \"from-the-future\"
+",
+        )
+        .unwrap();
+        assert_eq!(odd.subtitles.style, "from-the-future");
     }
 
     #[test]

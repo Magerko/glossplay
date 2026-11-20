@@ -1442,7 +1442,7 @@ fn press_key(app: &mut App, ctx: &egui::Context, args: &Value) -> Result<Outcome
     Ok(Outcome::Now(Ok(json!({"key": name, "action": did}))))
 }
 
-const KEYS: &str = "keys: space, left, right, up, down, a, s, d, p, f, t, m, 1, 2, [, ], escape, \
+const KEYS: &str = "keys: space, left, right, up, down, a, s, d, p, f, t, m, 1, 2, [, ], -, =, escape, \
                     ctrl+f, ctrl+v (with text)";
 
 /// A path the agent asked to write: absolute, in an existing folder, with the extension the

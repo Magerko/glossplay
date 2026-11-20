@@ -116,7 +116,22 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Result<App, String> {
-        let (cfg, config_error) = paths::load_config();
+        let (mut cfg, config_error) = paths::load_config();
+        if let Some(plan) = &launch.selftest {
+            let subs = &mut cfg.subtitles;
+            if let Some(v) = &plan.sub_style {
+                subs.style = v.clone();
+            }
+            if let Some(v) = plan.sub_scale {
+                subs.scale = v;
+            }
+            if let Some(v) = &plan.sub_position {
+                subs.position = v.clone();
+            }
+            if let Some(v) = plan.sub_margin {
+                subs.margin = v;
+            }
+        }
         // A self-test has its language set already; the config must not change it.
         if launch.selftest.is_none() {
             i18n::apply_setting(&cfg.general.ui_lang);
@@ -243,10 +258,11 @@ impl App {
     }
 
     fn sync_shell_switch(&mut self) {
-        if shell::SUPPORTED && self.selftest.is_none() {
-            if let Ok(state) = shell::state() {
-                self.cfg.general.shell_integration = state == shell::State::Here;
-            }
+        if shell::SUPPORTED
+            && self.selftest.is_none()
+            && let Ok(state) = shell::state()
+        {
+            self.cfg.general.shell_integration = state == shell::State::Here;
         }
     }
 
