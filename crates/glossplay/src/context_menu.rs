@@ -291,13 +291,11 @@ impl App {
             if placed(&mut p.places, "fill", r) {
                 p.fill = Some(!now.fill);
             }
-            if ui
-                .add(egui::Button::selectable(
-                    now.deinterlace,
-                    t(Tr::MenuDeinterlace),
-                ))
-                .clicked()
-            {
+            let r = ui.add(egui::Button::selectable(
+                now.deinterlace,
+                t(Tr::MenuDeinterlace),
+            ));
+            if placed(&mut p.places, "deinterlace", r) {
                 p.deinterlace = Some(!now.deinterlace);
             }
             ui.separator();
