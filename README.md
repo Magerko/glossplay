@@ -59,8 +59,14 @@ Known limits of this version:
 
 - Live transcription may not keep up with playback without a graphics card; on the processor,
   let it finish first.
-- Transcription works for local files and for streams from your own TorrServer; for video
-  played from a link on a web page it does not.
+- YouTube's automatic captions are offered only in the language of the video, the language you
+  learn and your native one. Older automatic captions have no punctuation, so phrases are split
+  at pauses and a phrase sometimes breaks off in the middle.
+- Subtitles embedded in a network stream (TorrServer, direct links) appear as you watch: the
+  translation and the phrase list fill in only for the parts already played.
+- Speech recognition works for local files, for streams from your own TorrServer and for sites
+  where yt-dlp gives a separate audio track over HTTP (YouTube, for example). Streams that only
+  come as HLS are not supported.
 - Voice-over was tried only on an NVIDIA card. Its Vulkan build is meant for any graphics card
   but has not been tried on AMD or Intel.
 - The quality of the voice depends on the model; one-word lines ("Yes.", "No.") can sound uneven.
@@ -198,8 +204,8 @@ the laws of your country.
 Type a query and you get a list (title, size, seeds, source); double-click a row to watch. If the
 torrent holds several video files, you choose the file.
 
-Limits: subtitles embedded in a streamed file can only be read once the whole file has been
-downloaded (`.srt` files lying next to the video in the torrent are picked up at once); a
+Limits: subtitles embedded in a streamed file appear as the video plays (`.srt` files lying
+next to the video in the torrent are picked up at once); a
 TorrServer protected by a password is not supported; the search stays hidden until both addresses
 are filled in. The settings live in the `[sources]` section of `config.toml` (`torznab_url`,
 `torznab_key`, `torrserver_url`); the environment variable `GLOSSPLAY_TORZNAB_KEY` overrides the
@@ -229,6 +235,8 @@ Letter keys work by their place on the keyboard, whatever the layout: with a Rus
 `S` still repeats the line. While a dialog is open only `Esc` works; while you type in a field
 only `Esc`, `Ctrl+O` and `Ctrl+F` do. A magnet link opens through TorrServer, so it needs the
 sources set up.
+
+On macOS, ⌘ is used instead of Ctrl.
 
 Subtitle files next to the video (`Movie.srt`, `Movie.en.srt`, `Movie.ru.ass`) are picked up
 automatically. You can also drop a subtitle file on the window.
