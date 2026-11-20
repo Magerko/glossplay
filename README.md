@@ -39,6 +39,11 @@ and keeps the words you want to remember.
 - **Plays nearly everything.** Playback is done by [mpv](https://mpv.io), so anything FFmpeg
   can open works: MKV, MP4, WebM, AVI, MOV, TS; H.264, HEVC, AV1, VP9 and the rest, with
   hardware decoding. Paste a link to an online video and it plays: Glossplay downloads yt-dlp by itself and keeps it up to date. On the first launch it fetches yt-dlp (about 23 MB) into its own data folder.
+- **Right-click menu on the picture.** Speed, audio and subtitle tracks, aspect ratio, rotation
+  and fill, saving the frame as a PNG (with or without subtitles) or copying it, copying the
+  time or a link to the moment, always on top, and **Video info** (`I`): codecs, resolution,
+  frame rate, colour, hardware decoding, dropped frames and, for a stream, how much is loaded.
+  A stream shows when it is waiting for data, and the seek bar shows what is loaded ahead.
 - **Interface** in English, Russian, Ukrainian and Simplified Chinese (the Chinese one is a machine
   translation not yet read by a native speaker). You choose in Settings; by default it follows
   the language of the system.
@@ -241,6 +246,8 @@ key.
 | `T` | Transcript and saved words |
 | `F`, double click | Full screen |
 | `M` | Mute |
+| `I` | Video info: codecs, resolution, dropped frames, network |
+| Right click on the picture | Menu: playback, tracks, picture, saving the frame, window |
 | `Ctrl+O` | Open a file |
 | `Ctrl+F` | Search your sources (shown when sources are set up) |
 | `Ctrl+V` | Open a copied link, magnet link or file path (when no text field has the cursor) |

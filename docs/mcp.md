@@ -92,7 +92,8 @@ All times are in seconds. Results are JSON text.
 | `seek` | `seconds`, `exact?` (true) | Jumps there; `exact: false` lands on a keyframe, faster. |
 | `set_speed` | `speed` (0.25–4) | Playback speed. |
 | `set_volume` | `percent` (0–150), `muted?` | Player volume. |
-| `status` | — | Position, duration, pause, speed, volume, video size and decoder, title, languages, window geometry, open card and dialogs, voice-over and recognition state, last message. |
+| `status` | — | Position, duration, pause, speed, volume, video size and decoder, title, languages, window geometry, open card and dialogs, voice-over and recognition state, whether a stream is buffering (`buffering`), last message. |
+| `video_info` | — | What the Video info window shows, by section: file (title, source — a link by its host only — format, duration, size), video (codec, resolution, frame rate, bitrate, pixel format, colour and HDR, hardware decoding), sound, subtitles, playback (dropped and late frames, output frame rate) and, for a stream, network (cache state, seconds and bytes buffered ahead, download speed). |
 
 ### Subtitles and languages
 
@@ -129,12 +130,13 @@ All times are in seconds. Results are JSON text.
 | `toggle_sidebar` | `open?`, `tab?`: `transcript` / `words` | Sidebar with the transcript or saved words. |
 | `search_transcript` | `text` | Types into the sidebar search and returns the matching lines; `""` clears it. |
 | `show_controls` | `visible`: `true`, `false` or `"auto"` | `false` hides the control bar, the title strip and pop-up messages, leaving only the video and subtitles; `true` keeps them shown; `"auto"` is the usual behaviour. |
-| `open_settings` | `section?`: a tab — `languages`, `subtitles`, `translation`, `speech_recognition`, `voice_over`, `words`, `sources`, `player` (`top` is the first one) — or `help`, `speech_recognition_setup`, `voice_over_setup` | Settings window at that tab, the How to use window, or a setup dialog. `status` reports the open tab as `dialogs.settings_tab`. |
-| `close_dialogs` | — | Closes Settings, the How to use window and the setup dialogs without saving. |
+| `open_settings` | `section?`: a tab — `languages`, `subtitles`, `translation`, `speech_recognition`, `voice_over`, `words`, `sources`, `player` (`top` is the first one) — or `help`, `video_info`, `speech_recognition_setup`, `voice_over_setup` | Settings window at that tab, the How to use window, or a setup dialog. `status` reports the open tab as `dialogs.settings_tab`. |
+| `close_dialogs` | — | Closes Settings, the How to use window, the Video info window and the setup dialogs without saving. |
 | `set_ui_language` | `lang`: `auto`, `en`, `ru`, `uk`, `zh` | Interface language (`zh` is Simplified Chinese). |
 | `set_window` | `width?`, `height?`, `x?`, `y?`, `always_on_top?` | Drawing-area size and screen position in pixels (a 1080×1920 window may be taller than the screen), and whether the window stays on top. Answers with the geometry it got. |
-| `press_key` | `key`, `text?` | A player shortcut, judged like the keyboard: `space`, `left`, `right`, `up`, `down`, `a`, `s`, `d`, `p`, `f`, `t`, `m`, `1`, `2`, `[`, `]`, `-` and `=` (subtitle size, 10% steps), `escape`, `ctrl+f`, and `ctrl+v` with `text` standing for the clipboard (a link, magnet link or file path opens; anything else shows a message). Over a dialog only `escape` works. `ctrl+o` is refused: it opens the system file dialog, use `open`. On macOS `ctrl` means ⌘. |
+| `press_key` | `key`, `text?` | A player shortcut, judged like the keyboard: `space`, `left`, `right`, `up`, `down`, `a`, `s`, `d`, `p`, `f`, `t`, `m`, `i` (the Video info window), `1`, `2`, `[`, `]`, `-` and `=` (subtitle size, 10% steps), `escape`, `ctrl+f`, and `ctrl+v` with `text` standing for the clipboard (a link, magnet link or file path opens; anything else shows a message). Over a dialog only `escape` works. `ctrl+o` is refused: it opens the system file dialog, use `open`. On macOS `ctrl` means ⌘. |
 | `screenshot` | `path`, `overwrite?` | Saves the window as drawn (with subtitles, cards, dialogs) to a PNG. |
+| `save_frame` | `subtitles?` (false), `path?`, `overwrite?` | Saves the frame on screen to a PNG as the picture's right-click menu does: without subtitles at the video's own size (mpv's screenshot), or with them as the window shows the picture, the control bar and anything over the picture left out. Without `path` it goes to the frames folder of Settings → Player (`Pictures/Glossplay` by default) under a name made of the title and the moment. Answers with the file and its size once it is written. |
 | `pointer` | `action`: `move`, `click`, `double_click`, `drag`, `type`, `paste`, `hide`, `where`; `x?`, `y?`, `seconds?`, `text?` | Recording mode only (`GLOSSPLAY_RECORD_DIR`): moves a pointer of its own over the window in window pixels and clicks, drags (from where it is), types into the focused field or pastes `text` as Ctrl+V would, as a mouse and keyboard would; `where` lists the named places on screen (buttons, sliders, the URL field, transcript rows, torrent files) with their centres; the recording shows it as an arrow with a ring at each click. Answers when the move is over. |
 
 ## Example: setting up a shot
@@ -161,6 +163,8 @@ The agent prepares the scene; the recorder captures the area `status` reports.
 - `open` accepts what the player's own Open does — any local file or link — and plays it.
 - Files are written only where the agent asks: `screenshot` writes the PNG at the given path,
   in a folder that must exist, and replaces an existing file only with `overwrite: true`.
+  `save_frame` does the same with a path; without one it writes a new file in the frames
+  folder of the settings and never replaces one there.
   `save_word` writes to the player's word list and keeps a still of the video in the
   player's data folder, as the Save button does.
 - `set_languages`, `set_ui_language` and `voice_over` change settings as the Settings window
