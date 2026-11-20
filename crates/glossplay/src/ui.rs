@@ -288,7 +288,10 @@ impl App {
         } else if !self.snap.paused {
             ui.ctx().request_repaint_after(HIDE_AFTER);
         }
-        let scale = (rect.height() / 720.0).clamp(0.6, 3.0);
+        // A tall window (a vertical recording, a phone-shaped layout) must not blow the text up.
+        let scale = (rect.height() / 720.0)
+            .min(rect.width() / 1280.0)
+            .clamp(0.6, 3.0);
         let bottom = rect.bottom()
             - if visible {
                 CONTROLS_HEIGHT + 14.0
