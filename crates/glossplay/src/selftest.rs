@@ -878,6 +878,7 @@ fn report_dub(st: &mut State, app: &App) {
             bad.push(p.start);
         }
     }
+    println!("dub_voice={}", s.voice);
     println!("dub_skipped={}", s.skipped);
     println!("dub_max_lag_ms={}", s.max_lag());
     println!("dub_overlaps={}", s.overlaps);

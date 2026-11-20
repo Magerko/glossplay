@@ -182,6 +182,10 @@ pub struct Tts {
     /// heard (see `dub_plan::percent_gain`); the voice volume is in the same percents.
     pub original_volume: f64,
     pub voice_volume: f64,
+    /// Whose voice the installed engine speaks in: "speaker", copied from the film's own
+    /// speech, or "default", one standard voice. `voice` below names a voice of a server of
+    /// the user's own instead.
+    pub voice_source: String,
     /// What the install button sets up: "vulkan" (any graphics card) or "nvidia".
     pub install_engine: String,
     /// An OpenAI-style speech server of the user's own; empty runs the installed engine.
@@ -196,6 +200,7 @@ impl Default for Tts {
             enabled: false,
             original_volume: 35.0,
             voice_volume: 100.0,
+            voice_source: "speaker".into(),
             install_engine: "vulkan".into(),
             base_url: String::new(),
             model: String::new(),
@@ -281,6 +286,7 @@ mod tests {
         assert_eq!(c.translation.provider, "google");
         assert!(!c.tts.enabled, "the voice-over stays off until asked for");
         assert_eq!((c.tts.original_volume, c.tts.voice_volume), (35.0, 100.0));
+        assert_eq!(c.tts.voice_source, "speaker");
     }
 
     #[test]

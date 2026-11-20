@@ -101,12 +101,25 @@ pub fn extract_pcm(
     start: Ms,
     duration: Ms,
 ) -> Result<Vec<i16>, MediaError> {
-    let (ss, t) = (secs(start), secs(duration));
+    extract_pcm_at(ffmpeg, media, input, stream_index, start, duration, 16_000)
+}
+
+/// [`extract_pcm`] at another sample rate.
+pub fn extract_pcm_at(
+    ffmpeg: &Path,
+    media: &str,
+    input: &[String],
+    stream_index: Option<u32>,
+    start: Ms,
+    duration: Ms,
+    rate: u32,
+) -> Result<Vec<i16>, MediaError> {
+    let (ss, t, ar) = (secs(start), secs(duration), rate.to_string());
     let map = stream_index.map_or("0:a:0".to_owned(), |i| format!("0:{i}"));
     let mut args = vec!["-ss", &ss, "-t", &t];
     args.extend(with_input(input, media));
     args.extend([
-        "-map", &map, "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-",
+        "-map", &map, "-vn", "-ac", "1", "-ar", &ar, "-f", "s16le", "-",
     ]);
     let bytes = run(ffmpeg, &args)?;
     Ok(bytes

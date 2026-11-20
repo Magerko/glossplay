@@ -1179,8 +1179,15 @@ impl App {
             &tts.base_url,
             &tts.model,
             &tts.voice,
+            &tts.voice_source,
             &self.cfg.general.native_lang,
-        ) != (&old_tts.base_url, &old_tts.model, &old_tts.voice, &old_lang);
+        ) != (
+            &old_tts.base_url,
+            &old_tts.model,
+            &old_tts.voice,
+            &old_tts.voice_source,
+            &old_lang,
+        );
         if voice_changed || !tts.enabled {
             self.dub = None;
         }

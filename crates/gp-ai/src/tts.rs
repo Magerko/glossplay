@@ -4,12 +4,55 @@
 use crate::{AiError, http};
 use gp_core::Ms;
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SpeakOptions {
     /// Ask for a clip of about this length.
     pub target_ms: Option<Ms>,
     pub speed: Option<f32>,
+    /// The same seed gives the same clip for the same text and voice.
+    pub seed: Option<u32>,
+    /// A voice to copy (audio.cpp `voice_ref`); without one OmniVoice makes up a speaker for
+    /// every request.
+    pub reference: Option<Arc<Reference>>,
+    /// A described voice ("male, middle-aged") for when there is nothing to copy.
+    pub instruct: Option<String>,
+}
+
+/// A sample of a voice: a WAV file and the words said in it, which the engine needs too.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reference {
+    base64: String,
+    pub text: String,
+}
+
+impl Reference {
+    pub fn new(wav: &[u8], text: &str) -> Reference {
+        Reference {
+            base64: base64(wav),
+            text: text.trim().to_owned(),
+        }
+    }
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, &b)| n | u32::from(b) << (16 - 8 * i));
+        for k in 0..4 {
+            if k <= chunk.len() {
+                out.push(ABC[(n >> (18 - 6 * k) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// A synthesized clip: the WAV file as it came, and what its header says.
@@ -64,6 +107,19 @@ impl SpeechServer {
         }
         if let Some(speed) = opts.speed.filter(|s| (*s - 1.0).abs() > f32::EPSILON) {
             body.insert("speed".into(), json!(speed));
+        }
+        if let Some(seed) = opts.seed {
+            body.insert("seed".into(), json!(seed));
+        }
+        if let Some(r) = &opts.reference {
+            body.insert(
+                "voice_ref".into(),
+                json!({ "type": "base64", "data": r.base64 }),
+            );
+            body.insert("reference_text".into(), json!(r.text));
+        }
+        if let Some(instruct) = &opts.instruct {
+            body.insert("instruct".into(), json!(instruct));
         }
         if let Some(ms) = opts.target_ms {
             // Only inside `options` does audio.cpp take it; at the top level it is ignored.
@@ -181,7 +237,7 @@ mod tests {
                 "ru-RU",
                 &SpeakOptions {
                     target_ms: Some(2_300),
-                    speed: None,
+                    ..SpeakOptions::default()
                 },
             )
             .unwrap();
@@ -212,8 +268,8 @@ mod tests {
                 "Да, конечно.",
                 "uk",
                 &SpeakOptions {
-                    target_ms: None,
                     speed: Some(1.25),
+                    ..SpeakOptions::default()
                 },
             )
             .unwrap();
@@ -225,6 +281,31 @@ mod tests {
                    "voice": "anna", "speed": 1.25})
         );
         assert_ne!(tts.id(), SpeechServer::new(&srv.url, "", "boris").id());
+    }
+
+    #[test]
+    fn a_voice_to_copy_goes_with_its_words_and_a_seed() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar\xff"), "Zm9vYmFy/w==");
+        let srv = TestServer::start_replies(vec![wav_reply(wav(24_000, 800))]);
+        let tts = SpeechServer::new(&srv.url, "omnivoice", "");
+        let opts = SpeakOptions {
+            seed: Some(1),
+            reference: Some(Arc::new(Reference::new(b"RIFF", " Hello there. "))),
+            ..SpeakOptions::default()
+        };
+        tts.synthesize("Привет.", "ru", &opts).unwrap();
+        let body: Value = serde_json::from_str(&srv.received.lock().unwrap()[0].body).unwrap();
+        assert_eq!(
+            body,
+            json!({"model": "omnivoice", "input": "Привет.", "response_format": "wav",
+                   "language": "ru", "seed": 1,
+                   "voice_ref": {"type": "base64", "data": "UklGRg=="},
+                   "reference_text": "Hello there."})
+        );
     }
 
     #[test]

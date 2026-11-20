@@ -7,12 +7,14 @@ use crate::setup_text as text;
 use crate::tts_setup::{self, TtsInstall};
 use eframe::egui;
 use gp_ai::AiError;
-use gp_ai::tts::{SpeakOptions, SpeechServer, TtsEngine, Wav, parse_wav};
-use gp_core::Ms;
+use gp_ai::tts::{Reference, SpeakOptions, SpeechServer, TtsEngine, Wav, parse_wav};
+use gp_core::asr_plan::Loudness;
 use gp_core::dub_plan::{self, Decision, Item, MAX_LAG, Unit};
+use gp_core::{Cue, Ms, loudness, voice_sample};
 use gp_media::mpv::Mpv;
 use gp_media::tools::{self, ServerCommand, ServerProcess};
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,6 +37,16 @@ const SEEK_JUMP: Ms = 600;
 const AIM_LATE: f64 = 80.0;
 const TICK: Duration = Duration::from_millis(10);
 const SERVER_THREADS: usize = 8;
+/// Every request of the installed engine has the same seed, so a line said again sounds the same.
+const SEED: u32 = 1;
+/// The standard voice is made once, from a description, and then copied like a speaker's.
+/// A seed alone does not keep OmniVoice to one speaker: ten lines with seed 42 came out in
+/// voices from 113 to 242 Hz.
+const STANDARD_TEXT: &str = "Hello there. I am going to read this text slowly and clearly, so that every word can be heard.";
+const STANDARD_INSTRUCT: &str = "male, middle-aged, moderate pitch";
+const SAMPLE_RATE: u32 = 24_000;
+/// Stretches tried as a sample before settling for the standard voice.
+const SAMPLE_TRIES: usize = 12;
 
 pub enum Source {
     Installed(TtsInstall),
@@ -45,9 +57,26 @@ pub enum Source {
     },
 }
 
+/// Where a sample of the speaker's voice comes from: the film's sound, read the way speech
+/// recognition reads it, and the lines said in it.
+pub struct SpeakerSound {
+    pub ffmpeg: PathBuf,
+    pub media: String,
+    pub input: Vec<String>,
+    pub audio_index: Option<u32>,
+    pub media_key: String,
+    pub cues: Vec<Cue>,
+}
+
 pub struct DubConfig {
     pub source: Source,
     pub voice: String,
+    /// The installed engine speaks in the voice of the film's speaker (see
+    /// [`Dub::set_speaker`]) when this is set, in the standard voice otherwise. A server of the
+    /// user's own gets neither: the speaker's voice stays on this computer.
+    pub copy_speaker: bool,
+    /// Voice samples, kept per film so every session speaks in the same voice.
+    pub samples_dir: PathBuf,
     pub lang: String,
     pub voice_volume: f64,
     pub mpv_path: String,
@@ -94,6 +123,8 @@ pub struct Stats {
     /// From the start of the voice-over to the first clip ready to play.
     pub first_clip: Option<Duration>,
     pub server_starts: usize,
+    /// Whose voice the clips are in, for the self-test report.
+    pub voice: String,
 }
 
 impl Stats {
@@ -110,6 +141,8 @@ impl Stats {
 #[derive(Default)]
 struct Shared {
     units: Vec<Unit>,
+    /// The film playing now, to copy the voice of.
+    speaker: Option<Arc<SpeakerSound>>,
     clips: HashMap<Unit, Clip>,
     failed: HashSet<Unit>,
     pos: Ms,
@@ -192,6 +225,8 @@ impl Dub {
         let worker = Worker {
             cfg: cfg.clone(),
             engine_id,
+            voice: RefCell::new(None),
+            made: std::cell::Cell::new(0),
             shared: shared.clone(),
             cancel: dub.cancel.clone(),
             server: dub.server.clone(),
@@ -212,6 +247,19 @@ impl Dub {
     }
 
     /// The lines around the playhead, as the subtitles have them now.
+    /// The film whose lines come next: its voice is chosen before the first of them.
+    pub fn set_speaker(&self, sound: SpeakerSound) {
+        lock(&self.shared).speaker = Some(Arc::new(sound));
+    }
+
+    /// The film the voice-over knows of.
+    pub fn speaker_key(&self) -> Option<String> {
+        lock(&self.shared)
+            .speaker
+            .as_ref()
+            .map(|s| s.media_key.clone())
+    }
+
     pub fn set_units(&self, units: Vec<Unit>) {
         let mut s = lock(&self.shared);
         if s.units != units {
@@ -366,9 +414,194 @@ enum Failure {
     Cancelled,
 }
 
+/// The voice every clip of a session is spoken in.
+#[derive(Clone, Default)]
+struct Voice {
+    /// Clips in another voice are other clips in the cache.
+    id: String,
+    reference: Option<Arc<Reference>>,
+    speed: Option<f32>,
+    speaker: bool,
+    about: String,
+}
+
+impl Voice {
+    fn copied(wav: &[u8], text: &str, speed: Option<f32>, speaker: bool, about: String) -> Voice {
+        let digest =
+            Sha256::digest([wav, text.as_bytes(), format!("{speed:?}").as_bytes()].concat());
+        let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+        Voice {
+            id: format!("{}-{hex}", if speaker { "speaker" } else { "standard" }),
+            reference: Some(Arc::new(Reference::new(wav, text))),
+            speed,
+            speaker,
+            about,
+        }
+    }
+}
+
+/// The loudness a voice sample is brought to, in LUFS.
+const SAMPLE_LUFS: f64 = -23.0;
+
+/// The loudness of every clip, in LUFS: about 13 LU over a lecture at the default original
+/// volume of 35%, so the voice is clearly on top without drowning the speaker. The engine gives
+/// each voice a loudness of its own: at one volume setting the standard voice came out 3-7 dB
+/// quieter than one copied from a lecture.
+const CLIP_LUFS: f64 = -16.0;
+
+/// Peaks of samples and clips stay under this, in dBFS.
+const CEILING: f64 = -1.0;
+
+/// Bumped when clips are made differently, so the ones cached before are made again.
+const CLIP_MAKING: &str = "lufs-16";
+
+/// `wav` brought to `lufs`; a file that is not mono 16-bit PCM is left as it is.
+fn leveled(wav: &[u8], lufs: f64) -> Option<Vec<u8>> {
+    let (mut pcm, rate) = wav_pcm(wav)?;
+    loudness::normalize(&mut pcm, rate, lufs, CEILING);
+    Some(wav_file(&pcm, rate))
+}
+
+/// The samples of a mono 16-bit WAV file, with its rate; `None` for any other kind.
+fn wav_pcm(wav: &[u8]) -> Option<(Vec<i16>, u32)> {
+    let u32_at = |i: usize| {
+        wav.get(i..i + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let u16_at = |i: usize| wav.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let (mut at, mut format) = (12, None);
+    while let (Some(id), Some(len)) = (wav.get(at..at + 4), u32_at(at + 4)) {
+        let body = at + 8;
+        match id {
+            b"fmt " => format = Some((u16_at(body + 2)?, u32_at(body + 4)?, u16_at(body + 14)?)),
+            b"data" => {
+                let (channels, rate, bits) = format?;
+                if channels != 1 || bits != 16 {
+                    return None;
+                }
+                let end = (body + len as usize).min(wav.len());
+                let pcm = wav[body..end]
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| i16::from_le_bytes(*b))
+                    .collect();
+                return Some((pcm, rate));
+            }
+            _ => {}
+        }
+        at = body + len as usize + (len as usize & 1);
+    }
+    None
+}
+
+/// A mono 16-bit WAV file.
+fn wav_file(pcm: &[i16], rate: u32) -> Vec<u8> {
+    let data = (pcm.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + data as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data.to_le_bytes());
+    for s in pcm {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    out
+}
+
+/// The sample of a film's speaker as saved: where it was taken and what is said in it.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedSample {
+    start: Ms,
+    end: Ms,
+    text: String,
+    speed: f32,
+}
+
+/// The files a film's sample is kept in.
+fn sample_files(dir: &Path, media_key: &str) -> (PathBuf, PathBuf) {
+    let digest = Sha256::digest(media_key.as_bytes());
+    let stem: String = digest[..12].iter().map(|b| format!("{b:02x}")).collect();
+    (
+        dir.join(format!("{stem}.wav")),
+        dir.join(format!("{stem}.json")),
+    )
+}
+
+/// A sample of the speaker from the film: the stretch the transcript offers that sounds
+/// like speech the engine can copy, saved for the next time. `None` when there is none.
+fn speaker_sample(
+    sound: &SpeakerSound,
+    dir: &Path,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<(Vec<u8>, SavedSample)> {
+    let (wav_path, json_path) = sample_files(dir, &sound.media_key);
+    if let (Ok(wav), Ok(json)) = (std::fs::read(&wav_path), std::fs::read(&json_path))
+        && let Ok(saved) = serde_json::from_slice::<SavedSample>(&json)
+    {
+        return Some((wav, saved));
+    }
+    for span in voice_sample::candidates(&sound.cues)
+        .into_iter()
+        .take(SAMPLE_TRIES)
+    {
+        if cancelled() {
+            return None;
+        }
+        let from = span.start - voice_sample::LEAD.min(span.start);
+        let Ok(pcm) = tools::extract_pcm_at(
+            &sound.ffmpeg,
+            &sound.media,
+            &sound.input,
+            sound.audio_index,
+            from,
+            span.end - from + span.room,
+            SAMPLE_RATE,
+        ) else {
+            continue;
+        };
+        let Some((start, end)) = voice_sample::sample_cut(&Loudness::new(&pcm, SAMPLE_RATE), &span)
+        else {
+            continue;
+        };
+        let at = |ms: Ms| ((ms * Ms::from(SAMPLE_RATE) / 1000) as usize).min(pcm.len());
+        let mut pcm = pcm[at(start)..at(end)].to_vec();
+        if !voice_sample::sound_fits(&Loudness::new(&pcm, SAMPLE_RATE)) {
+            continue;
+        }
+        loudness::normalize(&mut pcm, SAMPLE_RATE, SAMPLE_LUFS, CEILING);
+        let wav = wav_file(&pcm, SAMPLE_RATE);
+        let saved = SavedSample {
+            start: from + start,
+            end: from + end,
+            speed: span.speed(),
+            text: span.text,
+        };
+        let _ = std::fs::create_dir_all(dir);
+        let _ = write_clip(&wav_path, &wav);
+        if let Ok(json) = serde_json::to_vec(&saved) {
+            let _ = write_clip(&json_path, &json);
+        }
+        return Some((wav, saved));
+    }
+    None
+}
+
 struct Worker {
     cfg: Arc<DubConfig>,
     engine_id: String,
+    /// The voice of the film playing, and that film.
+    voice: RefCell<Option<(String, Voice)>>,
+    /// Clips made in that voice.
+    made: std::cell::Cell<usize>,
     shared: Arc<Mutex<Shared>>,
     cancel: Arc<AtomicBool>,
     server: Arc<Mutex<Option<ServerProcess>>>,
@@ -448,17 +681,136 @@ impl Worker {
     }
 
     fn clip_path(&self, target: Option<Ms>, text: &str) -> PathBuf {
-        let key = cache_key(
-            &self.engine_id,
-            &self.cfg.voice,
-            &self.cfg.lang,
-            text,
-            target,
-        );
+        let voice = self.voice.borrow().as_ref().map(|(_, v)| v.id.clone());
+        let voice = match voice {
+            Some(id) if !id.is_empty() => format!("{}|{id}|{CLIP_MAKING}", self.cfg.voice),
+            _ => format!("{}|{CLIP_MAKING}", self.cfg.voice),
+        };
+        let key = cache_key(&self.engine_id, &voice, &self.cfg.lang, text, target);
         self.cfg.cache_dir.join(format!("{key}.wav"))
     }
 
+    /// The voice of this session, chosen before its first clip.
+    fn choose_voice(
+        &self,
+        sound: Option<&SpeakerSound>,
+        engine: &mut Option<SpeechServer>,
+        restarts: &mut usize,
+    ) -> Result<Voice, Failure> {
+        if !matches!(self.cfg.source, Source::Installed(_)) {
+            return Ok(Voice {
+                about: "server".into(),
+                ..Voice::default()
+            });
+        }
+        if let Some(sound) = sound.filter(|_| self.cfg.copy_speaker) {
+            self.set_status(t(Tr::DubVoiceSample));
+            let found = speaker_sample(sound, &self.cfg.samples_dir, &|| self.cancelled());
+            self.set_status("");
+            if self.cancelled() {
+                return Err(Failure::Cancelled);
+            }
+            if let Some((wav, s)) = found {
+                let pace = voice_sample::Span {
+                    start: s.start,
+                    end: s.end,
+                    text: s.text.clone(),
+                    room: 0,
+                }
+                .pace();
+                let about = format!(
+                    "speaker {:.2}-{:.2} s, pace {pace:.1}, speed {:.2} | {}",
+                    s.start as f64 / 1000.0,
+                    s.end as f64 / 1000.0,
+                    s.speed,
+                    s.text
+                );
+                return Ok(Voice::copied(&wav, &s.text, Some(s.speed), true, about));
+            }
+        }
+        self.standard_voice(engine, restarts)
+    }
+
+    /// The standard voice, made on the first use and kept.
+    fn standard_voice(
+        &self,
+        engine: &mut Option<SpeechServer>,
+        restarts: &mut usize,
+    ) -> Result<Voice, Failure> {
+        let path = self.cfg.samples_dir.join("standard.wav");
+        let wav = match std::fs::read(&path) {
+            Ok(wav) if parse_wav(wav.clone()).is_ok() => wav,
+            _ => {
+                if engine.is_none() {
+                    *engine = Some(self.start_engine(restarts)?);
+                }
+                let opts = SpeakOptions {
+                    seed: Some(SEED),
+                    instruct: Some(STANDARD_INSTRUCT.into()),
+                    ..SpeakOptions::default()
+                };
+                let tts = engine.as_ref().expect("just started");
+                let wav = tts
+                    .synthesize(STANDARD_TEXT, "en", &opts)
+                    .map_err(|e| Failure::Line(e.to_string()))?;
+                let bytes = leveled(&wav.bytes, SAMPLE_LUFS).unwrap_or(wav.bytes);
+                let _ = std::fs::create_dir_all(&self.cfg.samples_dir);
+                let _ = write_clip(&path, &bytes);
+                bytes
+            }
+        };
+        Ok(Voice::copied(
+            &wav,
+            STANDARD_TEXT,
+            None,
+            false,
+            "standard".into(),
+        ))
+    }
+
     fn produce(
+        &self,
+        unit: &Unit,
+        engine: &mut Option<SpeechServer>,
+        restarts: &mut usize,
+        written: &mut usize,
+    ) -> Result<Clip, Failure> {
+        let sound = lock(&self.shared).speaker.clone();
+        let key = sound
+            .as_ref()
+            .map_or(String::new(), |s| s.media_key.clone());
+        if self.voice.borrow().as_ref().is_none_or(|(k, _)| *k != key) {
+            let voice = self.choose_voice(sound.as_deref(), engine, restarts)?;
+            lock(&self.shared).stats.voice = voice.about.clone();
+            *self.voice.borrow_mut() = Some((key.clone(), voice));
+            self.made.set(0);
+        }
+        let first_in_speaker =
+            || self.made.get() == 0 && self.voice.borrow().as_ref().is_some_and(|(_, v)| v.speaker);
+        let mut result = self.produce_in_voice(unit, engine, restarts, written);
+        // The first request after the engine starts has been dropped once with the connection
+        // reset; that is no reason to give up the speaker's voice for the whole film.
+        if matches!(result, Err(Failure::Line(_))) && first_in_speaker() {
+            result = self.produce_in_voice(unit, engine, restarts, written);
+        }
+        let result = match result {
+            // A sample the engine cannot work with shows on the first line; the film is then
+            // spoken in the standard voice, never in two.
+            Err(Failure::Line(e)) if first_in_speaker() => {
+                let voice = self.standard_voice(engine, restarts)?;
+                lock(&self.shared).stats.voice = format!("standard (the sample failed: {e})");
+                *self.voice.borrow_mut() = Some((key, voice));
+                self.produce_in_voice(unit, engine, restarts, written)
+            }
+            other => other,
+        };
+        if result.is_ok() {
+            self.made.set(self.made.get() + 1);
+        }
+        result
+    }
+
+    fn produce_in_voice(
         &self,
         unit: &Unit,
         engine: &mut Option<SpeechServer>,
@@ -497,9 +849,19 @@ impl Worker {
             lock(&self.shared).stats.cache_hits += 1;
             return Ok(wav.duration_ms);
         }
+        let voice = self
+            .voice
+            .borrow()
+            .as_ref()
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        let installed = matches!(self.cfg.source, Source::Installed(_));
         let opts = SpeakOptions {
             target_ms: target,
-            speed: None,
+            speed: voice.speed,
+            seed: installed.then_some(SEED),
+            reference: voice.reference,
+            instruct: None,
         };
         let mut retried = false;
         loop {
@@ -519,7 +881,8 @@ impl Worker {
                         tts_setup::mark_warmed_up();
                     }
                     self.set_status("");
-                    let _ = write_clip(path, &wav.bytes);
+                    let bytes = leveled(&wav.bytes, CLIP_LUFS);
+                    let _ = write_clip(path, bytes.as_deref().unwrap_or(&wav.bytes));
                     *written += 1;
                     return Ok(wav.duration_ms);
                 }
@@ -1061,5 +1424,162 @@ mod tests {
         let p = c.pos(10.0, false, 2.0);
         assert!((10_040..10_250).contains(&p), "{p}");
         assert_eq!(c.pos(10.5, false, 1.0), 10_500);
+    }
+
+    fn worker(source: Source, copy_speaker: bool, samples: &Path) -> Worker {
+        let cfg = DubConfig {
+            source,
+            voice: String::new(),
+            copy_speaker,
+            samples_dir: samples.to_owned(),
+            lang: "ru".into(),
+            voice_volume: 100.0,
+            mpv_path: String::new(),
+            silent: true,
+            cache_dir: samples.join("clips"),
+            work_dir: samples.join("work"),
+            save_dir: None,
+        };
+        Worker {
+            cfg: Arc::new(cfg),
+            engine_id: "audio.cpp/omnivoice".into(),
+            voice: RefCell::new(None),
+            made: std::cell::Cell::new(0),
+            shared: Arc::default(),
+            cancel: Arc::default(),
+            server: Arc::default(),
+            ctx: egui::Context::default(),
+            started: Instant::now(),
+        }
+    }
+
+    fn installed() -> Source {
+        Source::Installed(TtsInstall {
+            server: Some(PathBuf::from("no-such-server.exe")),
+            model: PathBuf::from("no-such-model"),
+            engine: None,
+            warmed_up: true,
+            size: 0,
+            dir: PathBuf::from("no-such-dir"),
+        })
+    }
+
+    fn film(key: &str, cues: Vec<Cue>) -> SpeakerSound {
+        SpeakerSound {
+            ffmpeg: PathBuf::from("no-such-ffmpeg.exe"),
+            media: "film.mp4".into(),
+            input: Vec::new(),
+            audio_index: None,
+            media_key: key.into(),
+            cues,
+        }
+    }
+
+    fn save_sample(dir: &Path, key: &str, text: &str) {
+        let (wav, json) = sample_files(dir, key);
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(wav, wav_file(&[100, -100, 200, -200], 24_000)).unwrap();
+        let saved = SavedSample {
+            start: 1_000,
+            end: 9_000,
+            text: text.into(),
+            speed: 1.2,
+        };
+        std::fs::write(json, serde_json::to_vec(&saved).unwrap()).unwrap();
+    }
+
+    fn choose(w: &Worker, sound: Option<&SpeakerSound>) -> Voice {
+        let (mut engine, mut restarts) = (None, 0);
+        let voice = w
+            .choose_voice(sound, &mut engine, &mut restarts)
+            .unwrap_or_else(|_| panic!("a voice"));
+        assert!(engine.is_none(), "no engine is needed for a kept voice");
+        voice
+    }
+
+    #[test]
+    fn the_speakers_sample_is_kept_per_film_and_its_clips_are_its_own() {
+        let dir = gp_core::scratch::TempDir::new("gp-dub-voice");
+        save_sample(&dir, "film-a", "They all sat down at once.");
+        save_sample(&dir, "film-b", "Another speaker says this.");
+        std::fs::write(dir.join("standard.wav"), wav_file(&[1, 2, 3], 24_000)).unwrap();
+        let w = worker(installed(), true, &dir);
+        let a = choose(&w, Some(&film("film-a", Vec::new())));
+        assert!(a.speaker && a.id.starts_with("speaker-"), "{}", a.id);
+        assert_eq!(a.speed, Some(1.2));
+        assert_eq!(
+            a.reference.as_ref().map(|r| r.text.as_str()),
+            Some("They all sat down at once.")
+        );
+        assert_eq!(choose(&w, Some(&film("film-a", Vec::new()))).id, a.id);
+        let b = choose(&w, Some(&film("film-b", Vec::new())));
+        assert_ne!(a.id, b.id);
+        let standard = choose(&w, None);
+        assert!(!standard.speaker && standard.id.starts_with("standard-"));
+        // Every voice has clips of its own in the cache.
+        let mut paths = Vec::new();
+        for v in [a, b, standard] {
+            *w.voice.borrow_mut() = Some((String::new(), v));
+            paths.push(w.clip_path(None, "Птицы"));
+        }
+        paths.dedup();
+        assert_eq!(paths.len(), 3);
+    }
+
+    #[test]
+    fn without_a_sample_or_the_choice_the_voice_is_the_standard_one() {
+        let dir = gp_core::scratch::TempDir::new("gp-dub-standard");
+        std::fs::write(dir.join("standard.wav"), wav_file(&[1, 2, 3], 24_000)).unwrap();
+        save_sample(&dir, "film-a", "They all sat down at once.");
+        // No lines to take a sample from.
+        let w = worker(installed(), true, &dir);
+        let v = choose(&w, Some(&film("film-new", Vec::new())));
+        assert!(!v.speaker && v.reference.is_some() && v.speed.is_none());
+        // A sample there is, but the standard voice was chosen.
+        let w = worker(installed(), false, &dir);
+        assert!(!choose(&w, Some(&film("film-a", Vec::new()))).speaker);
+    }
+
+    #[test]
+    fn clips_of_any_voice_come_out_equally_loud() {
+        let speech = |amp: f64| -> Vec<i16> {
+            (0..48_000)
+                .map(|i| {
+                    let on = (i / 4_800) % 2 == 0;
+                    let v = (i as f64 * 0.26).sin() * if on { amp } else { amp / 1000.0 };
+                    v as i16
+                })
+                .collect()
+        };
+        let quiet = leveled(&wav_file(&speech(900.0), 24_000), CLIP_LUFS).unwrap();
+        let loud = leveled(&wav_file(&speech(20_000.0), 24_000), CLIP_LUFS).unwrap();
+        for wav in [quiet, loud] {
+            let (pcm, rate) = wav_pcm(&wav).unwrap();
+            let l = loudness::integrated(&pcm, rate).unwrap();
+            assert!((l - CLIP_LUFS).abs() < 0.2, "{l}");
+        }
+        // Another kind of file goes to the cache as the engine made it.
+        assert_eq!(leveled(b"RIFF....WAVEdata", CLIP_LUFS), None);
+    }
+
+    #[test]
+    fn a_server_of_the_users_own_never_gets_the_speakers_voice() {
+        let dir = gp_core::scratch::TempDir::new("gp-dub-remote");
+        save_sample(&dir, "film-a", "They all sat down at once.");
+        let remote = Source::Remote {
+            base_url: "http://127.0.0.1:1/v1".into(),
+            model: "m".into(),
+        };
+        let w = worker(remote, true, &dir);
+        let v = choose(&w, Some(&film("film-a", Vec::new())));
+        assert!(v.reference.is_none() && v.id.is_empty() && !v.speaker);
+        // Its clips carry no voice id, only how clips are made.
+        *w.voice.borrow_mut() = Some(("film-a".into(), v));
+        let voice = format!("|{CLIP_MAKING}");
+        let key = cache_key("audio.cpp/omnivoice", &voice, "ru", "Птицы", None);
+        assert_eq!(
+            w.clip_path(None, "Птицы"),
+            dir.join("clips").join(format!("{key}.wav"))
+        );
     }
 }

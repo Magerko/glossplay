@@ -913,6 +913,23 @@ messages! {
         "Оригінальний звук, %"
     ],
     RowVoiceVolume => ["Voice, %", "Голос, %", "Голос, %"],
+    RowVoiceSource => ["Voice", "Голос", "Голос"],
+    VoiceSpeaker => [
+        "like the speaker's",
+        "как у говорящего",
+        "як у мовця"
+    ],
+    VoiceStandard => ["standard", "стандартный", "стандартний"],
+    VoiceSpeakerNote => [
+        "The speaker's voice is copied from a few seconds of the video only on this computer, for your own viewing, and is sent nowhere.",
+        "Голос говорящего копируется по нескольким секундам видео только на этом компьютере, для личного просмотра, и никуда не отправляется.",
+        "Голос мовця копіюється за кількома секундами відео лише на цьому комп'ютері, для особистого перегляду, і нікуди не надсилається."
+    ],
+    DubVoiceSample => [
+        "Voice-over: listening to the speaker's voice…",
+        "Озвучка: слушаем голос говорящего…",
+        "Озвучення: слухаємо голос мовця…"
+    ],
     TtsAdvanced => [
         "Advanced: my own speech server",
         "Дополнительно: свой сервер синтеза речи",

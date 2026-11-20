@@ -180,7 +180,10 @@ Terms of use, which you accept before the download:
 `[tts]` section of `config.toml`: `base_url` (for example `http://host:port/v1`; empty means the
 installed engine), `model`, `voice` (empty means the server's default), `original_volume` and
 `voice_volume` in percent of loudness as heard (50 sounds half as loud, which is −10 dB; the
-original is 35 by default, about −15 dB), and `enabled` (off by default).
+original is 35 by default, about −15 dB), and `enabled` (off by default). With the installed
+engine, `voice_source = "speaker"` (the default) speaks in the voice of the person in the video,
+copied from a few seconds of its own sound on this computer and sent nowhere, and `"default"`
+in one standard voice; a server of your own always speaks in its own voice.
 
 **Anki.** Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on and keep
 Anki running. The deck and the "Glossplay" note type are created on first use.

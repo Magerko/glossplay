@@ -1,6 +1,7 @@
 pub mod asr_plan;
 pub mod config;
 pub mod dub_plan;
+pub mod loudness;
 pub mod media_key;
 pub mod scratch;
 pub mod sentences;
@@ -8,6 +9,7 @@ pub mod subs;
 pub mod tokens;
 pub mod track;
 pub mod training;
+pub mod voice_sample;
 
 pub use subs::{SubError, SubFormat, parse_subtitles, write_srt};
 pub use tokens::{Token, TokenKind, tokenize};

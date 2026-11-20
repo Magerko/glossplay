@@ -152,7 +152,7 @@ GitHub 上的 audio.cpp（版本 v0.9.5）和 Hugging Face 上的 OmniVoice 模�
 *高级：使用自己的语音服务器。* 如果你已经运行了带有 OpenAI 兼容 `/v1/audio/speech` 接口的服务器，
 请在 Settings → Voice-over → Advanced 中填写它的地址。该设置保存在 `config.toml` 的 `[tts]` 段中：
 `base_url`（例如 `http://host:port/v1`；留空表示使用已安装的引擎）、`model`、`voice`（留空表示服务器默认声音）、
-以听感响度百分比表示的 `original_volume` 和 `voice_volume`（50 听起来响度减半，即 −10 dB；原声默认 35，约 −15 dB），以及 `enabled`（默认关闭）。
+以听感响度百分比表示的 `original_volume` 和 `voice_volume`（50 听起来响度减半，即 −10 dB；原声默认 35，约 −15 dB），以及 `enabled`（默认关闭）。使用已安装的引擎时，`voice_source = "speaker"`（默认）用视频中说话人的声音朗读：声音只在本机根据视频自身几秒钟的音频复制，不会发送到任何地方；`"default"` 则使用一个固定的标准声音。自己的服务器始终使用它自己的声音。
 
 **Anki。** 安装 [AnkiConnect](https://ankiweb.net/shared/info/2055492159) 插件并保持 Anki 运行。
 牌组和“Glossplay”笔记类型会在第一次导出时自动创建。

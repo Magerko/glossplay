@@ -3,7 +3,7 @@
 
 use crate::app::App;
 use crate::components::{self, Event, InstallError, Progress};
-use crate::dub::{Dub, DubConfig, Source};
+use crate::dub::{Dub, DubConfig, Source, SpeakerSound};
 use crate::i18n::{Tr, t, tf};
 use crate::jobs::Msg;
 use crate::setup_text as text;
@@ -53,6 +53,30 @@ impl TtsSetup {
     }
 }
 
+/// Whether the voice-over copies the voice of the film's speaker.
+pub fn copies_speaker(cfg: &gp_core::config::Tts) -> bool {
+    copies_speaker_value(&cfg.voice_source)
+}
+
+/// "Like the speaker's" or "standard"; true when the choice changed.
+pub fn voice_source_choice(ui: &mut egui::Ui, value: &mut String) -> bool {
+    let speaker = copies_speaker_value(value);
+    let mut changed = false;
+    if ui.radio(speaker, t(Tr::VoiceSpeaker)).clicked() && !speaker {
+        *value = "speaker".into();
+        changed = true;
+    }
+    if ui.radio(!speaker, t(Tr::VoiceStandard)).clicked() && speaker {
+        *value = "default".into();
+        changed = true;
+    }
+    changed
+}
+
+fn copies_speaker_value(value: &str) -> bool {
+    value != "default"
+}
+
 pub enum Action {
     OpenDialog,
     Remove,
@@ -77,8 +101,10 @@ impl App {
         };
         let data = crate::paths::data_dir();
         Ok(DubConfig {
+            copy_speaker: matches!(source, Source::Installed(_)) && copies_speaker(cfg),
             source,
             voice: cfg.voice.clone(),
+            samples_dir: data.join("voice-samples"),
             lang: self.cfg.general.native_lang.clone(),
             voice_volume: cfg.voice_volume,
             mpv_path: self.cfg.player.mpv_path.clone(),
@@ -159,9 +185,47 @@ impl App {
         self.apply_volume();
     }
 
+    /// The film's sound and lines, for copying the speaker's voice: read the way speech
+    /// recognition reads them. `None` until there are lines to choose from.
+    fn speaker_sound(&self) -> Option<SpeakerSound> {
+        let s = self.session.as_ref()?;
+        let cues = &s.primary_track()?.track.cues;
+        if cues.is_empty() {
+            return None;
+        }
+        let (media, input) = match &s.online {
+            Some(o) => {
+                let a = o.audio.as_ref()?;
+                (a.url.clone(), a.ffmpeg_input())
+            }
+            None => (s.media.clone(), Vec::new()),
+        };
+        let audio_index = self
+            .audio_tracks
+            .iter()
+            .find(|t| t.selected)
+            .and_then(|t| t.ff_index)
+            .filter(|_| s.online.is_none());
+        Some(SpeakerSound {
+            ffmpeg: self.ffmpeg.clone()?,
+            media,
+            input,
+            audio_index,
+            media_key: s.media_key.clone(),
+            cues: cues.clone(),
+        })
+    }
+
     /// Feeds the voice-over the lines around the playhead; called once a frame.
     pub fn update_dub(&mut self) {
         let Some(d) = &self.dub else { return };
+        let key = self.session.as_ref().map(|s| s.media_key.clone());
+        if key.is_some()
+            && d.speaker_key() != key
+            && let Some(sound) = self.speaker_sound()
+        {
+            d.set_speaker(sound);
+        }
         let pos = self.snap.pos;
         let units = self.session.as_ref().map_or(Vec::new(), |s| {
             gp_core::dub_plan::units(&s.dub_lines(pos - 3_000, pos + crate::dub::AHEAD_MS))
@@ -450,7 +514,15 @@ pub fn settings_section(ui: &mut egui::Ui, draft: &mut Config, s: &TtsSetup) -> 
             ui.label(t(Tr::RowVoiceVolume));
             ui.add(egui::Slider::new(&mut draft.tts.voice_volume, 0.0..=150.0).integer());
             ui.end_row();
+            ui.label(t(Tr::RowVoiceSource));
+            ui.horizontal(|ui| voice_source_choice(ui, &mut draft.tts.voice_source));
+            ui.end_row();
         });
+    ui.label(
+        RichText::new(t(Tr::VoiceSpeakerNote))
+            .color(theme::muted())
+            .small(),
+    );
     ui.label(RichText::new(t(Tr::TtsAdvanced)).color(theme::muted()));
     egui::Grid::new("tts-own")
         .num_columns(2)

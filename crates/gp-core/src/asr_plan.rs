@@ -191,6 +191,14 @@ pub struct Loudness {
 
 const FRAME: Ms = 20;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Speech {
+    /// Of the time, how much is pauses.
+    pub pause_share: f64,
+    pub longest_pause: Ms,
+    pub first_sound: Ms,
+}
+
 impl Loudness {
     /// `pcm` is mono at `rate` samples a second.
     pub fn new(pcm: &[i16], rate: u32) -> Loudness {
@@ -211,6 +219,55 @@ impl Loudness {
             .filter(|(quiet, loud)| loud - quiet >= 12.0)
             .map(|(quiet, loud)| quiet + 0.4 * (loud - quiet));
         Loudness { db, threshold }
+    }
+
+    /// How the audio divides into sound and pauses; `None` when it cannot be told.
+    pub fn speech(&self) -> Option<Speech> {
+        let threshold = self.threshold?;
+        let (mut quiet, mut run, mut longest, mut first) = (0, 0, 0, None);
+        for (i, &d) in self.db.iter().enumerate() {
+            if d > threshold {
+                first.get_or_insert(i);
+                run = 0;
+            } else {
+                quiet += 1;
+                run += 1;
+                longest = longest.max(run);
+            }
+        }
+        Some(Speech {
+            pause_share: quiet as f64 / self.db.len().max(1) as f64,
+            longest_pause: longest as Ms * FRAME,
+            first_sound: first.unwrap_or(self.db.len()) as Ms * FRAME,
+        })
+    }
+
+    /// The pauses, as start and end relative to the audio; none when it cannot be judged.
+    pub fn pauses(&self) -> Vec<(Ms, Ms)> {
+        let Some(threshold) = self.threshold else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut from = None;
+        for (i, &d) in self.db.iter().enumerate() {
+            match (d <= threshold, from) {
+                (true, None) => from = Some(i),
+                (false, Some(f)) => {
+                    out.push((f as Ms * FRAME, i as Ms * FRAME));
+                    from = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(f) = from {
+            out.push((f as Ms * FRAME, self.db.len() as Ms * FRAME));
+        }
+        out
+    }
+
+    /// The length of the audio judged.
+    pub fn len_ms(&self) -> Ms {
+        self.db.len() as Ms * FRAME
     }
 
     /// The first moment in `from..to` (relative to the audio) where sound rises above the

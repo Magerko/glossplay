@@ -943,6 +943,8 @@ impl App {
         let (mut toggle_dub, mut volumes_changed, mut volumes_done) = (false, false, false);
         let mut original = self.cfg.tts.original_volume as f32;
         let mut voice = self.cfg.tts.voice_volume as f32;
+        let mut voice_source = self.cfg.tts.voice_source.clone();
+        let mut voice_source_changed = false;
         let menu = ui.menu_button(RichText::new(t(Tr::SubtitlesMenu)).size(13.0), |ui| {
             let Some(s) = &self.session else { return };
             ui.set_min_width(260.0);
@@ -1036,6 +1038,15 @@ impl App {
                             volumes_done |= r.drag_stopped() || (r.changed() && !r.dragged());
                             ui.end_row();
                         }
+                        ui.label(RichText::new(t(Tr::RowVoiceSource)).color(theme::muted()))
+                            .on_hover_text(t(Tr::VoiceSpeakerNote));
+                        ui.horizontal(|ui| {
+                            voice_source_changed |=
+                                crate::tts_ui::voice_source_choice(ui, &mut voice_source);
+                        })
+                        .response
+                        .on_hover_text(t(Tr::VoiceSpeakerNote));
+                        ui.end_row();
                     });
             }
             if ui.button(t(Tr::AddSubFile)).clicked() {
@@ -1116,6 +1127,16 @@ impl App {
         }
         if toggle_dub {
             self.set_dub(!dub_on);
+        }
+        if voice_source_changed {
+            let mut new = self.cfg.clone();
+            new.tts.voice_source = voice_source;
+            self.apply_settings(new);
+            if !self.quiet
+                && let Err(e) = crate::paths::save_config(&self.cfg)
+            {
+                self.toast(tf(Tr::CouldNotSaveSettings, &[&e]));
+            }
         }
         if volumes_changed {
             self.cfg.tts.original_volume = f64::from(original);
