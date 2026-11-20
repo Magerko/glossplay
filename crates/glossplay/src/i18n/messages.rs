@@ -274,6 +274,25 @@ messages! {
         "Распознавание речи",
         "Розпізнавання мовлення"
     ],
+    AutoSubsLabel => ["{0} (auto)", "{0} (авто)", "{0} (авто)"],
+    AutoTranslatedSubsLabel => [
+        "{0} (auto-translated)",
+        "{0} (автоперевод)",
+        "{0} (автопереклад)"
+    ],
+    LangEnglish => ["English", "Английский", "Англійська"],
+    LangRussian => ["Russian", "Русский", "Російська"],
+    LangUkrainian => ["Ukrainian", "Украинский", "Українська"],
+    LangGerman => ["German", "Немецкий", "Німецька"],
+    LangFrench => ["French", "Французский", "Французька"],
+    LangSpanish => ["Spanish", "Испанский", "Іспанська"],
+    LangItalian => ["Italian", "Итальянский", "Італійська"],
+    LangPortuguese => ["Portuguese", "Португальский", "Португальська"],
+    LangPolish => ["Polish", "Польский", "Польська"],
+    LangTurkish => ["Turkish", "Турецкий", "Турецька"],
+    LangJapanese => ["Japanese", "Японский", "Японська"],
+    LangKorean => ["Korean", "Корейский", "Корейська"],
+    LangChinese => ["Chinese", "Китайский", "Китайська"],
     CouldNotReadSubsShown => [
         "Could not read the subtitles \"{0}\": {1} — they are shown without word lookup.",
         "Не удалось прочитать субтитры «{0}»: {1} — они показываются без поиска слов.",

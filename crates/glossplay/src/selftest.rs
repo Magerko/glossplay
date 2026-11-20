@@ -99,6 +99,8 @@ pub struct State {
     srt_exported: bool,
     drops_at_start: Option<i64>,
     asr_first_cue: Option<Duration>,
+    /// Launch to the first video frame mpv has, the cost of opening the media.
+    first_frame: Option<Duration>,
     asr_minute_ready: Option<Duration>,
     asr_done: Option<Duration>,
     capture: video::Capture,
@@ -144,6 +146,7 @@ impl State {
             srt_exported: false,
             drops_at_start: None,
             asr_first_cue: None,
+            first_frame: None,
             asr_minute_ready: None,
             asr_done: None,
             capture: Arc::default(),
@@ -161,6 +164,9 @@ pub fn step(app: &mut App, ctx: &egui::Context) {
         return;
     };
     ctx.request_repaint();
+    if st.first_frame.is_none() && app.player.mpv.get_flag("vo-configured") == Some(true) {
+        st.first_frame = Some(st.launched.elapsed());
+    }
     if st.plan.settings && !st.plan.empty {
         // The section is below the fold of the settings window; it has to be in the screenshot.
         // Without a file the window stays at its top, which shows the language choice.
@@ -906,6 +912,11 @@ fn report(st: &mut State, app: &App) {
     let advanced = app.snap.pos - st.start_pos;
     println!("ui_lang={}", crate::i18n::lang().code());
     println!("duration_ms={}", app.snap.duration);
+    println!(
+        "first_frame_ms={}",
+        st.first_frame
+            .map_or("-".to_owned(), |d| d.as_millis().to_string())
+    );
 
     println!("video_size={width}x{height}");
     println!(

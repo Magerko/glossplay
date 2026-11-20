@@ -15,6 +15,11 @@ pub fn url_key(url: &str) -> String {
     format!("u:{url}")
 }
 
+/// A video on a site yt-dlp knows: its stream addresses expire within hours, its id does not.
+pub fn online_key(extractor: &str, id: &str) -> String {
+    format!("o:{}:{id}", extractor.to_ascii_lowercase())
+}
+
 /// A file of a torrent played through a streaming server: the same file whatever server
 /// address or file name the stream URL carries.
 pub fn torrent_key(info_hash: &str, file_index: u32) -> String {
@@ -32,6 +37,15 @@ mod tests {
         assert_ne!(a, file_key(11, b"head", b"tail"));
         assert_ne!(a, file_key(10, b"heaD", b"tail"));
         assert!(a.starts_with("f:") && a.len() == 18);
+    }
+
+    #[test]
+    fn online_key_is_the_site_and_the_video_id() {
+        assert_eq!(
+            online_key("Youtube", "ByAn0MC0iWk"),
+            "o:youtube:ByAn0MC0iWk"
+        );
+        assert_ne!(online_key("Youtube", "a"), online_key("Vimeo", "a"));
     }
 
     #[test]

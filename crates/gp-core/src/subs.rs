@@ -57,7 +57,7 @@ pub fn parse_subtitles(bytes: &[u8], hint: Option<SubFormat>) -> Result<Vec<Cue>
     let format = detect(&text).or(hint).ok_or(SubError::UnknownFormat)?;
     let mut cues = match format {
         SubFormat::Srt => parse_srt_like(&text),
-        SubFormat::WebVtt => parse_srt_like(&text),
+        SubFormat::WebVtt => rolling_phrases(&text).unwrap_or_else(|| parse_srt_like(&text)),
         SubFormat::Ass => parse_ass(&text)?,
     };
     for c in &mut cues {
@@ -69,10 +69,190 @@ pub fn parse_subtitles(bytes: &[u8], hint: Option<SubFormat>) -> Result<Vec<Cue>
     cues.retain(|c| c.end > c.start && !c.text.is_empty());
     cues.sort_by_key(|c| c.start);
     cues.dedup();
+    let cues = collapse_rolling(cues);
     if cues.is_empty() {
         return Err(SubError::Empty);
     }
     Ok(cues)
+}
+
+/// Roll-up captions, the way YouTube writes its automatic ones, repeat the line before at the
+/// top of every cue and add one line below it, with a 10 ms cue in between that shows only
+/// the finished line. Read as they are, every line is on screen twice and a sentence group is
+/// half repeats. I keep only what each cue adds. Ordinary subtitles are returned unchanged.
+pub fn collapse_rolling(cues: Vec<Cue>) -> Vec<Cue> {
+    if !is_rolling(&cues) {
+        return cues;
+    }
+    let mut out: Vec<Cue> = Vec::new();
+    let mut shown: Vec<&str> = Vec::new();
+    for c in &cues {
+        let lines: Vec<&str> = c.text.lines().collect();
+        if c.end - c.start <= FLASH {
+            shown = lines;
+            continue;
+        }
+        let repeated = (1..=lines.len().min(shown.len()))
+            .rev()
+            .find(|&k| lines[..k] == shown[shown.len() - k..])
+            .unwrap_or(0);
+        shown.clone_from(&lines);
+        let new = &lines[repeated..];
+        if new.is_empty() {
+            continue;
+        }
+        out.push(Cue {
+            start: c.start,
+            end: c.end,
+            text: new.join("\n"),
+        });
+    }
+    // A line stays up until the next one starts; two at once would only be the roll-up again.
+    for i in 1..out.len() {
+        let next = out[i].start;
+        let prev = &mut out[i - 1];
+        if prev.end > next && next > prev.start {
+            prev.end = next;
+        }
+    }
+    out
+}
+
+/// The cues between two roll-up steps, which only show the finished line again.
+const FLASH: Ms = 50;
+/// From one word to the next this long inside a roll-up line is a pause worth a cue of its own.
+const PHRASE_PAUSE: Ms = 1_500;
+/// A gap shorter than this between a line's last word and the next line is just speech.
+const LINE_PAUSE: Ms = 300;
+
+/// Roll-up captions with the time of every word, as YouTube writes its automatic ones: one cue
+/// per line the way the site breaks them, also split where the speaker pauses, and ending with
+/// its last word. Its own timing hides the pauses, which say where a phrase ends when the text
+/// has no punctuation. `None` when the text is not of that kind.
+fn rolling_phrases(text: &str) -> Option<Vec<Cue>> {
+    if !text.contains("<c>") {
+        return None;
+    }
+    let mut blocks: Vec<(Ms, Ms, Vec<&str>)> = Vec::new();
+    let mut lines = text.lines().map(|l| l.trim_end_matches('\r'));
+    while let Some(line) = lines.next() {
+        if let Some((start, end)) = parse_timing_line(line) {
+            // A line holding only a space is part of the cue here: the first cue starts with one.
+            let body = lines.by_ref().take_while(|l| !l.is_empty()).collect();
+            blocks.push((start, end, body));
+        }
+    }
+    let plain: Vec<Cue> = blocks
+        .iter()
+        .map(|(start, end, body)| Cue {
+            start: *start,
+            end: *end,
+            text: tidy(&strip_markup(&body.join("\n"))),
+        })
+        .collect();
+    if !is_rolling(&plain) {
+        return None;
+    }
+    // (time, word) for each line a cue adds, and when that line's cue ends.
+    let mut said: Vec<(Vec<(Ms, String)>, Ms)> = Vec::new();
+    let mut previous = String::new();
+    for (start, end, body) in &blocks {
+        if end - start <= FLASH {
+            continue;
+        }
+        let Some(added) = body.iter().rev().find(|l| !l.trim().is_empty()) else {
+            continue;
+        };
+        let words = timed_words(added, *start);
+        let flat = words
+            .iter()
+            .map(|(_, w)| w.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if words.is_empty() || flat == previous {
+            continue;
+        }
+        previous = flat;
+        said.push((words, *end));
+    }
+    let spoken = |w: &str| (w.chars().count() as Ms * 70 + 150).clamp(250, 800);
+    let mut out = Vec::new();
+    for (n, (words, line_end)) in said.iter().enumerate() {
+        let next_line = said.get(n + 1).map(|(w, _)| w[0].0);
+        let mut from = 0;
+        for i in 1..=words.len() {
+            let next = words.get(i).map(|w| w.0).or(next_line);
+            let last = &words[i - 1];
+            let gap = next.map_or(Ms::MAX, |t| t - last.0);
+            let (cut, end) = if i == words.len() {
+                let end = if gap - spoken(&last.1) >= LINE_PAUSE {
+                    last.0 + spoken(&last.1)
+                } else {
+                    *line_end
+                };
+                (true, end.min(*line_end))
+            } else {
+                (gap >= PHRASE_PAUSE, last.0 + spoken(&last.1))
+            };
+            if !cut {
+                continue;
+            }
+            let text: Vec<&str> = words[from..i].iter().map(|(_, w)| w.as_str()).collect();
+            let start = words[from].0;
+            out.push(Cue {
+                start,
+                end: end.max(start + 1),
+                text: text.join(" "),
+            });
+            from = i;
+        }
+    }
+    Some(out)
+}
+
+/// The words of a roll-up line, `first<00:00:01.200><c> second</c>…`, each with its time.
+fn timed_words(line: &str, start: Ms) -> Vec<(Ms, String)> {
+    let mut out = Vec::new();
+    let mut at = start;
+    let mut rest = line;
+    loop {
+        let stamp = rest.match_indices('<').find_map(|(i, _)| {
+            let close = i + rest[i..].find('>')?;
+            let inner = &rest[i + 1..close];
+            parse_time(inner)
+                .filter(|_| inner.contains(':'))
+                .map(|t| (i, close, t))
+        });
+        let piece = stamp.map_or(rest, |(i, _, _)| &rest[..i]);
+        let text = decode_entities(&strip_markup(piece));
+        out.extend(text.split_whitespace().map(|w| (at, w.to_owned())));
+        match stamp {
+            Some((_, close, t)) => {
+                at = t.max(at);
+                rest = &rest[close + 1..];
+            }
+            None => break,
+        }
+    }
+    out
+}
+
+/// Nearly every cue starts with the last line of the cue before it.
+fn is_rolling(cues: &[Cue]) -> bool {
+    if cues.len() < 6 {
+        return false;
+    }
+    let repeats = cues
+        .windows(2)
+        .filter(|w| {
+            let (Some(last), Some(first)) = (w[0].text.lines().last(), w[1].text.lines().next())
+            else {
+                return false;
+            };
+            last == first
+        })
+        .count();
+    repeats * 4 >= (cues.len() - 1) * 3
 }
 
 pub fn write_srt(cues: &[Cue]) -> String {
@@ -603,6 +783,226 @@ Tom &amp; Jerry&nbsp;&lt; &quot;hi&quot; &#39;x&#x27; AT&T &amp;lt; &bogus;
         let joined = cues[0].text.replace('\n', " ");
         assert_eq!(strip_markup(&joined), joined, "joined: {joined}");
         assert!(!joined.contains('<'), "joined: {joined}");
+    }
+
+    /// Automatic captions of a lecture on YouTube (ByAn0MC0iWk, 9:50–10:42), as yt-dlp
+    /// downloads them with --write-auto-subs --sub-format vtt.
+    const AUTO_VTT: &str = r#"WEBVTT
+Kind: captions
+Language: en
+
+00:09:50.630 --> 00:09:50.640 align:start position:0%
+a database and the columns correspondent
+ 
+
+00:09:50.640 --> 00:09:52.130 align:start position:0%
+a database and the columns correspondent
+two<00:09:50.730><c> fields</c><00:09:51.120><c> well</c><00:09:51.300><c> if</c><00:09:51.450><c> those</c><00:09:51.600><c> fields</c>
+
+00:09:52.130 --> 00:09:52.140 align:start position:0%
+two fields well if those fields
+ 
+
+00:09:52.140 --> 00:09:56.510 align:start position:0%
+two fields well if those fields
+themselves<00:09:52.800><c> were</c><00:09:53.750><c> sort</c><00:09:54.750><c> of</c><00:09:54.840><c> simple</c><00:09:55.740><c> data</c><00:09:56.130><c> like</c>
+
+00:09:56.510 --> 00:09:56.520 align:start position:0%
+themselves were sort of simple data like
+ 
+
+00:09:56.520 --> 00:09:59.210 align:start position:0%
+themselves were sort of simple data like
+binary<00:09:57.090><c> values</c><00:09:57.750><c> or</c><00:09:58.020><c> multi</c><00:09:58.290><c> class</c><00:09:58.410><c> values</c><00:09:58.950><c> then</c>
+
+00:09:59.210 --> 00:09:59.220 align:start position:0%
+binary values or multi class values then
+ 
+
+00:09:59.220 --> 00:10:01.130 align:start position:0%
+binary values or multi class values then
+sure<00:09:59.430><c> we</c><00:09:59.730><c> have</c><00:09:59.880><c> something</c><00:10:00.090><c> structured</c><00:10:00.630><c> but</c><00:10:00.780><c> as</c>
+
+00:10:01.130 --> 00:10:01.140 align:start position:0%
+sure we have something structured but as
+ 
+
+00:10:01.140 --> 00:10:02.600 align:start position:0%
+sure we have something structured but as
+soon<00:10:01.320><c> as</c><00:10:01.380><c> you</c><00:10:01.500><c> open</c><00:10:01.740><c> up</c><00:10:01.830><c> the</c><00:10:01.980><c> spreadsheet</c><00:10:02.250><c> to</c>
+
+00:10:02.600 --> 00:10:02.610 align:start position:0%
+soon as you open up the spreadsheet to
+ 
+
+00:10:02.610 --> 00:10:06.080 align:start position:0%
+soon as you open up the spreadsheet to
+allow<00:10:02.820><c> arbitrary</c><00:10:03.480><c> text</c><00:10:03.750><c> in</c><00:10:03.990><c> it</c><00:10:04.110><c> or</c><00:10:04.910><c> even</c><00:10:05.910><c> you</c>
+
+00:10:06.080 --> 00:10:06.090 align:start position:0%
+allow arbitrary text in it or even you
+ 
+
+00:10:06.090 --> 00:10:07.520 align:start position:0%
+allow arbitrary text in it or even you
+know<00:10:06.120><c> pasting</c><00:10:06.660><c> the</c><00:10:06.930><c> the</c><00:10:07.170><c> binary</c>
+
+00:10:07.520 --> 00:10:07.530 align:start position:0%
+know pasting the the binary
+ 
+
+00:10:07.530 --> 00:10:09.200 align:start position:0%
+know pasting the the binary
+representation<00:10:08.130><c> of</c><00:10:08.190><c> an</c><00:10:08.310><c> image</c><00:10:08.640><c> into</c><00:10:08.820><c> a</c><00:10:08.940><c> cell</c>
+
+00:10:09.200 --> 00:10:09.210 align:start position:0%
+representation of an image into a cell
+ 
+
+00:10:09.210 --> 00:10:11.030 align:start position:0%
+representation of an image into a cell
+well<00:10:09.690><c> now</c><00:10:09.900><c> we're</c><00:10:10.080><c> back</c><00:10:10.200><c> to</c><00:10:10.260><c> unstructured</c><00:10:10.770><c> and</c>
+
+00:10:11.030 --> 00:10:11.040 align:start position:0%
+well now we're back to unstructured and
+ 
+
+00:10:11.040 --> 00:10:12.890 align:start position:0%
+well now we're back to unstructured and
+so<00:10:11.190><c> in</c><00:10:11.400><c> general</c><00:10:11.850><c> these</c><00:10:12.150><c> kind</c><00:10:12.390><c> of</c><00:10:12.420><c> correspond</c>
+
+00:10:12.890 --> 00:10:12.900 align:start position:0%
+so in general these kind of correspond
+ 
+
+00:10:12.900 --> 00:10:20.780 align:start position:0%
+so in general these kind of correspond
+to<00:10:13.910><c> semi</c><00:10:14.910><c> structured</c><00:10:15.330><c> data</c><00:10:15.660><c> and</c><00:10:19.100><c> we'll</c><00:10:20.100><c> see</c>
+
+00:10:20.780 --> 00:10:20.790 align:start position:0%
+to semi structured data and we'll see
+ 
+
+00:10:20.790 --> 00:10:26.900 align:start position:0%
+to semi structured data and we'll see
+whether<00:10:21.240><c> I</c><00:10:21.420><c> can</c><00:10:21.720><c> actually</c><00:10:21.900><c> use</c><00:10:25.850><c> okay</c><00:10:26.850><c> so</c>
+
+00:10:26.900 --> 00:10:26.910 align:start position:0%
+whether I can actually use okay so
+ 
+
+00:10:26.910 --> 00:10:28.370 align:start position:0%
+whether I can actually use okay so
+slight<00:10:27.330><c> glitch</c><00:10:27.660><c> is</c><00:10:27.870><c> that</c><00:10:27.990><c> I</c><00:10:28.020><c> don't</c><00:10:28.230><c> actually</c>
+
+00:10:28.370 --> 00:10:28.380 align:start position:0%
+slight glitch is that I don't actually
+ 
+
+00:10:28.380 --> 00:10:31.250 align:start position:0%
+slight glitch is that I don't actually
+know<00:10:28.620><c> how</c><00:10:28.740><c> to</c><00:10:28.770><c> get</c><00:10:28.920><c> to</c><00:10:29.040><c> hidden</c><00:10:29.400><c> sides</c><00:10:30.260><c> while</c>
+
+00:10:31.250 --> 00:10:31.260 align:start position:0%
+know how to get to hidden sides while
+ 
+
+00:10:31.260 --> 00:10:35.330 align:start position:0%
+know how to get to hidden sides while
+also<00:10:31.710><c> screen</c><00:10:32.220><c> casting</c><00:10:32.670><c> so</c><00:10:32.910><c> yeah</c><00:10:33.440><c> so</c><00:10:34.440><c> there's</c><00:10:35.220><c> a</c>
+
+00:10:35.330 --> 00:10:35.340 align:start position:0%
+also screen casting so yeah so there's a
+ 
+
+00:10:35.340 --> 00:10:36.740 align:start position:0%
+also screen casting so yeah so there's a
+hidden<00:10:35.580><c> slide</c><00:10:35.850><c> in</c><00:10:36.000><c> here</c><00:10:36.030><c> that</c><00:10:36.330><c> says</c><00:10:36.360><c> something</c>
+
+00:10:36.740 --> 00:10:36.750 align:start position:0%
+hidden slide in here that says something
+ 
+
+00:10:36.750 --> 00:10:38.660 align:start position:0%
+hidden slide in here that says something
+about<00:10:36.930><c> semi</c><00:10:37.710><c> structured</c><00:10:38.100><c> data</c><00:10:38.130><c> but</c><00:10:38.460><c> it's</c><00:10:38.550><c> not</c>
+
+00:10:38.660 --> 00:10:38.670 align:start position:0%
+about semi structured data but it's not
+ 
+
+00:10:38.670 --> 00:10:41.840 align:start position:0%
+about semi structured data but it's not
+terribly<00:10:39.000><c> important</c><00:10:39.480><c> and</c><00:10:40.520><c> and</c><00:10:41.520><c> it</c><00:10:41.610><c> would</c><00:10:41.730><c> have</c>
+
+00:10:41.840 --> 00:10:41.850 align:start position:0%
+terribly important and and it would have
+ 
+
+"#;
+
+    #[test]
+    fn automatic_captions_lose_their_roll_up_repeats() {
+        let raw = parse_srt_like(&decode(AUTO_VTT.as_bytes()));
+        assert_eq!(raw.len(), 37);
+        // Every word is said once: the repeats are gone and nothing was lost.
+        let said: Vec<&str> = raw
+            .iter()
+            .filter(|c| c.end - c.start > FLASH)
+            .flat_map(|c| c.text.lines().last().unwrap().split(' '))
+            .collect();
+        let words = |cues: &[Cue]| -> Vec<String> {
+            cues.iter()
+                .flat_map(|c| c.text.split(' ').map(str::to_owned))
+                .collect()
+        };
+
+        // Without word times only the repeats go: one cue per line, as the site shows them.
+        let lines = collapse_rolling(raw.clone());
+        assert_eq!(lines.len(), 18, "{lines:#?}");
+        assert_eq!(
+            lines[0],
+            cue(590_640, 592_130, "two fields well if those fields")
+        );
+        assert_eq!(
+            lines[17],
+            cue(638_670, 641_840, "terribly important and and it would have")
+        );
+        assert_eq!(words(&lines), said);
+
+        // With them, a line is also cut where the lecturer stops to think, and a cue ends
+        // with its last word.
+        let cues = parse_subtitles(AUTO_VTT.as_bytes(), None).unwrap();
+        assert_eq!(cues.len(), 20, "{cues:#?}");
+        assert!(cues.iter().all(|c| !c.text.contains('\n')));
+        assert!(
+            cues.windows(2).all(|w| w[0].end <= w[1].start),
+            "no overlaps"
+        );
+        assert_eq!(
+            cues[2],
+            cue(596_520, 599_210, "binary values or multi class values then")
+        );
+        assert_eq!(
+            cues[10],
+            cue(612_900, 616_020, "to semi structured data and")
+        );
+        assert_eq!(cues[11], cue(619_100, 620_460, "we'll see"));
+        assert_eq!(cues[13], cue(625_850, 626_900, "okay so"));
+        assert_eq!(words(&cues), said);
+        assert!(!words(&cues).join(" ").contains('<'));
+    }
+
+    #[test]
+    fn ordinary_subtitles_are_not_collapsed() {
+        let cues = vec![
+            cue(0, 1_000, "Hello"),
+            cue(1_000, 2_000, "Hello"),
+            cue(3_000, 4_000, "I said\nhello"),
+            cue(5_000, 6_000, "hello\nthere"),
+            cue(7_000, 8_000, "Bye"),
+        ];
+        assert_eq!(collapse_rolling(cues.clone()), cues);
     }
 
     #[test]

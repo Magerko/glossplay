@@ -9,6 +9,7 @@ mod i18n;
 mod icon;
 mod jobs;
 mod keys;
+mod online;
 mod paths;
 mod player;
 mod search_ui;

@@ -32,15 +32,52 @@ const TERMINALS: &[char] = &['.', '!', '?', '…', '。', '！', '？', '‼', '
 const SOFT: &[char] = &[',', ';', ':', '，', '、', '；', '：'];
 const DASHES: &[char] = &['—', '–'];
 
+/// How a track writes its text, which decides where its sentences end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Style {
+    #[default]
+    Punctuated,
+    /// Words with no full stop or comma anywhere, all lower case: the automatic captions of
+    /// older YouTube videos. Only pauses and length say where a phrase ends.
+    Bare,
+}
+
+/// For bare text: a group closes at a pause this long once it has a couple of lines…
+const BARE_SHORT_PAUSE: Ms = 250;
+/// …and always at one this long.
+const BARE_PAUSE: Ms = 700;
+/// Shorter than a punctuated sentence: without punctuation a long group is hard to translate.
+const BARE_MAX_CHARS: usize = 200;
+
+pub fn style_of(cues: &[Cue]) -> Style {
+    if cues.len() < 20 {
+        return Style::Punctuated;
+    }
+    let marked = cues
+        .iter()
+        .filter(|c| c.text.contains(TERMINALS) || c.text.contains(SOFT))
+        .count();
+    if marked * 20 < cues.len() {
+        Style::Bare
+    } else {
+        Style::Punctuated
+    }
+}
+
 /// Splits cues into sentence groups. Each break is decided from the two cues around it and
 /// the size of the group so far, so cues added far ahead never change earlier groups.
 pub fn group(cues: &[Cue]) -> Vec<Range<usize>> {
+    group_as(cues, Style::Punctuated)
+}
+
+pub fn group_as(cues: &[Cue], style: Style) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let (mut start, mut chars) = (0, 0);
     for i in 0..cues.len() {
         chars += cue_len(&cues[i].text) + usize::from(i > start);
         let ends = match cues.get(i + 1) {
             None => true,
+            Some(next) if style == Style::Bare => bare_breaks(&cues[i], next, i + 1 - start, chars),
             Some(next) => breaks(&cues[i], next, i + 1 - start, chars),
         };
         if ends {
@@ -64,6 +101,15 @@ fn breaks(cur: &Cue, next: &Cue, count: usize, chars: usize) -> bool {
         || new_speaker(&next.text)
         || exclamation(&next.text)
         || (ends_sentence(&cur.text) && !continues(&cur.text, &next.text))
+}
+
+fn bare_breaks(cur: &Cue, next: &Cue, count: usize, chars: usize) -> bool {
+    let pause = next.start - cur.end;
+    count >= MAX_CUES
+        || chars + 1 + cue_len(&next.text) > BARE_MAX_CHARS
+        || pause >= BARE_PAUSE
+        || (count >= 2 && pause >= BARE_SHORT_PAUSE)
+        || next.start + OVERLAP < cur.end
 }
 
 /// "Ugh!", "Really?", "Oh, John!": a short cue that is a sentence of its own even when the
@@ -672,6 +718,48 @@ mod tests {
             .iter()
             .map(|g| sentence_text(cues[g.clone()].iter().map(|c| c.text.as_str())))
             .collect()
+    }
+
+    #[test]
+    fn bare_captions_are_grouped_by_pauses_and_length() {
+        // A lecture's automatic captions after the roll-up is undone (ByAn0MC0iWk, 10:09).
+        let cues = vec![
+            cue(609_210, 611_030, "well now we're back to unstructured and"),
+            cue(611_040, 612_890, "so in general these kind of correspond"),
+            cue(612_900, 616_020, "to semi structured data and"),
+            cue(619_100, 620_460, "we'll see"),
+            cue(620_790, 622_260, "whether I can actually use"),
+            cue(625_850, 626_900, "okay so"),
+            cue(626_910, 628_370, "slight glitch is that I don't actually"),
+            cue(628_380, 630_760, "know how to get to hidden sides while"),
+            cue(631_260, 635_330, "also screen casting so yeah so there's a"),
+            cue(635_340, 636_740, "hidden slide in here that says something"),
+            cue(636_750, 638_660, "about semi structured data but it's not"),
+        ];
+        assert_eq!(
+            texts(&cues, &group_as(&cues, Style::Bare)),
+            [
+                "well now we're back to unstructured and so in general these kind of correspond to semi structured data and",
+                "we'll see whether I can actually use",
+                "okay so slight glitch is that I don't actually know how to get to hidden sides while",
+                "also screen casting so yeah so there's a hidden slide in here that says something about semi structured data but it's not",
+            ]
+        );
+        // The punctuated rules would run on across the pauses, four lines at a time.
+        assert_eq!(group(&cues)[0], 0..4);
+
+        let many = |text: &str| -> Vec<Cue> {
+            (0..30)
+                .map(|i| cue(i * 2_000, i * 2_000 + 1_990, text))
+                .collect()
+        };
+        assert_eq!(style_of(&many("and so we go on")), Style::Bare);
+        assert_eq!(style_of(&many("And so, we go on.")), Style::Punctuated);
+        assert_eq!(
+            style_of(&seq(&["no", "marks", "here"])),
+            Style::Punctuated,
+            "too few to tell"
+        );
     }
 
     #[test]

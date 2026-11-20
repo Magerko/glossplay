@@ -2,6 +2,7 @@
 //! which of them are shown, and their translations.
 
 use crate::jobs::AsrHandle;
+use crate::online::Auto;
 use gp_core::{Cue, Ms, Track, TrackSource, asr_plan, sentences};
 use std::ops::Range;
 use std::time::Instant;
@@ -68,12 +69,16 @@ const EDGE_LEAD: Ms = 3_000;
 pub struct SubTrack {
     pub label: String,
     pub origin: Origin,
+    /// Captions the site made itself: recognised speech, or a machine translation of it.
+    pub auto: Auto,
     pub load: Load,
     pub track: Track,
     /// Machine translation of each cue, filled lazily around the playhead.
     pub translation: Vec<Tr>,
     /// Sentence groups over `track.cues`, the unit of translation.
     pub groups: Vec<Range<usize>>,
+    /// Decided when the whole track is known; a track that grows keeps it.
+    pub style: sentences::Style,
     /// Speech recognition windows already transcribed, while the track is still growing.
     pub growing: Option<Vec<bool>>,
     /// Bumped whenever all translations are thrown away, so a late answer is not taken.
@@ -95,10 +100,12 @@ impl SubTrack {
         SubTrack {
             label,
             origin,
+            auto: Auto::No,
             load,
             track: Track::new(source, lang, None, Vec::new()),
             translation: Vec::new(),
             groups: Vec::new(),
+            style: sentences::Style::default(),
             growing: None,
             epoch: 0,
         }
@@ -106,7 +113,8 @@ impl SubTrack {
 
     pub fn set_cues(&mut self, cues: Vec<Cue>) {
         self.translation = vec![Tr::Missing; cues.len()];
-        self.groups = sentences::group(&cues);
+        self.style = sentences::style_of(&cues);
+        self.groups = sentences::group_as(&cues, self.style);
         self.track.cues = cues;
         self.load = Load::Ready;
     }
@@ -128,7 +136,7 @@ impl SubTrack {
                 hit.then(|| j - 1)
             })
             .collect();
-        let groups = sentences::group(&cues);
+        let groups = sentences::group_as(&cues, self.style);
         let mut translation = Vec::with_capacity(cues.len());
         for g in &groups {
             let same = was[g.start].is_some_and(|o| {
@@ -330,6 +338,8 @@ pub struct Session {
     pub title_fixed: bool,
     /// Subtitle files that came with a stream, added once its tracks are known.
     pub stream_subs: Vec<StreamSub>,
+    /// What yt-dlp said about a video opened by its page address.
+    pub online: Option<crate::online::OnlineInfo>,
 }
 
 /// A subtitle file of a torrent, next to the video being streamed from it.
@@ -373,6 +383,7 @@ impl Session {
             tracks_discovered: false,
             title_fixed: false,
             stream_subs: Vec::new(),
+            online: None,
         }
     }
 
@@ -482,6 +493,49 @@ impl Session {
             }
         }
     }
+}
+
+/// The tracks shown when a file opens: the learnt language below, the native one above it.
+/// Captions written by people beat the site's recognised speech of the same language. The
+/// site's machine translation is never the main track, and is the second one only when my own
+/// translation cannot run: that one translates whole sentences and reads better.
+pub fn default_tracks(
+    tracks: &[SubTrack],
+    learn: &str,
+    native: &str,
+    auto_translate: bool,
+    translator_ok: bool,
+) -> (Option<usize>, Secondary) {
+    let text: Vec<usize> = (0..tracks.len()).filter(|&i| tracks[i].is_text()).collect();
+    let lang_of = |i: usize| tracks[i].track.lang.as_deref().unwrap_or_default();
+    let rank = |i: usize| match tracks[i].auto {
+        Auto::No => 0,
+        Auto::Speech => 1,
+        Auto::Translated => 2,
+    };
+    let best = |wanted: &dyn Fn(usize) -> bool| {
+        text.iter()
+            .copied()
+            .filter(|&i| wanted(i))
+            .min_by_key(|&i| (rank(i), i))
+    };
+    let original = |i: usize| tracks[i].auto != Auto::Translated;
+    let primary = best(&|i| !learn.is_empty() && lang_of(i) == learn && original(i))
+        .or_else(|| best(&|i| lang_of(i) != native && original(i)))
+        .or_else(|| best(&original))
+        .or(text.first().copied());
+    let own_translation = auto_translate && translator_ok;
+    let native_track = best(&|i| {
+        Some(i) != primary
+            && lang_of(i) == native
+            && (original(i) || (!own_translation && auto_translate))
+    });
+    let secondary = match native_track {
+        Some(i) => Secondary::Track(i),
+        None if auto_translate => Secondary::Translate,
+        None => Secondary::Off,
+    };
+    (primary, secondary)
 }
 
 fn lines_of(t: &SubTrack, pos: Ms) -> Vec<Line> {
@@ -865,6 +919,63 @@ mod tests {
         );
         t.apply_translations(&asked, Some(&["Раз.".into(), "Два.".into()]), 0);
         assert_eq!(shown(&t), [Some("Раз."), None, Some("Два.")]);
+    }
+
+    fn listed(lang: &str, auto: Auto) -> SubTrack {
+        let mut t = SubTrack::new(
+            lang.into(),
+            Some(lang.into()),
+            Origin::External { path: lang.into() },
+            Load::NotLoaded,
+        );
+        t.auto = auto;
+        t
+    }
+
+    #[test]
+    fn people_beat_the_sites_captions_and_my_translation_beats_the_sites() {
+        // A lecture with only the site's captions: its speech below, my translation above.
+        let lecture = [listed("en", Auto::Speech), listed("ru", Auto::Translated)];
+        assert_eq!(
+            default_tracks(&lecture, "en", "ru", true, true),
+            (Some(0), Secondary::Translate)
+        );
+        // No translator set up: the site's translation is better than nothing.
+        assert_eq!(
+            default_tracks(&lecture, "en", "ru", true, false),
+            (Some(0), Secondary::Track(1))
+        );
+        assert_eq!(
+            default_tracks(&lecture, "en", "ru", false, false),
+            (Some(0), Secondary::Off),
+            "translation turned off"
+        );
+
+        // Captions by people come first, whatever order mpv and I listed them in.
+        let both = [
+            listed("en", Auto::Speech),
+            listed("ru", Auto::Translated),
+            listed("en", Auto::No),
+            listed("ru", Auto::No),
+        ];
+        assert_eq!(
+            default_tracks(&both, "en", "ru", true, true),
+            (Some(2), Secondary::Track(3))
+        );
+
+        // A German talk while learning English: the site's English is a machine translation,
+        // so the spoken German is shown.
+        let german = [listed("de", Auto::Speech), listed("en", Auto::Translated)];
+        assert_eq!(default_tracks(&german, "en", "ru", true, true).0, Some(0));
+        assert_eq!(
+            default_tracks(&[listed("en", Auto::Translated)], "en", "ru", true, true).0,
+            Some(0),
+            "the only track is still shown"
+        );
+        assert_eq!(
+            default_tracks(&[], "en", "ru", true, true),
+            (None, Secondary::Translate)
+        );
     }
 
     #[test]

@@ -385,6 +385,27 @@ impl App {
             let _ = index;
             s.tracks.push(SubTrack::new(t.label(), lang, origin, load));
         }
+        // Only a link yt-dlp opened has this; it is gone once the file ends.
+        let online = self
+            .player
+            .mpv
+            .get_string(crate::online::HOOK_RESULT)
+            .and_then(|json| crate::online::OnlineInfo::from_hook_result(&json));
+        if let Some(info) = &online {
+            s.media_key = info.media_key();
+            let (learn, native) = (&self.cfg.general.learn_lang, &self.cfg.general.native_lang);
+            for sub in info.auto_subs(learn, native) {
+                let mut track = SubTrack::new(
+                    auto_label(&sub),
+                    Some(sub.lang.clone()),
+                    Origin::External { path: sub.url },
+                    Load::NotLoaded,
+                );
+                track.auto = sub.kind;
+                s.tracks.push(track);
+            }
+        }
+        s.online = online;
         for sub in std::mem::take(&mut s.stream_subs) {
             let index = s.tracks.len();
             s.tracks.push(SubTrack::new(
@@ -435,27 +456,15 @@ impl App {
 
     fn choose_default_tracks(&mut self) {
         let Some(s) = &mut self.session else { return };
-        let (learn, native) = (&self.cfg.general.learn_lang, &self.cfg.general.native_lang);
-        let text: Vec<usize> = (0..s.tracks.len())
-            .filter(|&i| s.tracks[i].is_text())
-            .collect();
-        let lang_of = |i: usize| s.tracks[i].track.lang.clone().unwrap_or_default();
-        let primary = text
-            .iter()
-            .find(|&&i| !learn.is_empty() && &lang_of(i) == learn)
-            .or_else(|| text.iter().find(|&&i| &lang_of(i) != native))
-            .or(text.first())
-            .copied();
-        let native_track = text
-            .iter()
-            .copied()
-            .find(|&i| Some(i) != primary && &lang_of(i) == native);
+        let (primary, secondary) = crate::session::default_tracks(
+            &s.tracks,
+            &self.cfg.general.learn_lang,
+            &self.cfg.general.native_lang,
+            self.cfg.subtitles.auto_translate,
+            self.translator.is_ok(),
+        );
         s.primary = primary;
-        s.secondary = match native_track {
-            Some(i) => Secondary::Track(i),
-            None if self.cfg.subtitles.auto_translate => Secondary::Translate,
-            None => Secondary::Off,
-        };
+        s.secondary = secondary;
         // Image subtitles are the only kind mpv still draws itself.
         let bitmap = s.tracks.iter().find_map(|t| match (&t.origin, &t.load) {
             (Origin::Embedded { mpv_id, .. }, Load::Bitmap) if primary.is_none() => Some(*mpv_id),
@@ -1213,6 +1222,17 @@ fn in_view(t: &SubTrack, cues: &[usize], limit: usize) -> Option<Vec<usize>> {
         }
     }
     (!wanted.is_empty()).then_some(wanted)
+}
+
+/// "English (auto)" in the interface language, or the site's own name of a language I have
+/// no name for.
+fn auto_label(sub: &crate::online::AutoSub) -> String {
+    let name = i18n::language_name(&sub.lang).map_or_else(|| sub.name.clone(), |k| t(k).to_owned());
+    let template = match sub.kind {
+        crate::online::Auto::Translated => Tr::AutoTranslatedSubsLabel,
+        _ => Tr::AutoSubsLabel,
+    };
+    tf(template, &[&name])
 }
 
 /// The file name a TorrServer stream URL carries, without its extension.

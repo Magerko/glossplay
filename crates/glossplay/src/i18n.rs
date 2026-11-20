@@ -67,6 +67,26 @@ pub fn t(key: Tr) -> &'static str {
     text_in(lang(), key)
 }
 
+/// The name of a language by its two-letter code, for the few languages people learn most.
+pub fn language_name(code: &str) -> Option<Tr> {
+    Some(match code {
+        "en" => Tr::LangEnglish,
+        "ru" => Tr::LangRussian,
+        "uk" => Tr::LangUkrainian,
+        "de" => Tr::LangGerman,
+        "fr" => Tr::LangFrench,
+        "es" => Tr::LangSpanish,
+        "it" => Tr::LangItalian,
+        "pt" => Tr::LangPortuguese,
+        "pl" => Tr::LangPolish,
+        "tr" => Tr::LangTurkish,
+        "ja" => Tr::LangJapanese,
+        "ko" => Tr::LangKorean,
+        "zh" => Tr::LangChinese,
+        _ => return None,
+    })
+}
+
 /// A message whose `{0}`, `{1}`… are replaced by `args`.
 pub fn tf(key: Tr, args: &[&dyn Display]) -> String {
     fill(t(key), args)
