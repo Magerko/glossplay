@@ -12,6 +12,7 @@ mod keys;
 mod online;
 mod paths;
 mod player;
+mod record;
 mod search_ui;
 mod selftest;
 mod session;

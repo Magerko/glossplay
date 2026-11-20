@@ -147,7 +147,8 @@ impl App {
         let player = Player::new(&cfg.player).map_err(|e| e.to_string())?;
         let quiet = launch.selftest.is_some();
         let dub_save = launch.selftest.as_ref().and_then(|p| p.dub_save.clone());
-        if quiet {
+        // A recording sends the sound into files, and must keep it to be of any use.
+        if quiet && !crate::record::on() {
             player.mpv.set_flag("mute", true);
         }
         let loader = cc
@@ -1280,7 +1281,7 @@ impl App {
         self.read_live_subs();
         self.prev_pos = self.snap.pos;
         self.snap = self.player.snapshot();
-        if self.quiet && !self.snap.muted {
+        if self.quiet && !self.snap.muted && !crate::record::on() {
             // Nothing in a self-test may be heard; a click on the mute button cannot undo it.
             self.player.mpv.set_flag("mute", true);
         }

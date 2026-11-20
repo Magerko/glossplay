@@ -138,6 +138,7 @@ pub struct Dub {
 impl Dub {
     pub fn start(cfg: DubConfig, main: Arc<Mpv>, ctx: egui::Context) -> Result<Dub, String> {
         let volume = format!("{:.0}", cfg.voice_volume.clamp(0.0, 150.0));
+        let record = crate::record::voice_options();
         let mut options = vec![
             ("vid", "no"),
             ("vo", "null"),
@@ -152,7 +153,9 @@ impl Dub {
             ("volume-max", "150"),
             ("gapless-audio", "no"),
         ];
-        if cfg.silent {
+        if !record.is_empty() {
+            options.extend(record.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        } else if cfg.silent {
             options.push(("mute", "yes"));
             options.push(("ao", "null"));
         }
@@ -859,6 +862,11 @@ impl Player {
                     if let Some(p) = s.stats.played.get_mut(c.index) {
                         p.started_at = Some(started_at);
                     }
+                    crate::record::event(
+                        "clip_started",
+                        serde_json::json!({"line": c.unit.start, "started_at": started_at,
+                            "pos": pos, "voice_pos": t}),
+                    );
                 }
                 _ if c.cmd_at.elapsed() > Duration::from_secs(3) => {
                     st.current = None;
@@ -880,6 +888,10 @@ impl Player {
             lock(&self.shared).stats.overlaps += 1;
         }
         let path = clip.path.to_string_lossy().into_owned();
+        let record = crate::record::clip_file(unit.start);
+        if let Some(file) = &record {
+            self.voice.set("ao-pcm-file", file);
+        }
         if self.voice.command(&["loadfile", &path, "replace"]).is_err() {
             st.handled.insert(unit);
             return;
@@ -907,6 +919,14 @@ impl Player {
             });
             s.stats.played.len() - 1
         };
+        if let Some(file) = record {
+            crate::record::event(
+                "clip",
+                serde_json::json!({"line": unit.start, "pos": pos, "file": file,
+                    "clip": path, "clip_ms": clip.ms, "natural_ms": clip.natural_ms,
+                    "window_ms": unit.window, "catch_up": catch_up, "text": unit.text}),
+            );
+        }
         st.handled.insert(unit.clone());
         st.current = Some(Current {
             unit,

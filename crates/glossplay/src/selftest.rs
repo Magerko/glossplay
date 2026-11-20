@@ -764,6 +764,10 @@ fn after_capture(st: &mut State, app: &mut App, ctx: &egui::Context) {
 /// Pauses the video for 1.5 s while a clip plays; the voice must stop with it.
 fn check_pause(st: &mut State, app: &mut App) {
     let Some(d) = &app.dub else { return };
+    // A recording is meant to look like normal playback.
+    if crate::record::on() {
+        return;
+    }
     match st.pause_check {
         PauseCheck::Waiting => {
             let halfway = (app.snap.pos - st.start_pos) as f64 >= st.plan.seconds * 1000.0 * 0.4;
@@ -825,7 +829,8 @@ fn report_dub(st: &mut State, app: &App) {
     let (ao, voice_muted) = st.voice_output.clone().unwrap_or_else(|| d.voice_output());
     let main_muted = app.player.mpv.get_flag("mute").unwrap_or(false);
     println!("dub_voice_ao={ao} voice_muted={voice_muted} main_muted={main_muted}");
-    if ao != "null" || !voice_muted || !main_muted {
+    // A recording writes both players into files from the start; there is no device to reach.
+    if !crate::record::on() && (ao != "null" || !voice_muted || !main_muted) {
         st.failures
             .push("a self-test must not be heard, and the voice-over could be".into());
     }

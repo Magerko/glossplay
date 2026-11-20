@@ -82,7 +82,7 @@ impl App {
             lang: self.cfg.general.native_lang.clone(),
             voice_volume: cfg.voice_volume,
             mpv_path: self.cfg.player.mpv_path.clone(),
-            silent: self.quiet,
+            silent: self.quiet && !crate::record::on(),
             cache_dir: data.join("tts-cache"),
             work_dir: data.join("voice"),
             save_dir: self.dub_save.clone(),

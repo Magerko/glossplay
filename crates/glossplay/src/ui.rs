@@ -78,9 +78,11 @@ impl eframe::App for App {
         self.toast_ui(&ctx);
         crate::selftest::step(self, &ctx);
         crate::control::step(self, &ctx);
+        crate::record::frame(self, &ctx);
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        crate::record::finish(self);
         self.stop_asr();
         self.dub = None;
         self.forget_added_torrent();

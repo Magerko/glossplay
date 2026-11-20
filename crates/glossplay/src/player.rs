@@ -88,6 +88,7 @@ impl Player {
             other => other,
         };
         let volume = cfg.volume.to_string();
+        let record = crate::record::main_options();
         let mut options = vec![
             ("vo", "libmpv"),
             ("hwdec", hwdec),
@@ -101,6 +102,7 @@ impl Player {
             ("volume", volume.as_str()),
             ("volume-max", "150"),
         ];
+        options.extend(record.iter().map(|(k, v)| (k.as_str(), v.as_str())));
         // Unless the user points at their own yt-dlp, mpv uses the copy I keep up to date.
         let ytdl = if cfg.ytdl_path.is_empty() {
             crate::ytdlp::binary_path().to_string_lossy().into_owned()
