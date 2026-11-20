@@ -54,6 +54,11 @@ pub fn post_json(url: &str, headers: &[(&str, &str)], body: &Value) -> Result<Va
     parse(&finish(req.send_json(body))?)
 }
 
+/// A JSON request whose answer may be empty or not JSON at all.
+pub fn post_json_text(url: &str, body: &Value) -> Result<String, AiError> {
+    finish(agent().post(url).send_json(body))
+}
+
 pub fn post_form(url: &str, form: &[(&str, &str)]) -> Result<Value, AiError> {
     parse(&finish(agent().post(url).send_form(form.iter().copied()))?)
 }
@@ -131,8 +136,33 @@ pub fn get_bytes(url: &str) -> Result<Vec<u8>, AiError> {
         .map_err(|e| AiError::Network(e.to_string()))
 }
 
-/// Returns the `Location` of a 3xx response without following it; `None` if there was no redirect.
-pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
+/// A GET with query parameters whose answer is read whatever its status: some servers
+/// explain an error in the body of a 4xx reply.
+pub fn get_with_query(url: &str, query: &[(&str, &str)]) -> Result<(u16, String), AiError> {
+    let mut resp = agent()
+        .get(url)
+        .query_pairs(query.iter().copied())
+        .call()
+        .map_err(|e| AiError::Network(e.to_string()))?;
+    let status = resp.status().as_u16();
+    let body = resp
+        .body_mut()
+        .with_config()
+        .limit(32 * 1024 * 1024)
+        .read_to_string()
+        .map_err(|e| AiError::Network(e.to_string()))?;
+    Ok((status, body))
+}
+
+/// The answer to one GET that was not allowed to redirect.
+pub struct Single {
+    pub status: u16,
+    pub location: Option<String>,
+    pub body: Vec<u8>,
+}
+
+/// One GET without following a redirect; a 3xx reply comes back with its `Location`.
+pub fn get_single(url: &str) -> Result<Single, AiError> {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     let agent = AGENT.get_or_init(|| {
         ureq::Agent::config_builder()
@@ -143,25 +173,77 @@ pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
             .build()
             .into()
     });
-    let resp = agent
+    let mut resp = agent
         .get(url)
         .call()
         .map_err(|e| AiError::Network(e.to_string()))?;
     let status = resp.status().as_u16();
-    if (300..400).contains(&status) {
-        return Ok(resp
-            .headers()
-            .get("location")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned));
-    }
-    if (200..300).contains(&status) {
-        return Ok(None);
-    }
-    Err(AiError::Http {
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let body = if (300..400).contains(&status) {
+        Vec::new()
+    } else {
+        resp.body_mut()
+            .with_config()
+            .limit(16 * 1024 * 1024)
+            .read_to_vec()
+            .map_err(|e| AiError::Network(e.to_string()))?
+    };
+    Ok(Single {
         status,
-        body: String::new(),
+        location,
+        body,
     })
+}
+
+/// Returns the `Location` of a 3xx response without following it; `None` if there was no redirect.
+pub fn redirect_target(url: &str) -> Result<Option<String>, AiError> {
+    let reply = get_single(url)?;
+    match reply.status {
+        300..400 => Ok(reply.location),
+        200..300 => Ok(None),
+        status => Err(AiError::Http {
+            status,
+            body: String::new(),
+        }),
+    }
+}
+
+/// Uploads one file as `multipart/form-data`, with plain text fields next to it.
+pub fn post_file(
+    url: &str,
+    field: &str,
+    file_name: &str,
+    content: &[u8],
+    fields: &[(&str, &str)],
+) -> Result<Value, AiError> {
+    let boundary = "----glossplay-7d1c5e0a93b44f2e";
+    let mut body = Vec::with_capacity(content.len() + 512);
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{}\"\r\nContent-Type: application/x-bittorrent\r\n\r\n",
+            file_name.replace(['"', '\r', '\n'], "_")
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(content);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    post_bytes(
+        url,
+        &format!("multipart/form-data; boundary={boundary}"),
+        &body,
+    )
 }
 
 #[cfg(test)]

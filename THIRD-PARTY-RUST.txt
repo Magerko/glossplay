@@ -7,7 +7,7 @@ Cargo.lock by scripts/update-licenses.ps1, do not edit by hand.
 
 Licences in use
 ---------------
-* MIT License (MIT): 355 crates
+* MIT License (MIT): 356 crates
 * ISC License (ISC): 25 crates
 * Unicode License v3 (Unicode-3.0): 20 crates
 * Apache License 2.0 (Apache-2.0): 18 crates
@@ -52,11 +52,11 @@ encoding_rs 0.8.44 - BSD-3-Clause - https://github.com/hsivonen/encoding_rs
 zstd-sys 2.1.3+zstd.1.5.7 - BSD-3-Clause - https://github.com/gyscos/zstd-rs
 xxhash-rust 0.8.21 - BSL-1.0 - https://github.com/DoumanAsh/xxhash-rust
 webpki-roots 1.0.12 - CDLA-Permissive-2.0 - https://github.com/rustls/webpki-roots
-glossplay 0.1.0 - GPL-3.0-or-later
-gp-ai 0.1.0 - GPL-3.0-or-later
-gp-core 0.1.0 - GPL-3.0-or-later
-gp-media 0.1.0 - GPL-3.0-or-later
-gp-store 0.1.0 - GPL-3.0-or-later
+glossplay 0.1.1 - GPL-3.0-or-later
+gp-ai 0.1.1 - GPL-3.0-or-later
+gp-core 0.1.1 - GPL-3.0-or-later
+gp-media 0.1.1 - GPL-3.0-or-later
+gp-store 0.1.1 - GPL-3.0-or-later
 ring 0.17.14 - ISC - https://github.com/briansmith/ring
 ring 0.17.14 - ISC - https://github.com/briansmith/ring
 untrusted 0.9.0 - ISC - https://github.com/briansmith/untrusted
@@ -426,6 +426,7 @@ nix 0.32.0 - MIT - https://github.com/nix-rust/nix
 combine 4.6.9 - MIT - https://github.com/Marwes/combine
 orbclient 0.3.55 - MIT - https://gitlab.redox-os.org/redox-os/orbclient
 redox_users 0.5.3 - MIT - https://gitlab.redox-os.org/redox-os/users
+roxmltree 0.21.2 - MIT - https://github.com/RazrFalcon/roxmltree
 guillotiere 0.7.0 - MIT - https://github.com/nical/guillotiere
 crossbeam-deque 0.8.8 - MIT - https://github.com/crossbeam-rs/crossbeam
 crossbeam-epoch 0.9.21 - MIT - https://github.com/crossbeam-rs/crossbeam
@@ -2659,7 +2660,7 @@ insights.
 
 --------------------------------------------------------------------------------
 GNU General Public License v3.0 or later (GPL-3.0-or-later)
-Used by: glossplay 0.1.0, gp-ai 0.1.0, gp-core 0.1.0, gp-media 0.1.0, gp-store 0.1.0
+Used by: glossplay 0.1.1, gp-ai 0.1.1, gp-core 0.1.1, gp-media 0.1.1, gp-store 0.1.1
 --------------------------------------------------------------------------------
 
 GNU GENERAL PUBLIC LICENSE
@@ -7564,6 +7565,34 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+
+
+--------------------------------------------------------------------------------
+MIT License (MIT)
+Used by: roxmltree 0.21.2
+--------------------------------------------------------------------------------
+
+The MIT License (MIT)
+
+Copyright (c) 2018 Yevhenii Reizner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 
 --------------------------------------------------------------------------------

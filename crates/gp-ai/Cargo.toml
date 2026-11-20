@@ -8,4 +8,5 @@ license.workspace = true
 gp-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+roxmltree = "0.21"
 ureq = { version = "3", features = ["json"] }

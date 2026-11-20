@@ -11,6 +11,7 @@ pub struct Config {
     pub tts: Tts,
     pub training: Training,
     pub anki: Anki,
+    pub sources: Sources,
 }
 
 impl Config {
@@ -209,9 +210,46 @@ impl Default for Anki {
     }
 }
 
+/// The user's own search server (Torznab) and TorrServer. Nothing is built in: search stays
+/// hidden until both addresses are filled in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Sources {
+    pub torznab_url: String,
+    pub torznab_key: String,
+    pub torrserver_url: String,
+}
+
+impl Sources {
+    pub fn search_ready(&self) -> bool {
+        !self.torznab_url.trim().is_empty() && !self.torrserver_url.trim().is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_needs_both_addresses() {
+        let c = Config::from_toml("").unwrap();
+        assert_eq!(c.sources, Sources::default());
+        assert!(!c.sources.search_ready());
+        let only_search =
+            Config::from_toml("[sources]\ntorznab_url = \"http://indexer.test/api\"\n").unwrap();
+        assert!(!only_search.sources.search_ready());
+        let blank = Config::from_toml(
+            "[sources]\ntorznab_url = \"http://indexer.test/api\"\ntorrserver_url = \"  \"\n",
+        )
+        .unwrap();
+        assert!(!blank.sources.search_ready());
+        let both = Config::from_toml(
+            "[sources]\ntorznab_url = \"http://indexer.test/api\"\ntorrserver_url = \"http://ts.test:8090\"\n",
+        )
+        .unwrap();
+        assert!(both.sources.search_ready());
+        assert_eq!(both.sources.torznab_key, "");
+    }
 
     #[test]
     fn empty_and_partial_files_fall_back_to_defaults() {

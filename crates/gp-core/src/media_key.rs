@@ -15,6 +15,12 @@ pub fn url_key(url: &str) -> String {
     format!("u:{url}")
 }
 
+/// A file of a torrent played through a streaming server: the same file whatever server
+/// address or file name the stream URL carries.
+pub fn torrent_key(info_hash: &str, file_index: u32) -> String {
+    format!("t:{}:{file_index}", info_hash.to_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -26,5 +32,11 @@ mod tests {
         assert_ne!(a, file_key(11, b"head", b"tail"));
         assert_ne!(a, file_key(10, b"heaD", b"tail"));
         assert!(a.starts_with("f:") && a.len() == 18);
+    }
+
+    #[test]
+    fn torrent_key_ignores_hash_case() {
+        assert_eq!(torrent_key("ABCDEF", 3), torrent_key("abcdef", 3));
+        assert_ne!(torrent_key("abcdef", 3), torrent_key("abcdef", 4));
     }
 }
