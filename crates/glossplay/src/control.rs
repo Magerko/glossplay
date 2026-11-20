@@ -196,7 +196,10 @@ impl State {
             && l.quiet
         {
             app.quiet = true;
-            app.player.mpv.set_flag("mute", true);
+            // A recording sends the sound into files, never to a device, and must keep it.
+            if !crate::record::on() {
+                app.player.mpv.set_flag("mute", true);
+            }
             // Started by the config before the flag was known; the next one starts silent.
             if app.dub.take().is_some() {
                 app.set_dub(true);
@@ -347,6 +350,7 @@ fn time_limit(name: &str, args: &Value) -> Duration {
         "open" => asked.unwrap_or(Duration::from_secs(90)),
         "select_subtitles" => Duration::from_secs(90),
         "click_word" => Duration::from_secs(20),
+        "pointer" => Duration::from_secs(120),
         _ => Duration::from_secs(10),
     }
 }
@@ -368,6 +372,10 @@ fn run_tool(
     args: &Value,
 ) -> Result<Outcome, String> {
     let now = |v: Value| Ok(Outcome::Now(Ok(v)));
+    crate::record::event(
+        "mcp",
+        json!({"tool": name, "args": args, "pos": app.snap.pos}),
+    );
     match name {
         "open" => open(app, args),
         "play" => {
@@ -430,6 +438,7 @@ fn run_tool(
             let Some(word) = app.popup.as_ref().map(|p| p.word.clone()) else {
                 return Err("no word card is open: click_word first".into());
             };
+            crate::record::click_place("save_word");
             let id = app
                 .save_popup_word()
                 .ok_or_else(|| format!("could not save \"{word}\""))?;
@@ -442,6 +451,9 @@ fn run_tool(
                 Some("transcript") => app.sidebar_tab = SidebarTab::Transcript,
                 Some("words") => app.sidebar_tab = SidebarTab::Words,
                 Some(other) => return Err(format!("unknown tab \"{other}\": transcript or words")),
+            }
+            if open && !app.sidebar_open {
+                crate::record::click_place("☰");
             }
             app.sidebar_open = open;
             now(json!({"open": open, "tab": tab_name(app.sidebar_tab)}))
@@ -487,6 +499,7 @@ fn run_tool(
         "set_window" => set_window(app, ctx, args),
         "press_key" => press_key(app, ctx, args),
         "screenshot" => screenshot(app, args),
+        "pointer" => pointer(ctx, args),
         _ => Err(format!("{name} is not implemented")),
     }
 }
@@ -1150,6 +1163,7 @@ fn click_word(app: &mut App, ctx: &egui::Context, args: &Value) -> Result<Outcom
         egui::pos2(screen.center().x, screen.bottom() - 190.0),
         |r| r.center_top(),
     );
+    crate::record::click(rect.map_or(anchor, |r| r.center()));
     app.open_word(word.clone(), cue, token, anchor);
     let request = app.popup.as_ref().map(|p| p.request);
     let where_ = rect.map(|r| rect_px(app, r));
@@ -1471,6 +1485,67 @@ fn output_path(raw: &str, ext: &str, overwrite: bool) -> Result<PathBuf, String>
         ));
     }
     Ok(path)
+}
+
+fn pointer(ctx: &egui::Context, args: &Value) -> Result<Outcome, String> {
+    use crate::record::PointerAction as P;
+    let action = need_str(args, "action")?;
+    let secs = opt_f64(args, "seconds")?;
+    let place = || -> Result<(f32, f32), String> {
+        Ok((need_f64(args, "x")? as f32, need_f64(args, "y")? as f32))
+    };
+    let action = match action {
+        "move" | "click" | "double_click" | "drag" => {
+            let (x, y) = place()?;
+            match action {
+                "move" => P::Move {
+                    x,
+                    y,
+                    secs: secs.unwrap_or(0.7),
+                },
+                "drag" => P::Drag {
+                    x,
+                    y,
+                    secs: secs.unwrap_or(1.2),
+                },
+                _ => P::Click {
+                    x,
+                    y,
+                    secs: secs.unwrap_or(0.7),
+                    count: if action == "click" { 1 } else { 2 },
+                },
+            }
+        }
+        "paste" => P::Paste(need_str(args, "text")?.to_owned()),
+        "type" => {
+            let text = need_str(args, "text")?.to_owned();
+            let secs = secs.unwrap_or(0.08 * text.chars().count() as f64);
+            P::Type { text, secs }
+        }
+        "hide" => P::Hide,
+        "where" => {
+            if !crate::record::on() {
+                return Err("the pointer works only in the recording mode".into());
+            }
+            return Ok(Outcome::Now(Ok(
+                json!({"places": crate::record::places(ctx.pixels_per_point())}),
+            )));
+        }
+        other => {
+            return Err(format!(
+                "unknown action \"{other}\": move, click, double_click, drag, type, paste, hide or where"
+            ));
+        }
+    };
+    crate::record::pointer(action, ctx.pixels_per_point())?;
+    ctx.request_repaint();
+    let wait: Wait = Box::new(|_, _, late| {
+        if crate::record::pointer_busy() && !late {
+            return None;
+        }
+        Some(Ok(json!({"done": !crate::record::pointer_busy()})))
+    });
+    later("pointer", args, wait)
 }
 
 fn screenshot(_app: &mut App, args: &Value) -> Result<Outcome, String> {
@@ -1812,6 +1887,22 @@ pub fn tool_list() -> Value {
             &[]
         ),
         tool(
+            "pointer",
+            "Pointer (recording mode)",
+            "Only with GLOSSPLAY_RECORD_DIR set, for recording what the player does: moves a \
+             pointer of its own over the window and clicks, drags or types with it, as a mouse \
+             and keyboard would, and draws it into the recording. Answers when the move is over. \
+             where: the centres of some buttons drawn now (save_word, words_tab, icons).",
+            json!({
+                "action": {"type": "string", "enum": ["move", "click", "double_click", "drag", "type", "paste", "hide", "where"]},
+                "x": {"type": "number", "description": "Window pixels from the left of the drawing area: where to move, click, or drag to (drag starts where the pointer is)."},
+                "y": {"type": "number", "description": "Window pixels from the top."},
+                "seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60, "description": "How long the move or the typing takes (0.7 s for a move, 1.2 s for a drag)."},
+                "text": {"type": "string", "description": "What to type, into the field that has the focus."},
+            }),
+            &["action"]
+        ),
+        tool(
             "press_key",
             "Press a key",
             "Does what a player shortcut does: space (play/pause), left/right (5 s), up/down \
@@ -1846,7 +1937,7 @@ mod tests {
     use super::*;
 
     /// Every name `run_tool` handles; kept here so a tool cannot be listed but not run.
-    const RUN: [&str; 27] = [
+    const RUN: [&str; 28] = [
         "open",
         "play",
         "pause",
@@ -1874,6 +1965,7 @@ mod tests {
         "set_window",
         "press_key",
         "screenshot",
+        "pointer",
     ];
 
     fn check_schema(path: &str, s: &Value) {
@@ -1966,7 +2058,7 @@ mod tests {
         let Some(Action::Send(r)) = actions.into_iter().next() else {
             panic!("no answer");
         };
-        assert_eq!(r["result"]["tools"].as_array().unwrap().len(), 27);
+        assert_eq!(r["result"]["tools"].as_array().unwrap().len(), 28);
         let actions = p.handle(
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"click_word","arguments":{"index":3}}}"#,
         );

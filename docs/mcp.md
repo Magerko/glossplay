@@ -135,6 +135,7 @@ All times are in seconds. Results are JSON text.
 | `set_window` | `width?`, `height?`, `x?`, `y?`, `always_on_top?` | Drawing-area size and screen position in pixels (a 1080×1920 window may be taller than the screen), and whether the window stays on top. Answers with the geometry it got. |
 | `press_key` | `key`, `text?` | A player shortcut, judged like the keyboard: `space`, `left`, `right`, `up`, `down`, `a`, `s`, `d`, `p`, `f`, `t`, `m`, `1`, `2`, `[`, `]`, `-` and `=` (subtitle size, 10% steps), `escape`, `ctrl+f`, and `ctrl+v` with `text` standing for the clipboard (a link, magnet link or file path opens; anything else shows a message). Over a dialog only `escape` works. `ctrl+o` is refused: it opens the system file dialog, use `open`. On macOS `ctrl` means ⌘. |
 | `screenshot` | `path`, `overwrite?` | Saves the window as drawn (with subtitles, cards, dialogs) to a PNG. |
+| `pointer` | `action`: `move`, `click`, `double_click`, `drag`, `type`, `hide`; `x?`, `y?`, `seconds?`, `text?` | Recording mode only (`GLOSSPLAY_RECORD_DIR`): moves a pointer of its own over the window in window pixels and clicks, drags (from where it is) or types into the focused field, as a mouse and keyboard would; the recording shows it as an arrow with a ring at each click. Answers when the move is over. |
 
 ## Example: setting up a shot
 

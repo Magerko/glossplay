@@ -678,6 +678,9 @@ fn table<const N: usize>(
         for i in range {
             let (rect, resp) =
                 ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
+            if crate::record::on() {
+                crate::record::place(&format!("table_row_{i}"), rect);
+            }
             if i == selected {
                 ui.painter().rect_filled(rect, 5.0, theme::raised());
                 ui.painter().rect_filled(

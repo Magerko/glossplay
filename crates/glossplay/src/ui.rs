@@ -101,17 +101,18 @@ impl eframe::App for App {
             raw.events.retain(|e| !keys::is_keyboard(e));
         }
         crate::selftest::inject(self, ctx, raw);
+        crate::record::inject(ctx, raw);
     }
 }
 
 fn icon_button(ui: &mut egui::Ui, icon: &str, hint: &str) -> bool {
-    ui.add(
+    let r = ui.add(
         egui::Button::new(RichText::new(icon).size(17.0))
             .frame(false)
             .min_size(vec2(28.0, 28.0)),
-    )
-    .on_hover_text(hint)
-    .clicked()
+    );
+    crate::record::place(icon, r.rect);
+    r.on_hover_text(hint).clicked()
 }
 
 /// The font's play and pause glyphs differ in size, so I draw this pair myself.
@@ -433,10 +434,12 @@ impl App {
                 .id(Id::unique(URL_FIELD))
                 .hint_text(t(Tr::PasteLink))
                 .desired_width(340.0);
-            let entered = ui.add(field).lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-            if (ui.button(t(Tr::PlayButton)).clicked() || entered)
-                && !self.url_input.trim().is_empty()
-            {
+            let field = ui.add(field);
+            crate::record::place("url_field", field.rect);
+            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            let play = ui.button(t(Tr::PlayButton));
+            crate::record::place("play_button", play.rect);
+            if (play.clicked() || entered) && !self.url_input.trim().is_empty() {
                 let url = self.url_input.trim().to_owned();
                 self.open(&url);
             }
@@ -1012,7 +1015,9 @@ impl App {
             } else {
                 t(Tr::TranscribeSpeech)
             };
-            if ui.button(label).clicked() {
+            let transcribe = ui.button(label);
+            crate::record::place("transcribe", transcribe.rect);
+            if transcribe.clicked() {
                 toggle_asr = true;
             }
             if ui
@@ -1027,13 +1032,18 @@ impl App {
                     .num_columns(2)
                     .spacing([10.0, 4.0])
                     .show(ui, |ui| {
-                        for (label, value) in [
-                            (t(Tr::SliderOriginal), &mut original),
-                            (t(Tr::SliderVoice), &mut voice),
+                        for (name, label, value) in [
+                            ("slider_original", t(Tr::SliderOriginal), &mut original),
+                            ("slider_voice", t(Tr::SliderVoice), &mut voice),
                         ] {
                             ui.label(RichText::new(label).color(theme::muted()));
                             let r =
                                 ui.add(egui::Slider::new(value, 0.0..=150.0).integer().suffix("%"));
+                            let rail = egui::Rect::from_min_size(
+                                r.rect.min,
+                                vec2(ui.spacing().slider_width, r.rect.height()),
+                            );
+                            crate::record::place(name, rail);
                             volumes_changed |= r.changed();
                             volumes_done |= r.drag_stopped() || (r.changed() && !r.dragged());
                             ui.end_row();
@@ -1122,6 +1132,7 @@ impl App {
                 open_search = true;
             }
         });
+        crate::record::place("subtitles_menu", menu.response.rect);
         if self.selftest.as_ref().is_some_and(|s| s.plan.subs_menu) {
             egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&menu.response));
         }
@@ -1260,19 +1271,21 @@ impl App {
                 t(Tr::TabTranscript),
             );
             let words = tf(Tr::TabWords, &[&self.vocab.len()]);
-            ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Words, words);
+            let r = ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Words, words);
+            crate::record::place("words_tab", r.rect);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if icon_button(ui, "✕", t(Tr::CloseHint)) {
                     self.sidebar_open = false;
                 }
             });
         });
-        ui.add(
+        let search = ui.add(
             egui::TextEdit::singleline(&mut self.search)
                 .id(Id::unique(TRANSCRIPT_FIELD))
                 .hint_text(t(Tr::SearchHint))
                 .desired_width(f32::INFINITY),
         );
+        crate::record::place("transcript_search", search.rect);
         ui.add_space(4.0);
         match self.sidebar_tab {
             SidebarTab::Transcript => self.transcript(ui),
@@ -1311,10 +1324,13 @@ impl App {
         let mut shown = 0..0;
         area.show_rows(ui, row_height, rows.len(), |ui, range| {
             shown = range.clone();
-            for &i in &rows[range] {
+            for (n, &i) in rows[range.clone()].iter().enumerate() {
                 let cue = &t.track.cues[i];
                 let (rect, resp) =
                     ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
+                if crate::record::on() {
+                    crate::record::place(&format!("transcript_row_{}", range.start + n), rect);
+                }
                 if Some(i) == current {
                     ui.painter().rect_filled(rect, 6.0, theme::raised());
                     ui.painter().rect_filled(
@@ -1554,7 +1570,9 @@ impl App {
                             } else {
                                 t(Tr::SaveWord)
                             };
-                            if ui.button(label).clicked() {
+                            let button = ui.button(label);
+                            crate::record::place("save_word", button.rect);
+                            if button.clicked() {
                                 save = true;
                             }
                             let label = if in_anki {
@@ -1562,7 +1580,9 @@ impl App {
                             } else {
                                 t(Tr::SendToAnki)
                             };
-                            if ui.add_enabled(!in_anki, egui::Button::new(label)).clicked() {
+                            let send = ui.add_enabled(!in_anki, egui::Button::new(label));
+                            crate::record::place("send_to_anki", send.rect);
+                            if send.clicked() {
                                 anki = true;
                             }
                             if ui.button(t(Tr::CopyWord)).clicked() {
