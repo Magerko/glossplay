@@ -4,6 +4,11 @@
 //! through a channel and run in `step`, once a frame, against the same `App` methods the
 //! mouse and keyboard use. A call that has to wait for something (a file to open, a seek to
 //! land, a translation) stays pending and is answered by a later frame.
+//!
+//! MCP clients start every server they know at the start of each of their sessions, so the
+//! window is not made until a call needs it (`hold_window`); until then the main thread
+//! answers what it can without a player. Closing the window hides it instead of ending the
+//! process, which lives as long as the client keeps stdin open.
 
 // Declared here rather than in main.rs, to keep the MCP code out of the files other work
 // touches at the same time.
@@ -22,7 +27,7 @@ use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -48,13 +53,41 @@ struct Launch {
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static STDIN_CLOSED: AtomicBool = AtomicBool::new(false);
+static CLOSING: AtomicBool = AtomicBool::new(false);
 static LAUNCH: Mutex<Option<Launch>> = Mutex::new(None);
 static INBOX: Mutex<Option<Receiver<Incoming>>> = Mutex::new(None);
+/// The call that made the window, answered by its first frame.
+static HELD: Mutex<Vec<ToolCall>> = Mutex::new(Vec::new());
 static OUTBOX: OnceLock<Arc<Outbox>> = OnceLock::new();
 static CTX: OnceLock<egui::Context> = OnceLock::new();
+/// Messages sent to the UI thread and not taken yet.
+static QUEUED: AtomicUsize = AtomicUsize::new(0);
+/// Calls still waiting for something, polled by frames.
+static BUSY: AtomicBool = AtomicBool::new(false);
+static WINDOW: AtomicU8 = AtomicU8::new(Window::NotMade as u8);
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Window {
+    NotMade = 0,
+    Shown = 1,
+    /// Closed by the user while the client is still connected.
+    Hidden = 2,
+}
+
+fn window_state() -> Window {
+    match WINDOW.load(Ordering::SeqCst) {
+        1 => Window::Shown,
+        2 => Window::Hidden,
+        _ => Window::NotMade,
+    }
+}
+
+fn set_window_state(w: Window) {
+    WINDOW.store(w as u8, Ordering::SeqCst);
+}
 
 /// After stdin closes the window should be gone within a second or two; this is for when the
-/// UI cannot get there (a minimized window runs no frames).
+/// UI cannot get there.
 const EXIT_BACKSTOP: Duration = Duration::from_secs(6);
 /// The watchdog answers a call this long after its own time limit, if the UI has not.
 const GRACE: Duration = Duration::from_secs(10);
@@ -108,10 +141,13 @@ pub fn launch(media: &mut Option<String>) {
                 }
                 Action::Send(_) => return,
             };
+            QUEUED.fetch_add(1, Ordering::SeqCst);
             let _ = tx.send(msg);
             wake();
         });
         STDIN_CLOSED.store(true, Ordering::SeqCst);
+        // Without a window yet, the main thread waits on this channel and leaves when it ends.
+        drop(tx);
         wake();
         std::thread::sleep(EXIT_BACKSTOP);
         eprintln!("mcp: the window did not close after stdin ended; leaving");
@@ -128,6 +164,111 @@ pub fn launch(media: &mut Option<String>) {
             );
         }
     });
+}
+
+/// Called by `main` before the window is made. With `--mcp` it returns only once a call needs
+/// the window, answering the others meanwhile, and ends the process if the client leaves
+/// first. A file named on the command line or a recording that starts at once needs the
+/// window from the start.
+pub fn hold_window() {
+    if !ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+    let (quiet, has_media) = LAUNCH
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or((false, false), |l| (l.quiet, l.media.is_some()));
+    if has_media || crate::record::starts_at_once() {
+        set_window_state(Window::Shown);
+        return;
+    }
+    let outbox = OUTBOX.get().expect("launch set the outbox").clone();
+    let rx = INBOX.lock().unwrap().take().expect("launch set the inbox");
+    loop {
+        let Ok(msg) = rx.recv() else {
+            outbox.fail_all("the player is shutting down");
+            gp_media::tools::stop_all();
+            std::process::exit(0);
+        };
+        QUEUED.fetch_sub(1, Ordering::SeqCst);
+        let Incoming::Call(call) = msg else { continue };
+        match before_window(&call.name, &call.args, quiet) {
+            Some(reply) => {
+                outbox.finish(&call.id, call.modern, reply);
+            }
+            None => {
+                HELD.lock().unwrap().push(call);
+                break;
+            }
+        }
+    }
+    *INBOX.lock().unwrap() = Some(rx);
+    set_window_state(Window::Shown);
+}
+
+/// What closing the window does.
+#[derive(Debug, PartialEq)]
+enum OnClose {
+    /// The process ends, as without `--mcp`.
+    Exit,
+    /// The window hides and the server stays for the client.
+    Hide,
+}
+
+fn on_close(mcp: bool, stdin_closed: bool) -> OnClose {
+    if mcp && !stdin_closed {
+        OnClose::Hide
+    } else {
+        OnClose::Exit
+    }
+}
+
+/// Runs before every frame, and also while the window is hidden, when only the app logic runs
+/// on some systems.
+pub fn logic(app: &mut App, ctx: &egui::Context) {
+    if !ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let _ = CTX.set(ctx.clone());
+    let stdin_closed = STDIN_CLOSED.load(Ordering::SeqCst);
+    if stdin_closed && !CLOSING.swap(true, Ordering::SeqCst) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        return;
+    }
+    if ctx.input(|i| i.viewport().close_requested())
+        && on_close(true, stdin_closed) == OnClose::Hide
+    {
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        hide(app, ctx);
+    }
+    // Windows runs the whole frame for a hidden window anyway; macOS runs only this, so a
+    // call waiting there needs a frame asked for.
+    let waiting = QUEUED.load(Ordering::SeqCst) > 0 || BUSY.load(Ordering::SeqCst);
+    if window_state() == Window::Hidden && waiting {
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+        ctx.request_repaint();
+    }
+}
+
+fn hide(app: &mut App, ctx: &egui::Context) {
+    // Dropped rather than closed: closing a card can resume playback.
+    app.popup = None;
+    if app.session.is_some() {
+        app.player.set_paused(true);
+    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    set_window_state(Window::Hidden);
+}
+
+fn show(app: &App, ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    // A quiet run ignores the keyboard, so taking the focus would only take it from whatever
+    // the user is typing into.
+    if !app.quiet {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+    set_window_state(Window::Shown);
 }
 
 /// Called by `main` once the window has closed: whatever is still pending gets an error.
@@ -178,7 +319,6 @@ struct State {
     rx: Receiver<Incoming>,
     outbox: Arc<Outbox>,
     pending: Vec<Pending>,
-    closing: bool,
 }
 
 impl State {
@@ -201,16 +341,23 @@ impl State {
         if let Some(media) = launch.and_then(|l| l.media) {
             app.open(&media);
         }
+        if window_state() == Window::NotMade {
+            set_window_state(Window::Shown);
+        }
         State {
             rx: INBOX.lock().unwrap().take().expect("launch set the inbox"),
             outbox: OUTBOX.get().expect("launch set the outbox").clone(),
             pending: Vec::new(),
-            closing: false,
         }
     }
 
     fn run(&mut self, app: &mut App, ctx: &egui::Context) {
+        let held = std::mem::take(&mut *HELD.lock().unwrap());
+        for call in held {
+            self.dispatch(app, ctx, call);
+        }
         while let Ok(msg) = self.rx.try_recv() {
+            QUEUED.fetch_sub(1, Ordering::SeqCst);
             match msg {
                 Incoming::Call(call) => self.dispatch(app, ctx, call),
                 Incoming::Cancel(id) => self.pending.retain(|p| p.call.id != id),
@@ -230,10 +377,7 @@ impl State {
             let answer = answer.unwrap_or_else(|| Err(format!("{} timed out", p.call.name)));
             self.outbox.finish(&p.call.id, p.call.modern, answer);
         }
-        if STDIN_CLOSED.load(Ordering::SeqCst) && !self.closing {
-            self.closing = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+        BUSY.store(!self.pending.is_empty(), Ordering::SeqCst);
         if !self.pending.is_empty() {
             ctx.request_repaint_after(POLL);
         }
@@ -242,6 +386,10 @@ impl State {
     fn dispatch(&mut self, app: &mut App, ctx: &egui::Context, call: ToolCall) {
         let outcome =
             run_tool(app, ctx, &call.name, &call.args).unwrap_or_else(|e| Outcome::Now(Err(e)));
+        let failed = matches!(outcome, Outcome::Now(Err(_)));
+        if !failed && window_state() == Window::Hidden && shows_window(&call.name, &call.args) {
+            show(app, ctx);
+        }
         match outcome {
             Outcome::Now(reply) => {
                 self.outbox.finish(&call.id, call.modern, reply);
@@ -314,10 +462,75 @@ fn to_ms(seconds: f64) -> Ms {
     (seconds * 1000.0).round() as Ms
 }
 
+const NO_FILE: &str = "no file is open: call open first";
+const NO_CARD: &str = "no word card is open";
+
 fn session(app: &App) -> Result<&Session, String> {
-    app.session
-        .as_ref()
-        .ok_or_else(|| "no file is open: call open first".to_owned())
+    app.session.as_ref().ok_or_else(|| NO_FILE.to_owned())
+}
+
+/// Whether a call brings a hidden window back: it plays, puts something on screen for the
+/// user or needs the window drawn. The rest (questions, settings, pausing) work with it hidden.
+fn shows_window(name: &str, args: &Value) -> bool {
+    match name {
+        "open" | "play" | "click_word" | "toggle_sidebar" | "search_transcript"
+        | "open_settings" | "set_window" | "press_key" | "screenshot" | "pointer"
+        | "record_start" => true,
+        // With subtitles the frame is drawn the way the window shows it.
+        "save_frame" => args.get("subtitles").and_then(Value::as_bool) == Some(true),
+        _ => false,
+    }
+}
+
+/// The answer to a call that comes before there is a window, when it does not need one:
+/// what the player would say with nothing open. `None` means the player must start.
+fn before_window(name: &str, args: &Value, quiet: bool) -> Option<Reply> {
+    match name {
+        "status" => Some(Ok(status_before_window(quiet))),
+        "play" | "pause" | "seek" | "list_tracks" | "select_subtitles" | "current_lines"
+        | "transcript" | "transcribe" | "click_word" | "save_frame" | "video_info" => {
+            Some(Err(NO_FILE.into()))
+        }
+        "wait_for" => Some(wait_condition(args).and_then(|_| Err(NO_FILE.into()))),
+        "close_word_card" => Some(Err(NO_CARD.into())),
+        "save_word" => Some(Err(format!("{NO_CARD}: click_word first"))),
+        "close_dialogs" => Some(Ok(json!({"closed": {
+            "settings": false,
+            "help": false,
+            "video_info": false,
+            "speech_recognition_setup": false,
+            "voice_over_setup": false,
+        }}))),
+        "show_controls" => Some(show_controls(args)),
+        "record_stop" if crate::record::on() => Some(Err("nothing is being recorded".into())),
+        "record_start" | "record_stop" if !crate::record::on() => {
+            Some(Err(crate::record::NOT_ON.into()))
+        }
+        "pointer" if !crate::record::on() => Some(Err(crate::record::POINTER_OFF.into())),
+        "open" => open_target(args).err().map(Err),
+        _ => None,
+    }
+}
+
+fn status_before_window(quiet: bool) -> Value {
+    let (cfg, _) = crate::paths::load_config();
+    json!({
+        "file": null,
+        "position": 0.0,
+        "duration": 0.0,
+        "paused": true,
+        "idle": true,
+        "volume": cfg.player.volume,
+        "quiet": quiet,
+        "ui_lang": i18n::resolve(&cfg.general.ui_lang, i18n::system_lang()).code(),
+        "learn_lang": cfg.general.learn_lang,
+        "native_lang": cfg.general.native_lang,
+        "window": {"shown": false, "made": false},
+        "controls": controls_override().map_or(json!("auto"), Value::Bool),
+        "recording": null,
+        "note": "the player window is not open yet: the first call that needs it (open, play, \
+                 screenshot…) opens it",
+    })
 }
 
 /// How long a tool may take before its call is answered with an error.
@@ -410,7 +623,7 @@ fn run_tool(
         "click_word" => click_word(app, ctx, args),
         "close_word_card" => {
             let Some(p) = &app.popup else {
-                return Err("no word card is open".into());
+                return Err(NO_CARD.into());
             };
             let (word, resumes) = (p.word.clone(), p.resume_on_close);
             app.close_popup();
@@ -418,7 +631,7 @@ fn run_tool(
         }
         "save_word" => {
             let Some(word) = app.popup.as_ref().map(|p| p.word.clone()) else {
-                return Err("no word card is open: click_word first".into());
+                return Err(format!("{NO_CARD}: click_word first"));
             };
             crate::record::click_place("save_word");
             let id = app
@@ -441,15 +654,7 @@ fn run_tool(
             now(json!({"open": open, "tab": tab_name(app.sidebar_tab)}))
         }
         "search_transcript" => search_transcript(app, args),
-        "show_controls" => {
-            let choice = match args.get("visible") {
-                Some(Value::Bool(b)) => Some(*b),
-                Some(Value::String(s)) if s == "auto" => None,
-                _ => return Err("visible must be true, false or \"auto\"".into()),
-            };
-            CHROME.with(|c| c.set(choice));
-            now(json!({"controls": choice.map_or(json!("auto"), Value::Bool)}))
-        }
+        "show_controls" => Ok(Outcome::Now(show_controls(args))),
         "open_settings" => open_settings(app, args),
         "close_dialogs" => {
             let closed = json!({
@@ -499,6 +704,17 @@ fn run_tool(
     }
 }
 
+/// The setting lives on the UI thread, which is also the one that waits for the window.
+fn show_controls(args: &Value) -> Reply {
+    let choice = match args.get("visible") {
+        Some(Value::Bool(b)) => Some(*b),
+        Some(Value::String(s)) if s == "auto" => None,
+        _ => return Err("visible must be true, false or \"auto\"".into()),
+    };
+    CHROME.with(|c| c.set(choice));
+    Ok(json!({"controls": choice.map_or(json!("auto"), Value::Bool)}))
+}
+
 fn save_config(app: &mut App) {
     // A --quiet run is a test run: it leaves the user's settings as they were.
     if !app.quiet
@@ -515,7 +731,8 @@ fn tab_name(tab: SidebarTab) -> &'static str {
     }
 }
 
-fn open(app: &mut App, args: &Value) -> Result<Outcome, String> {
+/// What `open` was given, and the name the session will have once it is open.
+fn open_target(args: &Value) -> Result<(String, String), String> {
     let target = need_str(args, "path_or_url")?.trim().to_owned();
     if target.is_empty() {
         return Err("path_or_url is empty".into());
@@ -529,6 +746,11 @@ fn open(app: &mut App, args: &Value) -> Result<Outcome, String> {
         }
         path.to_string_lossy().into_owned()
     };
+    Ok((target, expected))
+}
+
+fn open(app: &mut App, args: &Value) -> Result<Outcome, String> {
+    let (target, expected) = open_target(args)?;
     app.last_toast.clear();
     app.open(&target);
     let failed_text = t(Tr::CouldNotPlay);
@@ -1203,10 +1425,10 @@ fn click_word(app: &mut App, ctx: &egui::Context, args: &Value) -> Result<Outcom
     later("click_word", args, wait)
 }
 
-fn wait_for(app: &mut App, args: &Value) -> Result<Outcome, String> {
+/// The condition `wait_for` was asked for and its value, once both make sense.
+fn wait_condition(args: &Value) -> Result<(String, Value), String> {
     let condition = need_str(args, "condition")?.to_owned();
     let value = args.get("value").cloned().unwrap_or(Value::Null);
-    let started = Instant::now();
     match condition.as_str() {
         "tracks_ready" | "translation_ready" | "transcript_ready" | "line_shown" | "paused"
         | "playing" => {}
@@ -1222,6 +1444,12 @@ fn wait_for(app: &mut App, args: &Value) -> Result<Outcome, String> {
             ));
         }
     }
+    Ok((condition, value))
+}
+
+fn wait_for(app: &mut App, args: &Value) -> Result<Outcome, String> {
+    let (condition, value) = wait_condition(args)?;
+    let started = Instant::now();
     if condition != "tracks_ready" {
         session(app)?;
     }
@@ -1309,6 +1537,8 @@ fn window_json(app: &App, ctx: &egui::Context) -> Value {
     let (inner, outer, ppp) = window_geometry(ctx);
     let size = inner.map_or(ctx.content_rect().size() * ppp, |r| r.size());
     let mut v = json!({
+        "shown": window_state() != Window::Hidden,
+        "made": true,
         "width": size.x.round(),
         "height": size.y.round(),
         "pixels_per_point": ppp,
@@ -1783,9 +2013,10 @@ pub fn tool_list() -> Value {
             "status",
             "Player status",
             "Position, duration, pause, speed, volume, video size and decoder, title, interface \
-             and study languages, window geometry in pixels (for a screen recorder), what is \
-             open on screen, voice-over and speech recognition state, and the last message the \
-             player showed.",
+             and study languages, whether the window is shown (window.shown) and its geometry \
+             in pixels (for a screen recorder), what is open on screen, voice-over and speech \
+             recognition state, and the last message the player showed. Asking does not open \
+             the window.",
             none.clone(),
             &[]
         )),
@@ -2225,6 +2456,121 @@ mod tests {
         assert_eq!(time_limit("wait_for", &json!({})), Duration::from_secs(30));
         assert_eq!(time_limit("open", &json!({})), Duration::from_secs(90));
         assert_eq!(time_limit("play", &json!({})), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn only_calls_that_play_or_put_things_on_screen_show_the_window() {
+        let shown: Vec<&str> = RUN
+            .iter()
+            .copied()
+            .filter(|n| shows_window(n, &json!({})))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                "open",
+                "play",
+                "click_word",
+                "toggle_sidebar",
+                "search_transcript",
+                "open_settings",
+                "set_window",
+                "press_key",
+                "screenshot",
+                "pointer",
+                "record_start",
+            ]
+        );
+        assert!(shows_window("save_frame", &json!({"subtitles": true})));
+        assert!(!shows_window("save_frame", &json!({"subtitles": false})));
+        for quiet_one in [
+            "status",
+            "pause",
+            "list_tracks",
+            "set_languages",
+            "record_stop",
+        ] {
+            assert!(!shows_window(quiet_one, &json!({})), "{quiet_one}");
+        }
+    }
+
+    #[test]
+    fn calls_before_the_window_are_answered_without_it_when_they_can_be() {
+        let ask = |name: &str, args: Value| before_window(name, &args, true);
+
+        let status = ask("status", json!({})).unwrap().unwrap();
+        assert_eq!(status["window"]["shown"], false);
+        assert_eq!(status["file"], Value::Null);
+        assert_eq!(status["quiet"], true);
+
+        // With nothing open these say what the player would say, and need no window for it.
+        for name in [
+            "play",
+            "pause",
+            "seek",
+            "list_tracks",
+            "current_lines",
+            "transcript",
+            "video_info",
+        ] {
+            assert_eq!(ask(name, json!({})), Some(Err(NO_FILE.into())), "{name}");
+        }
+        assert_eq!(
+            ask("wait_for", json!({"condition": "playing"})),
+            Some(Err(NO_FILE.into()))
+        );
+        let e = ask("wait_for", json!({"condition": "soon"}))
+            .unwrap()
+            .unwrap_err();
+        assert!(e.starts_with("unknown condition"), "{e}");
+        assert_eq!(ask("close_word_card", json!({})), Some(Err(NO_CARD.into())));
+        let closed = ask("close_dialogs", json!({})).unwrap().unwrap();
+        assert_eq!(closed["closed"]["settings"], false);
+        assert_eq!(
+            ask("show_controls", json!({"visible": "auto"})),
+            Some(Ok(json!({"controls": "auto"})))
+        );
+
+        // A file that is not there is refused before a window is made for it.
+        let dir = gp_core::scratch::TempDir::new("gp-mcp-hold");
+        let missing = dir.join("missing.mkv");
+        let e = ask("open", json!({"path_or_url": missing.to_str().unwrap()}))
+            .unwrap()
+            .unwrap_err();
+        assert!(e.ends_with("is not a file"), "{e}");
+        let film = dir.join("film.mkv");
+        std::fs::write(&film, b"x").unwrap();
+        assert_eq!(
+            ask("open", json!({"path_or_url": film.to_str().unwrap()})),
+            None
+        );
+        assert_eq!(
+            ask("open", json!({"path_or_url": "https://x.test/v"})),
+            None
+        );
+
+        // These act on the player, which only exists with its window.
+        for name in [
+            "set_speed",
+            "set_volume",
+            "set_languages",
+            "set_ui_language",
+            "voice_over",
+            "toggle_sidebar",
+            "open_settings",
+            "set_window",
+            "press_key",
+            "screenshot",
+        ] {
+            assert_eq!(ask(name, json!({})), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn closing_the_window_hides_it_while_the_client_is_there() {
+        assert_eq!(on_close(true, false), OnClose::Hide);
+        assert_eq!(on_close(true, true), OnClose::Exit);
+        assert_eq!(on_close(false, false), OnClose::Exit);
     }
 
     #[test]

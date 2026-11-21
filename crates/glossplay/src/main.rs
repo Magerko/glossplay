@@ -109,7 +109,8 @@ Usage: glossplay [FILE or URL] [options]
   --update-ytdlp                 download or update yt-dlp and print its version
   --size WxH                        window size
   --mcp [--quiet]                   take commands from an AI agent over MCP on stdin and stdout
-                                    (docs/mcp.md); --quiet keeps both players silent
+                                    (docs/mcp.md); the window opens with the first command
+                                    that needs it; --quiet keeps both players silent
   --version, --help";
 
 fn main() {
@@ -244,6 +245,7 @@ fn main() {
         plan.empty = true;
     }
     control::launch(&mut media);
+    control::hold_window();
     if is_selftest {
         // Checks compare texts, so a self-test speaks English unless a language is asked for.
         let wanted = ui_lang.as_deref().unwrap_or("en");

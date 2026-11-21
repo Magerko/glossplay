@@ -99,6 +99,13 @@ pub fn on() -> bool {
     config().is_some()
 }
 
+/// `GLOSSPLAY_RECORD_NOW=1`: a recording starts with the first frame.
+pub fn starts_at_once() -> bool {
+    config().is_some_and(|c| c.at_once)
+}
+
+pub const POINTER_OFF: &str = "the pointer works only in the recording mode (GLOSSPLAY_RECORD_DIR)";
+
 fn path(c: &Config, name: &str) -> String {
     c.dir.join(name).to_string_lossy().into_owned()
 }
@@ -303,7 +310,7 @@ fn ease(k: f64) -> f64 {
 /// recording.
 pub fn pointer(action: PointerAction, ppp: f32) -> Result<(), String> {
     let Some(c) = config() else {
-        return Err("the pointer works only in the recording mode (GLOSSPLAY_RECORD_DIR)".into());
+        return Err(POINTER_OFF.into());
     };
     let mut guard = POINTER.lock().unwrap_or_else(|e| e.into_inner());
     let p = guard.get_or_insert_with(Pointer::default);
@@ -725,7 +732,7 @@ pub fn recording() -> Option<Value> {
     }))
 }
 
-const NOT_ON: &str = "recording works only in the recording mode (GLOSSPLAY_RECORD_DIR)";
+pub const NOT_ON: &str = "recording works only in the recording mode (GLOSSPLAY_RECORD_DIR)";
 
 /// `rec-001`, `rec-002`… in the recording folder, the first that is not there.
 fn new_session_dir(base: &Path) -> PathBuf {

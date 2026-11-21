@@ -29,9 +29,11 @@ pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
 pub const UNSUPPORTED_VERSION: i64 = -32022;
 
-const INSTRUCTIONS: &str = "Glossplay is a video player for language learners running in a \
-visible window on the user's desktop. Open a file or link with `open`, then `wait_for` \
-tracks_ready before choosing subtitles. Every tool answers once its action has taken effect \
+const INSTRUCTIONS: &str = "Glossplay is a video player for language learners. Its window \
+appears on the user's desktop with the first command that needs it (open, play, screenshot \
+and the like); `status` and other questions do not open it. If the user closes the window, \
+playback pauses and the window hides until the next such command. Open a file or link with \
+`open`, then `wait_for` tracks_ready before choosing subtitles. Every tool answers once its action has taken effect \
 (a seek has landed, a word card is open). Coordinates are physical pixels: window-relative \
 ones start at the top-left of the drawing area, screen ones are for a screen recorder.";
 

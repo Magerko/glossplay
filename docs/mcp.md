@@ -1,10 +1,11 @@
 # Driving Glossplay from an AI agent (MCP)
 
 Glossplay can be controlled by an AI agent through the
-[Model Context Protocol](https://modelcontextprotocol.io). Started with `--mcp`, it opens its
-usual window and takes commands on stdin: open a file or a YouTube link, choose subtitles,
-seek, click a word, open the sidebar, resize and place the window, take a screenshot. The
-agent prepares the scene; a screen recorder of your choice films it.
+[Model Context Protocol](https://modelcontextprotocol.io). Started with `--mcp`, it takes
+commands on stdin and opens its usual window with the first command that needs it: open a
+file or a YouTube link, choose subtitles, seek, click a word, open the sidebar, resize and
+place the window, take a screenshot. The agent prepares the scene; a screen recorder of your
+choice films it.
 
 ```
 glossplay --mcp [--quiet] [--size WxH] [FILE or URL]
@@ -15,10 +16,41 @@ glossplay --mcp [--quiet] [--size WxH] [FILE or URL]
 - `--quiet` keeps both players (the film and the voice-over) silent and ignores the keyboard,
   for automated checks. Without it the sound plays as usual, so a screen recorder can capture
   it from the system.
-- `--size WxH` sets the starting window size; `FILE or URL` is opened once the window is up.
+- `--size WxH` sets the starting window size; `FILE or URL` is opened once the window is up
+  (and then the window opens at once).
 
 The release build has no console window; stdin and stdout passed as pipes by the MCP client
 still work, the same as in a console build.
+
+### When the window shows
+
+MCP clients start every server they know when a session of theirs begins, so a player
+started with `--mcp` shows nothing at first: no window, no taskbar button, no sound, and it
+does not take the focus. It answers `initialize` and `tools/list` at once and waits with next
+to no CPU and about 10 MB of memory; the video engine and the graphics start only with the
+window.
+
+- These calls open the window, or bring it back when it is hidden: `open`, `play`,
+  `click_word`, `toggle_sidebar`, `search_transcript`, `open_settings`, `set_window`,
+  `press_key`, `screenshot`, `save_frame` with `subtitles: true`, `pointer` and
+  `record_start`. A call refused at once (`open` of a missing file, `play` with nothing open)
+  leaves the window as it was.
+- All the others answer without showing it. Before the window exists, `status` reports
+  `window.shown: false`, and the calls that need an open file or card answer as the player
+  does with nothing open ("no file is open: call open first"). `set_speed`, `set_volume`,
+  `set_languages`, `set_ui_language` and `voice_over` act on the player, so the first of them
+  starts it, window and all; once it is there they leave a hidden window hidden.
+- Closing the window (its close button, Alt+F4) pauses playback, drops an open word card and
+  hides the window; the server goes on, `status` says `window.shown: false`, and the next
+  call from the first list shows the window again where it was. Under `--quiet` the window
+  comes back without taking the focus.
+- The process ends when the client closes stdin, with the window shown, hidden or never
+  made, and takes the speech recognition and voice-over servers it started with it.
+- `GLOSSPLAY_RECORD_NOW=1` and a `FILE or URL` on the command line open the window at once.
+
+A player you start yourself and one started by an agent are separate processes. The one
+waiting for an agent only reads the settings file to answer `status` and does not open the
+word database until its window opens; neither of them keeps those files locked.
 
 ## Connecting
 
@@ -68,8 +100,9 @@ has 5 words"); an unknown tool or malformed arguments object is a JSON-RPC `-326
 Every call answers once its action has taken effect: `open` when the file plays and its
 tracks are known, `seek` when the new frame is on screen, `click_word` when the translation
 has arrived. A call that cannot finish in its time limit answers with an error; so does every
-pending call when the window is closed. Closing stdin closes the window and ends the process,
-along with the speech recognition and voice-over servers it started.
+pending call when the player shuts down. Closing the window only hides it (see
+[When the window shows](#when-the-window-shows)); closing stdin closes the window and ends
+the process, along with the speech recognition and voice-over servers it started.
 
 ## Coordinates
 
@@ -92,7 +125,7 @@ All times are in seconds. Results are JSON text.
 | `seek` | `seconds`, `exact?` (true) | Jumps there; `exact: false` lands on a keyframe, faster. |
 | `set_speed` | `speed` (0.25–4) | Playback speed. |
 | `set_volume` | `percent` (0–150), `muted?` | Player volume. |
-| `status` | — | Position, duration, pause, speed, volume, video size and decoder, title, languages, window geometry, open card and dialogs, voice-over and recognition state, whether a stream is buffering (`buffering`), the recording under way (`recording`: folder, fps, seconds, or `null`), last message. |
+| `status` | — | Position, duration, pause, speed, volume, video size and decoder, title, languages, whether the window is shown (`window.shown`; `window.made` is false until it first opens) and its geometry, open card and dialogs, voice-over and recognition state, whether a stream is buffering (`buffering`), the recording under way (`recording`: folder, fps, seconds, or `null`), last message. |
 | `video_info` | — | What the Video info window shows, by section: file (title, source — a link by its host only — format, duration, size), video (codec, resolution, frame rate, bitrate, pixel format, colour and HDR, hardware decoding), sound, subtitles, playback (dropped and late frames, output frame rate) and, for a stream, network (cache state, seconds and bytes buffered ahead, download speed). |
 
 ### Subtitles and languages
